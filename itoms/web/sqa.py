@@ -11,7 +11,7 @@ from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.sqa import (
     SQAError, add_test_case, complete_test_plan, create_defect, create_test_plan,
     get_test_plan, list_sqa_release_signoffs, list_test_plans, record_execution,
-    record_release_signoff,
+    record_release_signoff, update_defect_status,
 )
 
 sqa_bp = Blueprint("sqa", __name__, url_prefix="/sqa")
@@ -156,3 +156,17 @@ def signoff():
         flash("SQA sign-off recorded.","success")
     except SQAError as exc: flash(str(exc),"danger")
     return redirect(url_for("sqa.index"))
+
+
+
+@sqa_bp.post("/plans/<int:plan_id>/defects/<int:defect_id>/status")
+@login_required
+def update_defect(plan_id: int, defect_id: int):
+    if not _csrf_valid(): return "Invalid request token",400
+    try:
+        update_defect_status(actor_employee_id=g.employee_id,plan_id=plan_id,
+            defect_id=defect_id,new_status=request.form.get("status",""))
+        flash("Defect status updated.","success")
+    except SQAError as exc:
+        flash(str(exc),"danger")
+    return redirect(url_for("sqa.detail",plan_id=plan_id))
