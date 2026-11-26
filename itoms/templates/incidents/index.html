@@ -23,7 +23,7 @@
   <div class="table-responsive mt-3"><table class="table align-middle">
     <thead><tr><th scope="col">Ticket</th><th scope="col">Summary</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col">Created</th></tr></thead>
     <tbody>{% for item in incidents %}<tr>
-      <td class="text-nowrap"><strong>{{ item.ticket_number }}</strong></td><td>{{ item.title }}</td>
+      <td class="text-nowrap"><strong>{{ item.ticket_number }}</strong></td><td><a href="{{ url_for('incidents.detail', ticket_id=item.ticket_id) }}">{{ item.title }}</a></td>
       <td><span class="badge text-bg-secondary">{{ item.priority }}</span></td>
       <td><span class="badge text-bg-light">{{ item.status|replace('_',' ') }}</span></td>
       <td class="text-nowrap">{{ item.created_at }}</td>
