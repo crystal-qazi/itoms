@@ -20,6 +20,22 @@ ITOMS will be implemented as a modular monolith with explicit boundaries and sha
 - Server-side authorization is mandatory, including object-level checks and export/background operations.
 - Files: 10 MB maximum per file, admin-configurable allowlist with signature validation, antivirus scanning required and fail-closed.
 
+## Foundation components
+
+- Application factory and environment-based configuration.
+- Basic health endpoint and baseline HTTP security headers.
+- MySQL connector-based connection factory using native SQL.
+- SQL-file migration runner with applied-migration tracking.
+- Logging baseline; sensitive payloads are not to be logged.
+
+## Migration operation
+
+- The target database must be created and credentials configured before running migrations.
+- Migration files are numbered SQL files under `itoms/db/migrations/versions`.
+- Runner applies unapplied files lexicographically and records successful migrations.
+- Validate migrations against a disposable database before production.
+- MySQL DDL can implicitly commit; migrations are not assumed to be fully rollbackable. Back up and review before production changes.
+
 ## Initial foundation sequence
 
 1. Repository and environment baseline.
