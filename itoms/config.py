@@ -16,6 +16,8 @@ class Config:
     DB_CONNECT_TIMEOUT = int(os.getenv("ITOMS_DB_CONNECT_TIMEOUT", "5"))
     LOG_LEVEL = os.getenv("ITOMS_LOG_LEVEL", "INFO")
     TOTP_ENCRYPTION_KEY = os.getenv("ITOMS_TOTP_ENCRYPTION_KEY")
+    GRAFANA_WEBHOOK_SECRET = os.getenv("ITOMS_GRAFANA_WEBHOOK_SECRET")
+    GRAFANA_SERVICE_EMPLOYEE_ID = int(os.getenv("ITOMS_GRAFANA_SERVICE_EMPLOYEE_ID", "0"))
 
     @classmethod
     def validate(cls, config: dict) -> None:
