@@ -15,6 +15,14 @@ PLAN_STATUSES = {"DRAFT", "ACTIVE", "COMPLETED", "CANCELLED"}
 TEST_RESULTS = {"PASS", "FAIL", "BLOCKED", "RETEST"}
 DEFECT_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
 SIGNOFF_DECISIONS = {"APPROVED", "REJECTED", "CONDITIONAL"}
+DEFECT_TRANSITIONS = {
+    "OPEN": {"TRIAGED", "REJECTED"},
+    "TRIAGED": {"FIXED", "REJECTED"},
+    "FIXED": {"RETEST"},
+    "RETEST": {"CLOSED", "OPEN"},
+    "CLOSED": set(),
+    "REJECTED": set(),
+}
 
 
 def _plan_context(row):
@@ -80,6 +88,7 @@ def get_test_plan(*, actor_employee_id: int, plan_id: int):
     plan["can_add_case"]=has_permission(actor_employee_id,"sqa.case.create",_plan_context(plan))
     plan["can_execute"]=has_permission(actor_employee_id,"sqa.execution.create",_plan_context(plan))
     plan["can_create_defect"]=has_permission(actor_employee_id,"sqa.defect.create",_plan_context(plan))
+    plan["can_update_defects"]=has_permission(actor_employee_id,"sqa.defect.update",_plan_context(plan))
     return plan
 
 
@@ -306,5 +315,47 @@ def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
             FROM sqa_release_signoffs s JOIN employees e ON e.employee_id=s.signed_by
             WHERE s.release_key=%s ORDER BY s.signed_at DESC""",(release_key,))
         return cur.fetchall()
+    finally:
+        cur.close(); conn.close()
+
+
+
+def update_defect_status(*, actor_employee_id: int, plan_id: int, defect_id: int,
+                         new_status: str):
+    new_status=new_status.strip().upper()
+    if new_status not in DEFECT_SEVERITIES and new_status not in DEFECT_STATUSES:
+        raise SQAError("Invalid defect status.")
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        cur.execute("""SELECT d.defect_id,d.status,p.test_plan_id,p.created_by,
+            e.department_id,m.team_id FROM sqa_defects d
+            JOIN sqa_test_executions x ON x.execution_id=d.execution_id
+            JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
+            JOIN sqa_test_plans p ON p.test_plan_id=c.test_plan_id
+            JOIN employees e ON e.employee_id=p.created_by
+            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+            WHERE d.defect_id=%s AND p.test_plan_id=%s""",(defect_id,plan_id))
+        snapshot=cur.fetchone()
+        if not snapshot:
+            raise SQAError("Defect not found in this plan.")
+        context=ResourceContext(owner_employee_id=snapshot["created_by"],
+            team_id=snapshot["team_id"],department_id=snapshot["department_id"],
+            resource_type="sqa_plan",resource_id=str(snapshot["test_plan_id"]))
+        if not has_permission(actor_employee_id,"sqa.defect.update",context):
+            raise SQAError("Not authorized to update this defect.")
+        if new_status not in DEFECT_TRANSITIONS.get(snapshot["status"],set()):
+            raise SQAError("This defect status transition is not allowed.")
+        cur.execute("SELECT status FROM sqa_defects WHERE defect_id=%s FOR UPDATE",(defect_id,))
+        current=cur.fetchone()
+        if not current or current["status"]!=snapshot["status"]:
+            raise SQAError("Defect changed; reload and try again.")
+        cur.execute("UPDATE sqa_defects SET status=%s WHERE defect_id=%s",(new_status,defect_id))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_DEFECT_STATUS_CHANGED','sqa_defect',%s,'SUCCESS')""",
+            (actor_employee_id,str(defect_id)))
+        conn.commit()
+    except Exception:
+        conn.rollback(); raise
     finally:
         cur.close(); conn.close()
