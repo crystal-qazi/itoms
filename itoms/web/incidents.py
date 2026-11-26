@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 from itoms.security.decorators import login_required
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import has_permission
 from itoms.services.incidents import (IncidentError, add_comment, assign_incident, create_incident, get_incident_detail, list_assignable_teams, list_incidents, transition_incident)
 
 incidents_bp = Blueprint("incidents", __name__, url_prefix="/incidents")
@@ -46,9 +46,7 @@ def detail(ticket_id: int):
         assignable_teams = list_assignable_teams(actor_employee_id=g.employee_id, ticket_id=ticket_id)
     except IncidentError:
         assignable_teams = []
-    can_assign = bool(assignable_teams) and has_permission(
-        g.employee_id, "incident.assign",
-        ResourceContext(owner_employee_id=ticket["requester_employee_id"], team_id=ticket["assigned_team_id"]))
+    can_assign = bool(assignable_teams)
     return render_template("incidents/detail.html", ticket=ticket,
                            assignable_teams=assignable_teams, can_assign=can_assign,
                            csrf_token_value=session.get("csrf_token", ""))
