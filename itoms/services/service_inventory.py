@@ -1,6 +1,7 @@
 """Service and software inventory operations with team-scoped access."""
 from __future__ import annotations
 import re
+from mysql.connector import IntegrityError
 from itoms.db.connection import get_connection
 from itoms.services.authorization import ResourceContext, has_permission
 
@@ -59,6 +60,11 @@ def create_service_record(*, actor_employee_id: int, service_key: str, service_n
         service_id = int(cur.lastrowid)
         cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'SERVICE_RECORD_CREATED','service_record',%s,'SUCCESS')", (actor_employee_id,str(service_id)))
         conn.commit(); return service_id
+    except IntegrityError as exc:
+        conn.rollback()
+        if getattr(exc, "errno", None) == 1062:
+            raise ServiceInventoryError("A service with this key already exists.") from None
+        raise
     except Exception:
         conn.rollback(); raise
     finally:
