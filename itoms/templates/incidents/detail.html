@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ ticket.ticket_number }} · ITOMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow"><a href="{{ url_for('incidents.index') }}">HELPDESK &amp; INCIDENTS</a></p><h1>{{ ticket.ticket_number }}</h1><p class="text-secondary mb-0">{{ ticket.title }}</p></div>
+  <span class="status-pill"><span></span>{{ ticket.status|replace('_',' ') }}</span>
+</div>
+<div class="row g-3 mt-2">
+  <div class="col-12 col-xl-8">
+    <section class="panel-card">
+      <div class="d-flex flex-wrap gap-2 mb-3"><span class="badge text-bg-secondary">{{ ticket.priority }}</span><span class="badge text-bg-light">{{ ticket.source }}</span></div>
+      <h2 class="h6">Description</h2><p class="mb-0" style="white-space:pre-wrap">{{ ticket.description }}</p>
+      <hr>
+      <dl class="row mb-0"><dt class="col-sm-4">Created</dt><dd class="col-sm-8">{{ ticket.created_at }}</dd><dt class="col-sm-4">First response due</dt><dd class="col-sm-8">{{ ticket.first_response_due_at or 'Not configured' }}</dd><dt class="col-sm-4">Resolution due</dt><dd class="col-sm-8">{{ ticket.resolution_due_at or 'Not configured' }}</dd></dl>
+    </section>
+    <section class="panel-card mt-3">
+      <div class="panel-heading"><div><h2>Comments &amp; updates</h2><p>Internal notes are visible only to authorized staff.</p></div></div>
+      {% for item in ticket.comments %}
+      <article class="border rounded-3 p-3 mt-3">
+        <div class="d-flex justify-content-between gap-2"><strong>{{ item.author_name }}</strong><small class="text-secondary">{{ item.created_at }}</small></div>
+        {% if item.is_internal %}<span class="badge text-bg-warning mt-2">Internal note</span>{% endif %}
+        <p class="mb-0 mt-2" style="white-space:pre-wrap">{{ item.comment_body }}</p>
+      </article>
+      {% else %}<p class="text-secondary mt-3">No comments yet.</p>{% endfor %}
+      <form method="post" action="{{ url_for('incidents.comment', ticket_id=ticket.ticket_id) }}" class="mt-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+        <label class="form-label" for="comment-body">Add comment</label><textarea class="form-control" id="comment-body" name="body" rows="3" required></textarea>
+        <div class="d-flex flex-wrap justify-content-between gap-2 mt-2"><select class="form-select w-auto" name="visibility" aria-label="Comment visibility"><option value="public">Public reply</option><option value="internal">Internal note (permission required)</option></select><button class="btn btn-primary" type="submit">Add comment</button></div>
+      </form>
+    </section>
+  </div>
+  <div class="col-12 col-xl-4">
+    <section class="panel-card">
+      <h2 class="h6">Update status</h2>
+      <form method="post" action="{{ url_for('incidents.update_status', ticket_id=ticket.ticket_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+        <label class="form-label" for="incident-status">New status</label>
+        <select class="form-select" id="incident-status" name="status">
+          {% for status in ['OPEN','IN_PROGRESS','PENDING','RESOLVED','CLOSED','CANCELLED'] %}<option value="{{ status }}" {% if status == ticket.status %}selected{% endif %}>{{ status|replace('_',' ') }}</option>{% endfor %}
+        </select><button class="btn btn-outline-primary mt-3" type="submit">Update status</button>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}
