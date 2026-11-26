@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from itoms.db.connection import get_connection
+from itoms.services.authorization import has_permission
 
 class NotificationError(ValueError):
     """Notification operation was invalid or unauthorized."""
@@ -10,8 +11,10 @@ def create_notification(*, actor_employee_id: int, recipient_employee_id: int,
                         notification_type: str, title: str, body: str,
                         target_type: str | None = None, target_id: str | None = None) -> int:
     """Persist notification and delivery outbox atomically."""
-    if not title.strip() or not body.strip() or len(title) > 200:
-        raise NotificationError("A title and body are required; title limit is 200 characters.")
+    if not has_permission(actor_employee_id, "notifications.send"):
+        raise NotificationError("Not authorized to send notifications.")
+    if not title.strip() or not body.strip() or len(title) > 200 or len(notification_type) > 80:
+        raise NotificationError("A valid type, title and body are required; title limit is 200 characters.")
     conn=get_connection(); cur=conn.cursor()
     try:
         cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(recipient_employee_id,))
