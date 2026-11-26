@@ -47,13 +47,14 @@ def webhook():
             ignored += 1
             continue
         labels = alert.get("labels") if isinstance(alert.get("labels"), dict) else {}
+        annotations = alert.get("annotations") if isinstance(alert.get("annotations"), dict) else {}
         fingerprint = str(alert.get("fingerprint", "")).strip()
         starts_at = str(alert.get("startsAt", "")).strip()
         if not fingerprint or not starts_at:
             return jsonify({"error": "Firing alert requires fingerprint and startsAt"}), 400
         event_id = f"{fingerprint}:{starts_at}"
-        title = str(alert.get("annotations", {}).get("summary") or labels.get("alertname") or "Grafana alert")[:240]
-        description = str(alert.get("annotations", {}).get("description") or alert.get("annotations", {}).get("summary") or title)
+        title = str(annotations.get("summary") or labels.get("alertname") or "Grafana alert")[:240]
+        description = str(annotations.get("description") or alert.get("annotations", {}).get("summary") or title)
         severity = str(labels.get("severity", "warning")).lower()
         priority = {"critical": "CRITICAL", "error": "HIGH", "warning": "MEDIUM", "info": "LOW"}.get(severity, "MEDIUM")
         try:
