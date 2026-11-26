@@ -263,13 +263,15 @@ def record_release_signoff(*, actor_employee_id: int, release_key: str, decision
         raise SQAError("A release and valid sign-off decision are required.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT r.release_id,r.created_by,e.department_id,s.owner_team_id
+        cur.execute("""SELECT r.release_id,r.created_by,r.status,e.department_id,s.owner_team_id
             FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
             LEFT JOIN service_records s ON s.service_id=r.service_id
             WHERE r.release_key=%s""",(release_key,))
         release=cur.fetchone()
         if not release:
             raise SQAError("Release record not found.")
+        if release["status"] not in {"IN_TEST", "READY", "APPROVED"}:
+            raise SQAError("SQA sign-off is closed for this release lifecycle stage.")
         release_context=ResourceContext(owner_employee_id=release["created_by"],
             team_id=release["owner_team_id"],department_id=release["department_id"],
             resource_type="release",resource_id=str(release["release_id"]))
