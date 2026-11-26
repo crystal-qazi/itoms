@@ -142,3 +142,16 @@ def get_task_detail(*, actor_employee_id: int, task_id: int) -> dict:
         return task
     finally:
         cur.close(); conn.close()
+
+def list_task_assignees(*, actor_employee_id: int) -> list[dict]:
+    """List active employees only from teams where the actor may create tasks."""
+    allowed_teams = list_accessible_task_teams(actor_employee_id=actor_employee_id, permission_key="engineering.tasks.create")
+    team_ids = [item["team_id"] for item in allowed_teams]
+    if not team_ids: return []
+    placeholders = ",".join(["%s"] * len(team_ids))
+    conn = get_connection(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT e.employee_id,e.full_name,m.team_id FROM employees e JOIN employee_team_memberships m ON m.employee_id=e.employee_id WHERE e.is_active=TRUE AND m.team_id IN (" + placeholders + ") ORDER BY e.full_name", tuple(team_ids))
+        return cur.fetchall()
+    finally:
+        cur.close(); conn.close()
