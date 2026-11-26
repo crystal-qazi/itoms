@@ -1,6 +1,5 @@
 """Unit tests for engineering task lifecycle invariants."""
-import pytest
-from itoms.services.engineering_tasks import TASK_TRANSITIONS, TaskError
+from itoms.services.engineering_tasks import TASK_TRANSITIONS
 
 def test_task_lifecycle_has_only_explicit_forward_transitions():
     assert TASK_TRANSITIONS["BACKLOG"] == {"READY", "CANCELLED"}
