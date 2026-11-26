@@ -52,14 +52,24 @@ def create_task(*,actor_employee_id:int,team_id:int,title:str,description:str=""
         cur.close();conn.close()
 
 def change_task_status(*,actor_employee_id:int,task_id:int,new_status:str)->None:
+    # Resolve the trusted team scope before permission evaluation; do not hold
+    # the task row lock while the authorization service opens its own connection.
+    conn=get_connection();cur=conn.cursor()
+    try:
+        cur.execute("SELECT team_id FROM engineering_tasks WHERE task_id=%s",(task_id,))
+        snapshot=cur.fetchone()
+    finally:
+        cur.close();conn.close()
+    if not snapshot: raise TaskError("Task not found.")
+    team_id=snapshot[0]
+    if not has_permission(actor_employee_id,"engineering.tasks.update",ResourceContext(team_id=team_id)):
+        raise TaskError("Not authorized to update this task.")
     conn=get_connection();cur=conn.cursor()
     try:
         cur.execute("SELECT status,team_id FROM engineering_tasks WHERE task_id=%s FOR UPDATE",(task_id,))
         row=cur.fetchone()
-        if not row: raise TaskError("Task not found.")
-        old_status,team_id=row
-        if not has_permission(actor_employee_id,"engineering.tasks.update",ResourceContext(team_id=team_id)):
-            raise TaskError("Not authorized to update this task.")
+        if not row or row[1]!=team_id: raise TaskError("Task changed; reload and try again.")
+        old_status=row[0]
         if new_status not in TASK_TRANSITIONS.get(old_status,set()):
             raise TaskError(f"Transition from {old_status} to {new_status} is not allowed.")
         cur.execute("UPDATE engineering_tasks SET status=%s WHERE task_id=%s",(new_status,task_id))
