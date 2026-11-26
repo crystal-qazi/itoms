@@ -18,6 +18,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
     app.config.setdefault("SESSION_COOKIE_SECURE", not app.config.get("TESTING", False))
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", 3600)
+    app.config.setdefault("MAX_CONTENT_LENGTH", 1024 * 1024)
     configure_logging(app.config.get("LOG_LEVEL", "INFO"))
 
     @app.before_request
