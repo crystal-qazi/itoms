@@ -70,13 +70,13 @@ def test_release_gate_requires_passed_cases_and_unambiguous_signoff():
     assert len(cursor.statements) == 5
 
 
-def test_release_gate_rejects_any_sqa_rejection():
+def test_release_gate_rejects_any_non_approved_sqa_signoff():
     from itoms.services.release_management import ReleaseError, _assert_sqa_release_gate
 
     cursor = GateCursor([(1,), (1,), (0,), (0,), (1, 1)])
     try:
         _assert_sqa_release_gate(cursor, "REL-3")
     except ReleaseError as exc:
-        assert "APPROVED sign-off" in str(exc)
+        assert "every recorded sign-off" in str(exc)
     else:
         raise AssertionError("Release gate must reject conflicting SQA sign-offs")
