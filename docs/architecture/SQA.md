@@ -19,7 +19,7 @@ The release service checks the gate inside the release transition transaction, b
 - at least one APPROVED sign-off exists and every recorded sign-off is APPROVED;
 - no unresolved HIGH/CRITICAL defect is linked to a test plan for that release.
 
-The migration 021_sqa_release_linkage_permissions.sql adds the release association and SQA permission catalogue entries. Permissions are registered, not automatically granted to roles. Administrators must grant them deliberately through role configuration.
+Migrations 021_sqa_release_linkage_permissions.sql and 022_sqa_defect_lifecycle_permission.sql add the release association and SQA permission catalogue entries. Permissions are registered, not automatically granted to roles. Administrators must grant them deliberately through role configuration.
 
 ## Limitations
 
