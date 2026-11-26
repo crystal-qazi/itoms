@@ -26,7 +26,7 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
     cur = conn.cursor()
     try:
         cur.execute("""SELECT account_id, password_hash, account_status, failed_login_count,
-            locked_until, session_version, must_change_password
+            locked_until, session_version, must_change_password, mfa_enabled
             FROM user_accounts WHERE username=%s FOR UPDATE""", (username,))
         row = cur.fetchone()
         if not row or row[2] != "ACTIVE":
@@ -36,8 +36,15 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
                 (row[0] if row else None, username, ip_address, user_agent))
             conn.commit()
             return None
-        account_id, password_hash, status, failed, locked_until, version, must_change = row
+        account_id, password_hash, status, failed, locked_until, version, must_change, mfa_enabled = row
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Never silently bypass MFA while the challenge flow is not yet enabled.
+        if mfa_enabled:
+            cur.execute("""INSERT INTO authentication_events
+                (account_id,username_attempted,event_type,ip_address,user_agent)
+                VALUES (%s,%s,'LOGIN_FAILURE',%s,%s)""", (account_id, username, ip_address, user_agent))
+            conn.commit()
+            return None
         if locked_until and locked_until > now:
             cur.execute("""INSERT INTO authentication_events
                 (account_id,username_attempted,event_type,ip_address,user_agent)
