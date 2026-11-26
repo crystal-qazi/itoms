@@ -26,6 +26,7 @@ def create_notification(*, actor_employee_id: int, recipient_employee_id: int,
             (recipient_employee_id,notification_type,title.strip(),body.strip(),target_type,target_id))
         notification_id=int(cur.lastrowid)
         cur.execute("INSERT INTO notification_outbox (notification_id,channel) VALUES (%s,'IN_APP')",(notification_id,))
+        cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'NOTIFICATION_CREATED','notification',%s,'SUCCESS')", (actor_employee_id,str(notification_id)))
         conn.commit()
         return notification_id
     except Exception:
@@ -104,5 +105,15 @@ def complete_outbox_item(*, outbox_id: int, success: bool, error: str | None = N
         conn.commit()
     except Exception:
         conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def count_unread(*, employee_id: int) -> int:
+    """Count unread notifications belonging only to the supplied employee."""
+    conn = get_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM notifications WHERE recipient_employee_id=%s AND read_at IS NULL", (employee_id,))
+        return int(cur.fetchone()[0])
     finally:
         cur.close(); conn.close()
