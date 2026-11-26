@@ -51,8 +51,10 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.health import health_bp
     from itoms.web.auth import auth_bp
     from itoms.web.grafana import grafana_bp
+    from itoms.web.incidents import incidents_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(grafana_bp)
+    app.register_blueprint(incidents_bp)
     register_cli(app)
     return app
