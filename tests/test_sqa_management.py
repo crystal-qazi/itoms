@@ -80,3 +80,35 @@ def test_release_gate_rejects_any_non_approved_sqa_signoff():
         assert "every recorded sign-off" in str(exc)
     else:
         raise AssertionError("Release gate must reject conflicting SQA sign-offs")
+
+
+class DictionaryGateCursor:
+    def __init__(self, rows):
+        self.rows = iter(rows)
+
+    def execute(self, statement, params):
+        return None
+
+    def fetchone(self):
+        return next(self.rows)
+
+
+def test_sqa_plan_readiness_accepts_only_passed_cases_without_open_critical_defects():
+    from itoms.services.sqa import _assert_plan_ready
+
+    _assert_plan_ready(DictionaryGateCursor([
+        {"total_cases": 2}, {"failing_cases": 0}, {"unresolved_defects": 0}
+    ]), 7)
+
+
+def test_sqa_plan_readiness_rejects_unresolved_high_critical_defects():
+    from itoms.services.sqa import SQAError, _assert_plan_ready
+
+    try:
+        _assert_plan_ready(DictionaryGateCursor([
+            {"total_cases": 1}, {"failing_cases": 0}, {"unresolved_defects": 1}
+        ]), 8)
+    except SQAError as exc:
+        assert "High/Critical" in str(exc)
+    else:
+        raise AssertionError("Unresolved High/Critical defects must block plan completion")
