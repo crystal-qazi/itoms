@@ -50,13 +50,20 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
             cur.execute("SELECT 1 FROM service_categories WHERE category_id=%s AND is_active=TRUE", (category_id,))
             if not cur.fetchone():
                 raise IncidentError("Category does not exist or is inactive.")
+        cur.execute("""SELECT first_response_minutes,resolution_minutes
+            FROM incident_sla_policies WHERE priority=%s AND is_active=TRUE""", (priority,))
+        sla = cur.fetchone()
+        response_due = resolution_due = None
+        if sla:
+            cur.execute("SELECT DATE_ADD(UTC_TIMESTAMP(), INTERVAL %s MINUTE), DATE_ADD(UTC_TIMESTAMP(), INTERVAL %s MINUTE)", (sla[0],sla[1]))
+            response_due, resolution_due = cur.fetchone()
         ticket_number = "INC-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper()
         cur.execute("""INSERT INTO incident_tickets
             (ticket_number,title,description,category_id,requester_employee_id,assigned_team_id,
-             priority,source,external_source,external_event_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+             priority,source,external_source,external_event_id,first_response_due_at,resolution_due_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (ticket_number,title,description,category_id,requester,assigned_team_id,
-             priority,source,external_source,external_event_id))
+             priority,source,external_source,external_event_id,response_due,resolution_due))
         ticket_id = int(cur.lastrowid)
         cur.execute("""INSERT INTO incident_activity
             (ticket_id,actor_employee_id,activity_key,new_value)
