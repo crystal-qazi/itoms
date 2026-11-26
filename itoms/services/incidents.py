@@ -282,3 +282,23 @@ def assign_incident(*, actor_employee_id: int, ticket_id: int,
         cur.close()
         conn.close()
 
+def list_assignable_teams(*, actor_employee_id: int, ticket_id: int) -> list[dict]:
+    """List only active teams the actor may assign this incident to."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT requester_employee_id FROM incident_tickets WHERE ticket_id=%s",
+                    (ticket_id,))
+        ticket = cur.fetchone()
+        if not ticket:
+            raise IncidentError("Incident not found.")
+        cur.execute("SELECT team_id,team_name FROM teams WHERE is_active=TRUE ORDER BY team_name")
+        teams = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+    return [team for team in teams if has_permission(
+        actor_employee_id, "incident.assign",
+        ResourceContext(owner_employee_id=ticket["requester_employee_id"],
+                        team_id=team["team_id"]))]
+
