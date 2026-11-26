@@ -62,7 +62,7 @@ def home():
         return redirect(url_for("auth.login"))
     if session.get("must_change_password"):
         return redirect(url_for("auth.change_password_route"))
-    return render_template_string("""<!doctype html><html lang="en"><meta charset="utf-8"><title>ITOMS</title><h1>ITOMS</h1><p>Signed in successfully.</p><form method="post" action="/auth/logout"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button>Sign out</button></form></html>""", csrf=session.get("csrf_token", ""))
+    from flask import render_template\n    return render_template("dashboard.html", csrf_token_value=session.get("csrf_token", ""), summary=[{"label":"Open incidents","note":"Helpdesk module pending"},{"label":"My tasks","note":"Engineering tasks pending"},{"label":"Pending changes","note":"Change management pending"},{"label":"Service inventory","note":"Inventory module pending"}])
 
 @auth_bp.route("/change-password", methods=["GET", "POST"])
 def change_password_route():
