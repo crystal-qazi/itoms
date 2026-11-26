@@ -86,7 +86,7 @@ def validate_session(raw_token: str) -> int | None:
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""SELECT s.account_id FROM user_sessions s
+        cur.execute("""SELECT s.account_id, a.employee_id FROM user_sessions s
             JOIN user_accounts a ON a.account_id=s.account_id
             WHERE s.token_hash=%s AND s.revoked_at IS NULL
             AND s.expires_at>UTC_TIMESTAMP()
@@ -98,7 +98,7 @@ def validate_session(raw_token: str) -> int | None:
             return None
         cur.execute("UPDATE user_sessions SET last_activity_at=UTC_TIMESTAMP(), expires_at=DATE_ADD(UTC_TIMESTAMP(), INTERVAL 60 MINUTE) WHERE token_hash=%s", (token_digest(raw_token),))
         conn.commit()
-        return row[0]
+        return row[0], row[1]
     finally:
         cur.close()
         conn.close()
