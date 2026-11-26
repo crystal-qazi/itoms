@@ -150,6 +150,36 @@ def transition_incident(*, actor_employee_id: int, ticket_id: int, new_status: s
         cur.close()
         conn.close()
 
+
+def get_incident_detail(*, actor_employee_id: int, ticket_id: int) -> dict:
+    """Fetch a ticket and only comments visible to the caller's permissions."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("""SELECT ticket_id,ticket_number,title,description,status,priority,source,
+            requester_employee_id,assigned_employee_id,assigned_team_id,first_response_due_at,
+            resolution_due_at,first_responded_at,resolved_at,closed_at,created_at,updated_at
+            FROM incident_tickets WHERE ticket_id=%s""", (ticket_id,))
+        ticket = cur.fetchone()
+        if not ticket:
+            raise IncidentError("Incident not found.")
+        context = ResourceContext(owner_employee_id=ticket["requester_employee_id"],
+                                  team_id=ticket["assigned_team_id"])
+        if not has_permission(actor_employee_id, "incident.read", context):
+            raise IncidentError("Incident not found.")
+        cur.execute("""SELECT c.comment_id,c.author_employee_id,c.comment_body,c.is_internal,c.created_at,
+            e.full_name AS author_name FROM incident_comments c
+            JOIN employees e ON e.employee_id=c.author_employee_id
+            WHERE c.ticket_id=%s ORDER BY c.created_at,c.comment_id""", (ticket_id,))
+        comments = cur.fetchall()
+        if not has_permission(actor_employee_id, "incident.comment.internal", context):
+            comments = [item for item in comments if not item["is_internal"]]
+        ticket["comments"] = comments
+        return ticket
+    finally:
+        cur.close()
+        conn.close()
+
 def add_comment(*, actor_employee_id: int, ticket_id: int, body: str, internal: bool = False) -> int:
     """Add an authorized comment; internal visibility is explicit."""
     body = body.strip()
