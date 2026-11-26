@@ -15,6 +15,7 @@ class Config:
     DB_PASSWORD = os.getenv("ITOMS_DB_PASSWORD", "")
     DB_CONNECT_TIMEOUT = int(os.getenv("ITOMS_DB_CONNECT_TIMEOUT", "5"))
     LOG_LEVEL = os.getenv("ITOMS_LOG_LEVEL", "INFO")
+    TOTP_ENCRYPTION_KEY = os.getenv("ITOMS_TOTP_ENCRYPTION_KEY")
 
     @classmethod
     def validate(cls, config: dict) -> None:
