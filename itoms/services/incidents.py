@@ -211,3 +211,74 @@ def add_comment(*, actor_employee_id: int, ticket_id: int, body: str, internal: 
     finally:
         cur.close()
         conn.close()
+
+def assign_incident(*, actor_employee_id: int, ticket_id: int,
+                    assigned_team_id: int | None,
+                    assigned_employee_id: int | None = None) -> None:
+    """Assign an incident to an authorized team/member and audit the change."""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""SELECT requester_employee_id,assigned_team_id,assigned_employee_id
+            FROM incident_tickets WHERE ticket_id=%s""", (ticket_id,))
+        snapshot = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    if not snapshot:
+        raise IncidentError("Incident not found.")
+    requester_id, old_team_id, old_employee_id = snapshot
+    old_context = ResourceContext(owner_employee_id=requester_id, team_id=old_team_id)
+    if not has_permission(actor_employee_id, "incident.assign", old_context):
+        raise IncidentError("Not authorized to assign this incident.")
+    if assigned_team_id is not None:
+        if not has_permission(actor_employee_id, "incident.assign",
+                              ResourceContext(owner_employee_id=requester_id, team_id=assigned_team_id)):
+            raise IncidentError("Not authorized to assign incidents to the selected team.")
+        check = get_connection()
+        check_cur = check.cursor()
+        try:
+            check_cur.execute("SELECT 1 FROM teams WHERE team_id=%s AND is_active=TRUE",
+                              (assigned_team_id,))
+            if not check_cur.fetchone():
+                raise IncidentError("Selected team is inactive or unavailable.")
+            if assigned_employee_id is not None:
+                check_cur.execute("""SELECT 1 FROM employees e
+                    JOIN employee_team_memberships m ON m.employee_id=e.employee_id
+                    WHERE e.employee_id=%s AND e.is_active=TRUE AND m.team_id=%s""",
+                    (assigned_employee_id, assigned_team_id))
+                if not check_cur.fetchone():
+                    raise IncidentError("Assignee must be an active member of the selected team.")
+        finally:
+            check_cur.close()
+            check.close()
+    elif assigned_employee_id is not None:
+        raise IncidentError("An individual assignee requires a team.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""SELECT requester_employee_id,assigned_team_id,assigned_employee_id
+            FROM incident_tickets WHERE ticket_id=%s FOR UPDATE""", (ticket_id,))
+        row = cur.fetchone()
+        if not row or row != snapshot:
+            raise IncidentError("Incident assignment changed; reload and try again.")
+        cur.execute("""UPDATE incident_tickets SET assigned_team_id=%s,assigned_employee_id=%s
+            WHERE ticket_id=%s""", (assigned_team_id, assigned_employee_id, ticket_id))
+        cur.execute("""INSERT INTO incident_activity
+            (ticket_id,actor_employee_id,activity_key,old_value,new_value)
+            VALUES (%s,%s,'ASSIGNMENT_CHANGED',%s,%s)""",
+            (ticket_id, actor_employee_id,
+             f"team={old_team_id};employee={old_employee_id}",
+             f"team={assigned_team_id};employee={assigned_employee_id}"))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'INCIDENT_ASSIGNED','incident',%s,'SUCCESS')""",
+            (actor_employee_id, str(ticket_id)))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
