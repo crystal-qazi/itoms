@@ -110,3 +110,30 @@ def revoke_session(raw_token: str) -> None:
     finally:
         cur.close()
         conn.close()
+
+from itoms.security.password_policy import validate_password
+
+def change_password(account_id: int, current_password: str, new_password: str) -> None:
+    """Change a password and invalidate every active session for the account."""
+    validate_password(new_password)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT password_hash FROM user_accounts WHERE account_id=%s AND account_status='ACTIVE' FOR UPDATE", (account_id,))
+        row = cur.fetchone()
+        if not row or not verify_password(row[0], current_password):
+            raise AuthenticationError("Current password is incorrect.")
+        cur.execute("""UPDATE user_accounts SET password_hash=%s, must_change_password=FALSE,
+            session_version=session_version+1, failed_login_count=0, locked_until=NULL
+            WHERE account_id=%s""", (hash_password(new_password), account_id))
+        cur.execute("""UPDATE user_sessions SET revoked_at=UTC_TIMESTAMP(),
+            revoke_reason='PASSWORD_CHANGED' WHERE account_id=%s AND revoked_at IS NULL""", (account_id,))
+        cur.execute("""INSERT INTO authentication_events (account_id,event_type)
+            VALUES (%s,'PASSWORD_CHANGED')""", (account_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
