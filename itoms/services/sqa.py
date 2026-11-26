@@ -14,6 +14,7 @@ class SQAError(ValueError):
 PLAN_STATUSES = {"DRAFT", "ACTIVE", "COMPLETED", "CANCELLED"}
 TEST_RESULTS = {"PASS", "FAIL", "BLOCKED", "RETEST"}
 DEFECT_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+DEFECT_STATUSES = {"OPEN", "TRIAGED", "FIXED", "RETEST", "CLOSED", "REJECTED"}
 SIGNOFF_DECISIONS = {"APPROVED", "REJECTED", "CONDITIONAL"}
 DEFECT_TRANSITIONS = {
     "OPEN": {"TRIAGED", "REJECTED"},
@@ -323,7 +324,7 @@ def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
 def update_defect_status(*, actor_employee_id: int, plan_id: int, defect_id: int,
                          new_status: str):
     new_status=new_status.strip().upper()
-    if new_status not in DEFECT_SEVERITIES and new_status not in DEFECT_STATUSES:
+    if new_status not in DEFECT_STATUSES:
         raise SQAError("Invalid defect status.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
