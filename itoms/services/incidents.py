@@ -80,6 +80,30 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
         cur.close()
         conn.close()
 
+
+def list_incidents(*, actor_employee_id: int, limit: int = 50) -> list[dict]:
+    """Return only incidents readable under the caller's OWN/TEAM scopes."""
+    limit = max(1, min(int(limit), 100))
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("""SELECT ticket_id,ticket_number,title,status,priority,requester_employee_id,
+            assigned_team_id,created_at,updated_at
+            FROM incident_tickets ORDER BY created_at DESC,ticket_id DESC LIMIT %s""", (limit * 3,))
+        candidates = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+    visible = []
+    for item in candidates:
+        context = ResourceContext(owner_employee_id=item["requester_employee_id"],
+                                  team_id=item["assigned_team_id"])
+        if has_permission(actor_employee_id, "incident.read", context):
+            visible.append(item)
+            if len(visible) >= limit:
+                break
+    return visible
+
 def transition_incident(*, actor_employee_id: int, ticket_id: int, new_status: str) -> None:
     """Apply an allowed state transition after checking resource-scoped permission."""
     conn = get_connection()
