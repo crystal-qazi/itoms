@@ -30,3 +30,11 @@ def test_health_endpoint() -> None:
 def test_app_factory_accepts_test_configuration() -> None:
     app = create_app(TestConfig)
     assert app.config["TESTING"] is True
+
+
+def test_engineering_task_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "engineering_tasks.index" in app.view_functions
+    assert "engineering_tasks.create" in app.view_functions
+    assert "engineering_tasks.detail" in app.view_functions
+    assert "engineering_tasks.update_status" in app.view_functions
