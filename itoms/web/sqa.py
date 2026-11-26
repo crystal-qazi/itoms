@@ -22,6 +22,18 @@ def _csrf_valid():
     return bool(token and hmac.compare_digest(str(token),str(request.form.get("csrf_token",""))))
 
 
+def _actor_context():
+    conn=get_connection(); cur=conn.cursor()
+    try:
+        cur.execute("""SELECT e.department_id,m.team_id FROM employees e
+            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+            WHERE e.employee_id=%s AND e.is_active=TRUE""",(g.employee_id,))
+        row=cur.fetchone()
+        return ResourceContext(owner_employee_id=g.employee_id,department_id=row[0],team_id=row[1]) if row else None
+    finally:
+        cur.close(); conn.close()
+
+
 def _release_choices():
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
@@ -32,9 +44,14 @@ def _release_choices():
             WHERE r.status IN ('IN_TEST','READY','APPROVED')
             ORDER BY r.created_at DESC LIMIT 100""")
         rows=cur.fetchall()
-        return [row for row in rows if has_permission(g.employee_id,"release.read",
-            ResourceContext(owner_employee_id=row["created_by"],department_id=row["department_id"],
-                team_id=row["owner_team_id"],resource_type="release",resource_id=str(row["release_id"])))]
+        visible=[]
+        for row in rows:
+            context=ResourceContext(owner_employee_id=row["created_by"],department_id=row["department_id"],
+                team_id=row["owner_team_id"],resource_type="release",resource_id=str(row["release_id"]))
+            if has_permission(g.employee_id,"release.read",context):
+                row["can_signoff"]=has_permission(g.employee_id,"sqa.signoff.create",context)
+                visible.append(row)
+        return visible
     finally:
         cur.close(); conn.close()
 
@@ -42,11 +59,13 @@ def _release_choices():
 @sqa_bp.get("/")
 @login_required
 def index():
-    can_create=has_permission(g.employee_id,"sqa.plan.create")
-    can_signoff=has_permission(g.employee_id,"sqa.signoff.create")
-    releases=_release_choices() if can_create or can_signoff else []
+    actor_context=_actor_context()
+    can_create=bool(actor_context and has_permission(g.employee_id,"sqa.plan.create",actor_context))
+    releases=_release_choices()
+    signoff_releases=[row for row in releases if row["can_signoff"]]
+    can_signoff=bool(signoff_releases)
     return render_template("sqa/index.html",plans=list_test_plans(actor_employee_id=g.employee_id),
-        releases=releases,can_create=can_create,can_signoff=can_signoff,
+        releases=releases,signoff_releases=signoff_releases,can_create=can_create,can_signoff=can_signoff,
         csrf_token_value=session.get("csrf_token",""))
 
 
