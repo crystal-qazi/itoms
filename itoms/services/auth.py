@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import secrets
 from werkzeug.security import check_password_hash, generate_password_hash
+from cryptography.fernet import Fernet
+import pyotp
+from flask import current_app
 from itoms.db.connection import get_connection
 from itoms.security.tokens import generate_token, token_digest
 
@@ -20,7 +23,7 @@ def verify_password(password_hash: str, password: str) -> bool:
     return check_password_hash(password_hash, password)
 
 def authenticate(username: str, password: str, *, ip_address: str | None = None,
-                 user_agent: str | None = None) -> tuple[int, str, bool] | None:
+                 user_agent: str | None = None, otp_code: str | None = None) -> tuple[int, str, bool] | None:
     """Verify credentials, enforce lockout and create a server-side session."""
     conn = get_connection()
     cur = conn.cursor()
@@ -38,13 +41,6 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
             return None
         account_id, password_hash, status, failed, locked_until, version, must_change, mfa_enabled = row
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        # Never silently bypass MFA while the challenge flow is not yet enabled.
-        if mfa_enabled:
-            cur.execute("""INSERT INTO authentication_events
-                (account_id,username_attempted,event_type,ip_address,user_agent)
-                VALUES (%s,%s,'LOGIN_FAILURE',%s,%s)""", (account_id, username, ip_address, user_agent))
-            conn.commit()
-            return None
         if locked_until and locked_until > now:
             cur.execute("""INSERT INTO authentication_events
                 (account_id,username_attempted,event_type,ip_address,user_agent)
@@ -62,6 +58,26 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
                 (account_id, username, "LOCKOUT" if lock_until else "LOGIN_FAILURE", ip_address, user_agent))
             conn.commit()
             return None
+        if mfa_enabled:
+            cur.execute("SELECT totp_secret_encrypted FROM user_accounts WHERE account_id=%s", (account_id,))
+            secret_row = cur.fetchone()
+            if not otp_code or not secret_row or not secret_row[0]:
+                valid_otp = False
+            else:
+                cipher = Fernet(current_app.config["TOTP_ENCRYPTION_KEY"].encode("utf-8"))
+                secret = cipher.decrypt(bytes(secret_row[0])).decode("utf-8")
+                valid_otp = pyotp.TOTP(secret).verify(otp_code, valid_window=1)
+            if not valid_otp:
+                cur.execute("""INSERT INTO authentication_events
+                    (account_id,username_attempted,event_type,ip_address,user_agent)
+                    VALUES (%s,%s,'MFA_FAILURE',%s,%s)""",
+                    (account_id, username, ip_address, user_agent))
+                conn.commit()
+                return None
+            cur.execute("""INSERT INTO authentication_events
+                (account_id,username_attempted,event_type,ip_address,user_agent)
+                VALUES (%s,%s,'MFA_SUCCESS',%s,%s)""",
+                (account_id, username, ip_address, user_agent))
         raw_token = generate_token()
         cur.execute("""UPDATE user_accounts SET failed_login_count=0, locked_until=NULL,
             last_login_at=UTC_TIMESTAMP() WHERE account_id=%s""", (account_id,))
@@ -81,7 +97,7 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
         cur.close()
         conn.close()
 
-def validate_session(raw_token: str) -> int | None:
+def validate_session(raw_token: str) -> tuple[int, int] | None:
     """Validate session version, account state, revocation and idle timeout."""
     conn = get_connection()
     cur = conn.cursor()
@@ -138,6 +154,62 @@ def change_password(account_id: int, current_password: str, new_password: str) -
         cur.execute("""INSERT INTO authentication_events (account_id,event_type)
             VALUES (%s,'PASSWORD_CHANGED')""", (account_id,))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+def begin_totp_enrollment(account_id: int) -> tuple[str, str]:
+    """Create a pending TOTP secret; MFA remains disabled until a valid code confirms it."""
+    key = current_app.config.get("TOTP_ENCRYPTION_KEY")
+    if not key:
+        raise AuthenticationError("TOTP encryption key is not configured.")
+    secret = pyotp.random_base32()
+    encrypted = Fernet(key.encode("utf-8")).encrypt(secret.encode("utf-8"))
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""UPDATE user_accounts SET totp_secret_encrypted=%s, mfa_enabled=FALSE
+            WHERE account_id=%s AND account_status='ACTIVE'""", (encrypted, account_id))
+        if cur.rowcount != 1:
+            raise AuthenticationError("Account is unavailable.")
+        conn.commit()
+        cur.execute("SELECT username FROM user_accounts WHERE account_id=%s", (account_id,))
+        username = cur.fetchone()[0]
+        return secret, pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name="ITOMS")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+def confirm_totp_enrollment(account_id: int, code: str) -> list[str]:
+    """Enable TOTP only after proof of possession; issue one-time recovery codes."""
+    key = current_app.config.get("TOTP_ENCRYPTION_KEY")
+    if not key:
+        raise AuthenticationError("TOTP encryption key is not configured.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT totp_secret_encrypted FROM user_accounts WHERE account_id=%s AND account_status='ACTIVE' FOR UPDATE", (account_id,))
+        row = cur.fetchone()
+        if not row or not row[0]:
+            raise AuthenticationError("No pending TOTP enrollment.")
+        secret = Fernet(key.encode("utf-8")).decrypt(bytes(row[0])).decode("utf-8")
+        if not pyotp.TOTP(secret).verify(code, valid_window=1):
+            raise AuthenticationError("Invalid verification code.")
+        cur.execute("UPDATE user_accounts SET mfa_enabled=TRUE WHERE account_id=%s", (account_id,))
+        cur.execute("DELETE FROM account_recovery_codes WHERE account_id=%s", (account_id,))
+        codes = [secrets.token_hex(5).upper() for _ in range(10)]
+        for code_value in codes:
+            cur.execute("INSERT INTO account_recovery_codes (account_id,code_hash) VALUES (%s,%s)",
+                        (account_id, generate_password_hash(code_value, method="scrypt")))
+        cur.execute("INSERT INTO authentication_events (account_id,event_type) VALUES (%s,'MFA_SUCCESS')", (account_id,))
+        conn.commit()
+        return codes
     except Exception:
         conn.rollback()
         raise
