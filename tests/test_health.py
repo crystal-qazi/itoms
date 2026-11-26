@@ -59,3 +59,10 @@ def test_change_management_blueprint_is_registered() -> None:
     assert "changes.create" in app.view_functions
     assert "changes.detail" in app.view_functions
     assert "changes.status" in app.view_functions
+
+
+def test_release_management_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "releases.index" in app.view_functions
+    assert "releases.create" in app.view_functions
+    assert "releases.status" in app.view_functions
