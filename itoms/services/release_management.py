@@ -63,11 +63,11 @@ def _assert_sqa_release_gate(cur, release_key: str):
 
     cur.execute("""SELECT
         SUM(CASE WHEN decision='APPROVED' THEN 1 ELSE 0 END),
-        SUM(CASE WHEN decision='REJECTED' THEN 1 ELSE 0 END)
+        SUM(CASE WHEN decision<>'APPROVED' THEN 1 ELSE 0 END)
         FROM sqa_release_signoffs WHERE release_key=%s""",(release_key,))
     approved,rejected=cur.fetchone()
     if not approved or rejected:
-        raise ReleaseError("SQA gate: an APPROVED sign-off is required and no REJECTED sign-off may remain.")
+        raise ReleaseError("SQA gate: an APPROVED sign-off is required and every recorded sign-off must be APPROVED.")
 
 
 def list_releases(*,actor_employee_id:int):
