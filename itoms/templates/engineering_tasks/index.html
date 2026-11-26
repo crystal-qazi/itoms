@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Engineering Tasks · ITOMS{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">OPERATIONS</p><h1>Engineering Task Management</h1><p class="text-secondary mb-0">Coordinate delivery across authorized teams.</p></div><span class="status-pill">Team-scoped workspace</span></div>
+{% if create_teams %}
+<section class="panel-card mt-4"><div class="panel-heading"><div><h2>Create an engineering task</h2><p>Tasks are visible only to users with access to their team.</p></div></div>
+<form method="post" action="{{ url_for('engineering_tasks.create') }}" class="row g-3 mt-1"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+<div class="col-12 col-lg-6"><label class="form-label" for="task-title">Task title</label><input class="form-control" id="task-title" name="title" maxlength="240" required></div>
+<div class="col-12 col-lg-3"><label class="form-label" for="task-team">Team</label><select class="form-select" id="task-team" name="team_id" required><option value="">Select team</option>{% for team in create_teams %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>
+<div class="col-12 col-lg-3"><label class="form-label" for="task-priority">Priority</label><select class="form-select" id="task-priority" name="priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div>
+<div class="col-12"><label class="form-label" for="task-description">Description</label><textarea class="form-control" id="task-description" name="description" rows="2"></textarea></div>
+<div class="col-12 col-md-6"><label class="form-label" for="task-assignee">Assignee employee ID (optional)</label><input class="form-control" id="task-assignee" name="assigned_to" inputmode="numeric" pattern="[0-9]*"></div>
+<div class="col-12 col-md-6"><label class="form-label" for="task-due">Due date (optional)</label><input class="form-control" id="task-due" name="due_at" type="datetime-local"></div>
+<div class="col-12"><button class="btn btn-primary" type="submit">Create task</button></div></form></section>
+{% endif %}
+<section class="panel-card mt-4"><div class="panel-heading"><div><h2>Task board</h2><p>Results are filtered by your server-side team permissions.</p></div></div>
+<form method="get" class="row g-2 mt-2"><div class="col-12 col-md-4"><label class="form-label" for="filter-team">Team</label><select class="form-select" id="filter-team" name="team"><option value="">All accessible teams</option>{% for team in teams %}<option value="{{ team.team_id }}" {% if selected_team == team.team_id %}selected{% endif %}>{{ team.team_name }}</option>{% endfor %}</select></div>
+<div class="col-6 col-md-3"><label class="form-label" for="filter-status">Status</label><select class="form-select" id="filter-status" name="status"><option value="">All statuses</option>{% for value in ['BACKLOG','READY','IN_PROGRESS','BLOCKED','IN_REVIEW','DONE','CANCELLED'] %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ value|replace('_',' ') }}</option>{% endfor %}</select></div>
+<div class="col-6 col-md-3"><label class="form-label" for="filter-priority">Priority</label><select class="form-select" id="filter-priority" name="priority"><option value="">All priorities</option>{% for value in ['LOW','MEDIUM','HIGH','CRITICAL'] %}<option value="{{ value }}" {% if selected_priority == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+<div class="col-12 col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Apply filters</button></div></form>
+{% if tasks %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th scope="col">Task</th><th scope="col">Team</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col">Due</th></tr></thead><tbody>{% for task in tasks %}<tr><td><a href="{{ url_for('engineering_tasks.detail', task_id=task.task_id) }}"><strong>{{ task.task_number }}</strong><br>{{ task.title }}</a></td><td>{{ task.team_name }}</td><td>{{ task.priority }}</td><td>{{ task.status|replace('_',' ') }}</td><td>{{ task.due_at or '—' }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="empty-state"><div class="empty-state-mark">—</div><strong>No tasks found</strong><p class="text-secondary mb-0">There are no tasks matching your accessible teams and filters.</p></div>{% endif %}</section>
+{% endblock %}
