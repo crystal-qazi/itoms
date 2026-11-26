@@ -62,7 +62,9 @@ def get_test_plan(*, actor_employee_id: int, plan_id: int):
         if plan:
             cur.execute("""SELECT c.test_case_id,c.case_key,c.title,c.preconditions,c.steps,c.expected_result,
                 (SELECT x.result FROM sqa_test_executions x WHERE x.test_case_id=c.test_case_id
-                 ORDER BY x.executed_at DESC,x.execution_id DESC LIMIT 1) AS latest_result
+                 ORDER BY x.executed_at DESC,x.execution_id DESC LIMIT 1) AS latest_result,
+                (SELECT x.execution_id FROM sqa_test_executions x WHERE x.test_case_id=c.test_case_id
+                 ORDER BY x.executed_at DESC,x.execution_id DESC LIMIT 1) AS latest_execution_id
                 FROM sqa_test_cases c WHERE c.test_plan_id=%s ORDER BY c.case_key""",(plan_id,))
             plan["cases"]=cur.fetchall()
             cur.execute("""SELECT d.defect_id,d.defect_key,d.title,d.severity,d.status,d.created_at
@@ -95,12 +97,15 @@ def create_test_plan(*, actor_employee_id: int, title: str, scope_description: s
             ResourceContext(owner_employee_id=actor_employee_id,department_id=actor_scope[0],team_id=actor_scope[1])):
             raise SQAError("Not authorized to create SQA plans.")
         if release_key:
-            cur.execute("SELECT release_id,created_by FROM software_releases WHERE release_key=%s",(release_key,))
+            cur.execute("""SELECT r.release_id,r.created_by,e.department_id,s.owner_team_id
+                FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
+                LEFT JOIN service_records s ON s.service_id=r.service_id WHERE r.release_key=%s""",(release_key,))
             release=cur.fetchone()
             if not release:
                 raise SQAError("Selected release was not found.")
             if not has_permission(actor_employee_id,"release.read",
-                ResourceContext(owner_employee_id=release[1],resource_type="release",resource_id=str(release[0]))):
+                ResourceContext(owner_employee_id=release[1],department_id=release[2],team_id=release[3],
+                    resource_type="release",resource_id=str(release[0]))):
                 raise SQAError("Not authorized to associate this release.")
         plan_key="SQA-"+secrets.token_hex(5).upper()
         cur.execute("""INSERT INTO sqa_test_plans
