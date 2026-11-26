@@ -77,13 +77,23 @@ def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
         cur.close(); conn.close()
 
 def cancel_approval(*, actor_employee_id: int, request_id: int) -> None:
+    # Read ownership first, then perform the permission query before taking row locks.
+    conn=get_connection(); cur=conn.cursor()
+    try:
+        cur.execute("SELECT requested_by,status FROM approval_requests WHERE approval_request_id=%s",(request_id,))
+        snapshot=cur.fetchone()
+    finally:
+        cur.close(); conn.close()
+    if not snapshot or snapshot[1]!="PENDING":
+        raise ApprovalError("Approval is not pending.")
+    if snapshot[0]!=actor_employee_id and not has_permission(actor_employee_id,"approvals.cancel"):
+        raise ApprovalError("Not authorized to cancel this approval.")
     conn=get_connection(); cur=conn.cursor()
     try:
         cur.execute("SELECT requested_by,status FROM approval_requests WHERE approval_request_id=%s FOR UPDATE",(request_id,))
         row=cur.fetchone()
-        if not row or row[1]!="PENDING": raise ApprovalError("Approval is not pending.")
-        if row[0]!=actor_employee_id and not has_permission(actor_employee_id,"approvals.cancel"):
-            raise ApprovalError("Not authorized to cancel this approval.")
+        if not row or row[1]!="PENDING" or row[0]!=snapshot[0]:
+            raise ApprovalError("Approval changed; reload and try again.")
         cur.execute("UPDATE approval_requests SET status='CANCELLED',completed_at=UTC_TIMESTAMP() WHERE approval_request_id=%s",(request_id,))
         cur.execute("""UPDATE approval_steps SET decision='SKIPPED'
             WHERE approval_request_id=%s AND decision='PENDING'""",(request_id,))
