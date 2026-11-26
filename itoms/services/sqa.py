@@ -207,24 +207,24 @@ def create_defect(*, actor_employee_id: int, plan_id: int, execution_id: int,
 
 
 def _assert_plan_ready(cur, plan_id: int):
-    cur.execute("SELECT COUNT(*) FROM sqa_test_cases WHERE test_plan_id=%s",(plan_id,))
-    if cur.fetchone()[0]<1:
+    cur.execute("SELECT COUNT(*) AS total_cases FROM sqa_test_cases WHERE test_plan_id=%s",(plan_id,))
+    if cur.fetchone()["total_cases"]<1:
         raise SQAError("A plan needs at least one test case before completion.")
-    cur.execute("""SELECT COUNT(*) FROM sqa_test_cases c WHERE c.test_plan_id=%s
+    cur.execute("""SELECT COUNT(*) AS failing_cases FROM sqa_test_cases c WHERE c.test_plan_id=%s
         AND NOT EXISTS (SELECT 1 FROM sqa_test_executions x
             WHERE x.test_case_id=c.test_case_id AND x.execution_id=(
                 SELECT x2.execution_id FROM sqa_test_executions x2
                 WHERE x2.test_case_id=c.test_case_id
                 ORDER BY x2.executed_at DESC,x2.execution_id DESC LIMIT 1)
             AND x.result='PASS')""",(plan_id,))
-    if cur.fetchone()[0]:
+    if cur.fetchone()["failing_cases"]:
         raise SQAError("Every test case must have a latest PASS result.")
-    cur.execute("""SELECT COUNT(*) FROM sqa_defects d
+    cur.execute("""SELECT COUNT(*) AS unresolved_defects FROM sqa_defects d
         JOIN sqa_test_executions x ON x.execution_id=d.execution_id
         JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
         WHERE c.test_plan_id=%s AND d.severity IN ('HIGH','CRITICAL')
         AND d.status NOT IN ('FIXED','CLOSED','REJECTED')""",(plan_id,))
-    if cur.fetchone()[0]:
+    if cur.fetchone()["unresolved_defects"]:
         raise SQAError("Unresolved High/Critical defects prevent SQA approval.")
 
 
