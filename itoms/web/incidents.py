@@ -4,17 +4,24 @@ import hmac
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 from itoms.security.decorators import login_required
 from itoms.services.authorization import has_permission
-from itoms.services.incidents import (IncidentError, add_comment, assign_incident, create_incident, get_incident_detail, list_assignable_teams, list_incidents, transition_incident)
+from itoms.services.incidents import (IncidentError, add_comment, assign_incident, create_incident, get_incident_detail, list_assignable_teams, list_accessible_incident_teams, list_incidents, transition_incident)
 
 incidents_bp = Blueprint("incidents", __name__, url_prefix="/incidents")
 
 @incidents_bp.get("/")
 @login_required
 def index():
-    rows = list_incidents(actor_employee_id=g.employee_id)
+    teams = list_accessible_incident_teams(actor_employee_id=g.employee_id)
+    raw_team = request.args.get("team", "").strip()
+    team_id = int(raw_team) if raw_team.isdigit() and int(raw_team) > 0 else None
+    invalid_team = bool(team_id and team_id not in {item["team_id"] for item in teams})
+    status = request.args.get("status", "").strip().upper() or None
+    priority = request.args.get("priority", "").strip().upper() or None
+    rows = [] if invalid_team else list_incidents(actor_employee_id=g.employee_id, team_id=team_id, status=status, priority=priority)
     can_create = has_permission(g.employee_id, "incident.create")
     return render_template("incidents/index.html", incidents=rows, can_create=can_create,
-                           csrf_token_value=session.get("csrf_token", ""))
+                           teams=teams, selected_team=team_id, selected_status=status or "",
+                           selected_priority=priority or "", csrf_token_value=session.get("csrf_token", ""))
 
 @incidents_bp.post("/")
 @login_required
