@@ -23,12 +23,13 @@ def _plan_context(row):
                            resource_id=str(row["test_plan_id"]))
 
 
-def _load_plan(cur, plan_id: int):
-    cur.execute("""SELECT p.test_plan_id,p.plan_key,p.release_key,p.title,p.status,p.created_by,
+def _load_plan(cur, plan_id: int, *, lock: bool = False):
+    query = """SELECT p.test_plan_id,p.plan_key,p.release_key,p.title,p.status,p.created_by,
         e.department_id,m.team_id
         FROM sqa_test_plans p JOIN employees e ON e.employee_id=p.created_by
         LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
-        WHERE p.test_plan_id=%s""", (plan_id,))
+        WHERE p.test_plan_id=%s"""
+    cur.execute(query + (" FOR UPDATE" if lock else ""), (plan_id,))
     return cur.fetchone()
 
 
@@ -127,7 +128,7 @@ def add_test_case(*, actor_employee_id: int, plan_id: int, case_key: str, title:
                   preconditions: str, steps: str, expected_result: str):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id)
+        plan=_load_plan(cur,plan_id,lock=True)
         _require_plan_permission(actor_employee_id,"sqa.case.create",plan)
         if plan["status"]!="ACTIVE":
             raise SQAError("Test cases can only be added to active plans.")
@@ -155,7 +156,7 @@ def record_execution(*, actor_employee_id: int, plan_id: int, case_id: int, resu
         raise SQAError("Choose a valid test execution result.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id)
+        plan=_load_plan(cur,plan_id,lock=True)
         _require_plan_permission(actor_employee_id,"sqa.execution.create",plan)
         if plan["status"]!="ACTIVE":
             raise SQAError("Executions can only be recorded against active plans.")
@@ -183,7 +184,7 @@ def create_defect(*, actor_employee_id: int, plan_id: int, execution_id: int,
         raise SQAError("Provide a valid defect title, description and severity.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id)
+        plan=_load_plan(cur,plan_id,lock=True)
         _require_plan_permission(actor_employee_id,"sqa.defect.create",plan)
         cur.execute("""SELECT x.execution_id,x.result FROM sqa_test_executions x
             JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
@@ -230,7 +231,7 @@ def _assert_plan_ready(cur, plan_id: int):
 def complete_test_plan(*, actor_employee_id: int, plan_id: int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id)
+        plan=_load_plan(cur,plan_id,lock=True)
         _require_plan_permission(actor_employee_id,"sqa.plan.update",plan)
         if plan["status"]!="ACTIVE":
             raise SQAError("Only active plans can be completed.")
