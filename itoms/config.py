@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from cryptography.fernet import Fernet, InvalidToken
 
 
 class Config:
@@ -23,3 +24,11 @@ class Config:
     def validate(cls, config: dict) -> None:
         if not config.get("SECRET_KEY") and not config.get("TESTING"):
             raise RuntimeError("ITOMS_SECRET_KEY must be configured.")
+        if not config.get("TESTING"):
+            key = config.get("TOTP_ENCRYPTION_KEY")
+            if not key:
+                raise RuntimeError("ITOMS_TOTP_ENCRYPTION_KEY must be configured.")
+            try:
+                Fernet(key.encode("utf-8"))
+            except (ValueError, TypeError):
+                raise RuntimeError("ITOMS_TOTP_ENCRYPTION_KEY must be a valid Fernet key.") from None
