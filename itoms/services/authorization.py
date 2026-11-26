@@ -36,8 +36,11 @@ def has_permission(employee_id: int, permission_key: str,
             if scope_type == "OWN" and resource.owner_employee_id == employee_id:
                 return True
             if scope_type == "TEAM" and resource.team_id is not None:
-                cur.execute("""SELECT 1 FROM employee_team_memberships
-                    WHERE employee_id=%s AND team_id=%s LIMIT 1""", (employee_id, resource.team_id))
+                cur.execute("""SELECT 1 FROM employee_team_memberships m
+                    JOIN teams t ON t.team_id=m.team_id AND t.is_active=TRUE
+                    WHERE m.employee_id=%s AND m.team_id=%s
+                    AND (%s IS NULL OR %s=CAST(m.team_id AS CHAR)) LIMIT 1""",
+                    (employee_id, resource.team_id, scope_reference, scope_reference))
                 if cur.fetchone():
                     return True
             if scope_type == "MANAGED_TEAMS" and resource.team_id is not None:
@@ -46,9 +49,10 @@ def has_permission(employee_id: int, permission_key: str,
                 if cur.fetchone():
                     return True
             if scope_type == "DEPARTMENT" and resource.department_id is not None:
-                cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE", (employee_id,))
+                cur.execute("""SELECT department_id FROM employees WHERE employee_id=%s
+                    AND is_active=TRUE AND department_id=%s""", (employee_id, resource.department_id))
                 row = cur.fetchone()
-                if row and row[0] == resource.department_id:
+                if row and (scope_reference is None or scope_reference == str(resource.department_id)):
                     return True
             if scope_type == "RESOURCE" and resource.resource_type and resource.resource_id:
                 if scope_reference == f"{resource.resource_type}:{resource.resource_id}":
