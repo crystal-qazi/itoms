@@ -198,6 +198,27 @@ def begin_totp_enrollment(account_id: int) -> tuple[str, str]:
         cur.close()
         conn.close()
 
+def get_pending_totp_enrollment(account_id: int) -> tuple[str, str] | None:
+    """Return an existing pending TOTP secret without rotating it."""
+    key = current_app.config.get("TOTP_ENCRYPTION_KEY")
+    if not key:
+        raise AuthenticationError("TOTP encryption key is not configured.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""SELECT username, totp_secret_encrypted FROM user_accounts
+            WHERE account_id=%s AND account_status='ACTIVE' AND mfa_enabled=FALSE""",
+            (account_id,))
+        row = cur.fetchone()
+        if not row or not row[1]:
+            return None
+        secret = Fernet(key.encode("utf-8")).decrypt(bytes(row[1])).decode("utf-8")
+        return secret, pyotp.TOTP(secret).provisioning_uri(name=row[0], issuer_name="ITOMS")
+    finally:
+        cur.close()
+        conn.close()
+
+
 def confirm_totp_enrollment(account_id: int, code: str) -> list[str]:
     """Enable TOTP only after proof of possession; issue one-time recovery codes."""
     key = current_app.config.get("TOTP_ENCRYPTION_KEY")
