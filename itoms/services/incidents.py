@@ -229,8 +229,10 @@ def assign_incident(*, actor_employee_id: int, ticket_id: int,
         raise IncidentError("Incident not found.")
     requester_id, old_team_id, old_employee_id = snapshot
     old_context = ResourceContext(owner_employee_id=requester_id, team_id=old_team_id)
-    if not has_permission(actor_employee_id, "incident.assign", old_context):
-        raise IncidentError("Not authorized to assign this incident.")
+    if old_team_id is not None and not has_permission(actor_employee_id, "incident.assign", old_context):
+        raise IncidentError("Not authorized to reassign this incident.")
+    if assigned_team_id is None and old_team_id is None:
+        raise IncidentError("Incident has no current team assignment.")
     if assigned_team_id is not None:
         if not has_permission(actor_employee_id, "incident.assign",
                               ResourceContext(owner_employee_id=requester_id, team_id=assigned_team_id)):
