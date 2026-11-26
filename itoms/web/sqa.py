@@ -7,7 +7,7 @@ from flask import Blueprint, flash, g, redirect, render_template, request, sessi
 
 from itoms.db.connection import get_connection
 from itoms.security.decorators import login_required
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.sqa import (
     SQAError, add_test_case, complete_test_plan, create_defect, create_test_plan,
     get_test_plan, list_sqa_release_signoffs, list_test_plans, record_execution,
@@ -25,10 +25,16 @@ def _csrf_valid():
 def _release_choices():
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT r.release_key,r.version_label FROM software_releases r
+        cur.execute("""SELECT r.release_id,r.release_key,r.version_label,r.created_by,
+            e.department_id,s.owner_team_id FROM software_releases r
+            JOIN employees e ON e.employee_id=r.created_by
+            LEFT JOIN service_records s ON s.service_id=r.service_id
             WHERE r.status IN ('IN_TEST','READY','APPROVED')
             ORDER BY r.created_at DESC LIMIT 100""")
-        return cur.fetchall()
+        rows=cur.fetchall()
+        return [row for row in rows if has_permission(g.employee_id,"release.read",
+            ResourceContext(owner_employee_id=row["created_by"],department_id=row["department_id"],
+                team_id=row["owner_team_id"],resource_type="release",resource_id=str(row["release_id"])))]
     finally:
         cur.close(); conn.close()
 
