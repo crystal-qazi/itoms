@@ -85,3 +85,59 @@ def change_task_status(*,actor_employee_id:int,task_id:int,new_status:str)->None
         conn.rollback();raise
     finally:
         cur.close();conn.close()
+
+
+def list_accessible_task_teams(*, actor_employee_id: int, permission_key: str = "engineering.tasks.read") -> list[dict]:
+    """Return active teams visible to the actor for a specific task permission."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT team_id,team_name FROM teams WHERE is_active=TRUE ORDER BY team_name")
+        teams = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+    return [team for team in teams if has_permission(actor_employee_id, permission_key, ResourceContext(team_id=team["team_id"]))]
+
+
+def list_tasks(*, actor_employee_id: int, team_id: int | None = None, status: str | None = None, priority: str | None = None, limit: int = 100) -> list[dict]:
+    """List tasks only when the actor has read access to each task's team."""
+    limit = max(1, min(int(limit), 200))
+    clauses, params = [], []
+    if team_id is not None:
+        clauses.append("team_id=%s"); params.append(team_id)
+    if status in {"BACKLOG", "READY", "IN_PROGRESS", "BLOCKED", "IN_REVIEW", "DONE", "CANCELLED"}:
+        clauses.append("status=%s"); params.append(status)
+    if priority in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        clauses.append("priority=%s"); params.append(priority)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    conn = get_connection(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT task_id,task_number,title,team_id,assigned_to,priority,status,due_at,created_at FROM engineering_tasks" + where + " ORDER BY created_at DESC,task_id DESC LIMIT %s", tuple(params + [limit * 3]))
+        candidates = cur.fetchall()
+        cur.execute("SELECT team_id,team_name FROM teams")
+        team_names = {row["team_id"]: row["team_name"] for row in cur.fetchall()}
+    finally:
+        cur.close(); conn.close()
+    visible = []
+    for item in candidates:
+        if has_permission(actor_employee_id, "engineering.tasks.read", ResourceContext(team_id=item["team_id"])):
+            item["team_name"] = team_names.get(item["team_id"], "Unknown team")
+            visible.append(item)
+            if len(visible) >= limit: break
+    return visible
+
+
+def get_task_detail(*, actor_employee_id: int, task_id: int) -> dict:
+    """Fetch task and activity after checking the trusted team scope."""
+    conn = get_connection(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT t.task_id,t.task_number,t.title,t.description,t.team_id,t.assigned_to,t.priority,t.status,t.due_at,t.created_at,t.updated_at,tm.team_name,creator.full_name AS creator_name,assignee.full_name AS assignee_name FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id JOIN employees creator ON creator.employee_id=t.created_by LEFT JOIN employees assignee ON assignee.employee_id=t.assigned_to WHERE t.task_id=%s", (task_id,))
+        task = cur.fetchone()
+        if not task or not has_permission(actor_employee_id, "engineering.tasks.read", ResourceContext(team_id=task["team_id"])):
+            raise TaskError("Task not found.")
+        cur.execute("SELECT a.action_key,a.old_value,a.new_value,a.created_at,e.full_name AS actor_name FROM engineering_task_activity a JOIN employees e ON e.employee_id=a.actor_employee_id WHERE a.task_id=%s ORDER BY a.created_at,a.activity_id", (task_id,))
+        task["activity"] = cur.fetchall()
+        return task
+    finally:
+        cur.close(); conn.close()
