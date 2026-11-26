@@ -15,6 +15,15 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     config_class.validate(app.config)
     configure_logging(app.config.get("LOG_LEVEL", "INFO"))
 
+    @app.after_request
+    def apply_security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
+        return response
+
     from itoms.web.health import health_bp
     app.register_blueprint(health_bp)
     return app
