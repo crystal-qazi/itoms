@@ -53,10 +53,12 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.grafana import grafana_bp
     from itoms.web.incidents import incidents_bp
     from itoms.web.engineering_tasks import engineering_tasks_bp
+    from itoms.web.service_inventory import service_inventory_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(grafana_bp)
     app.register_blueprint(incidents_bp)
     app.register_blueprint(engineering_tasks_bp)
+    app.register_blueprint(service_inventory_bp)
     register_cli(app)
     return app
