@@ -91,6 +91,7 @@ def detail(plan_id: int):
         signoffs=list_sqa_release_signoffs(actor_employee_id=g.employee_id,release_key=plan["release_key"]) if plan["release_key"] else []
         return render_template("sqa/detail.html",plan=plan,signoffs=signoffs,
             results=["PASS","FAIL","BLOCKED","RETEST"],severities=["LOW","MEDIUM","HIGH","CRITICAL"],
+            defect_statuses=["OPEN","TRIAGED","FIXED","RETEST","CLOSED","REJECTED"],
             csrf_token_value=session.get("csrf_token",""))
     except SQAError as exc:
         flash(str(exc),"danger")
