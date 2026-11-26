@@ -51,3 +51,11 @@ def test_notifications_blueprint_is_registered() -> None:
     app = create_app(TestConfig)
     assert "notifications.index" in app.view_functions
     assert "notifications.read" in app.view_functions
+
+
+def test_change_management_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "changes.index" in app.view_functions
+    assert "changes.create" in app.view_functions
+    assert "changes.detail" in app.view_functions
+    assert "changes.status" in app.view_functions
