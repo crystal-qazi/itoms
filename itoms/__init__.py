@@ -1,5 +1,5 @@
 """ITOMS application package."""
-from flask import Flask
+from flask import Flask, g, session
 
 from itoms.config import Config
 from itoms.logging_config import configure_logging
@@ -14,7 +14,23 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     if app.config.get("TESTING"):
         app.config.setdefault("SECRET_KEY", "test-only-key")
     config_class.validate(app.config)
+    app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
+    app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+    app.config.setdefault("SESSION_COOKIE_SECURE", not app.config.get("TESTING", False))
+    app.config.setdefault("PERMANENT_SESSION_LIFETIME", 3600)
     configure_logging(app.config.get("LOG_LEVEL", "INFO"))
+
+    @app.before_request
+    def validate_server_session():
+        token = session.get("server_session_token")
+        if not token:
+            g.account_id = None
+            return
+        from itoms.services.auth import validate_session
+        account_id = validate_session(token)
+        if account_id is None:
+            session.clear()
+        g.account_id = account_id
 
     @app.after_request
     def apply_security_headers(response):
@@ -26,6 +42,8 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         return response
 
     from itoms.web.health import health_bp
+    from itoms.web.auth import auth_bp
     app.register_blueprint(health_bp)
+    app.register_blueprint(auth_bp)
     register_cli(app)
     return app
