@@ -18,11 +18,13 @@ def create_release(*,actor_employee_id:int,release_key:str,version_label:str,rel
     conn=get_connection(); cur=conn.cursor()
     try:
         if service_id is not None:
-            cur.execute("SELECT 1 FROM service_records WHERE service_id=%s",(service_id,))
-            if not cur.fetchone(): raise ReleaseError("Service record not found.")
+            cur.execute("SELECT service_id,owner_team_id FROM service_records WHERE service_id=%s",(service_id,)); service=cur.fetchone()
+            if not service: raise ReleaseError("Service record not found.")
+            if not has_permission(actor_employee_id,"service.inventory.read",ResourceContext(team_id=service[1],resource_type="service",resource_id=str(service[0]))): raise ReleaseError("Not authorized to link this service.")
         if change_id is not None:
-            cur.execute("SELECT 1 FROM change_records WHERE change_id=%s",(change_id,))
-            if not cur.fetchone(): raise ReleaseError("Change record not found.")
+            cur.execute("SELECT change_id,requested_by FROM change_records WHERE change_id=%s",(change_id,)); change=cur.fetchone()
+            if not change: raise ReleaseError("Change record not found.")
+            if not has_permission(actor_employee_id,"change.read",ResourceContext(owner_employee_id=change[1],resource_type="change",resource_id=str(change[0]))): raise ReleaseError("Not authorized to link this change.")
         cur.execute("INSERT INTO software_releases (release_key,service_id,version_label,release_notes,target_at,created_by) VALUES (%s,%s,%s,%s,%s,%s)",(release_key,service_id,version_label,release_notes.strip(),target_at or None,actor_employee_id))
         release_id=int(cur.lastrowid)
         if change_id is not None: cur.execute("INSERT INTO release_change_links (release_id,change_id) VALUES (%s,%s)",(release_id,change_id))
