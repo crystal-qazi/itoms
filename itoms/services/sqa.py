@@ -1,0 +1,277 @@
+"""Manual SQA planning, execution, defect and release sign-off services."""
+from __future__ import annotations
+
+import secrets
+
+from itoms.db.connection import get_connection
+from itoms.services.authorization import ResourceContext, has_permission
+
+
+class SQAError(ValueError):
+    """An SQA operation is invalid or outside the actor's authorization scope."""
+
+
+PLAN_STATUSES = {"DRAFT", "ACTIVE", "COMPLETED", "CANCELLED"}
+TEST_RESULTS = {"PASS", "FAIL", "BLOCKED", "RETEST"}
+DEFECT_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+SIGNOFF_DECISIONS = {"APPROVED", "REJECTED", "CONDITIONAL"}
+
+
+def _plan_context(row):
+    return ResourceContext(owner_employee_id=row["created_by"],
+                           resource_type="sqa_plan",
+                           resource_id=str(row["test_plan_id"]))
+
+
+def _load_plan(cur, plan_id: int):
+    cur.execute("""SELECT test_plan_id,plan_key,release_key,title,status,created_by
+        FROM sqa_test_plans WHERE test_plan_id=%s""", (plan_id,))
+    return cur.fetchone()
+
+
+def _require_plan_permission(actor_employee_id: int, permission: str, plan):
+    if not plan or not has_permission(actor_employee_id, permission, _plan_context(plan)):
+        raise SQAError("SQA plan not found or not authorized.")
+
+
+def list_test_plans(*, actor_employee_id: int):
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        cur.execute("""SELECT test_plan_id,plan_key,release_key,title,status,created_by,created_at
+            FROM sqa_test_plans ORDER BY created_at DESC LIMIT 200""")
+        rows=cur.fetchall()
+    finally:
+        cur.close(); conn.close()
+    return [row for row in rows if has_permission(actor_employee_id,"sqa.plan.read",_plan_context(row))]
+
+
+def get_test_plan(*, actor_employee_id: int, plan_id: int):
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        cur.execute("""SELECT p.*,e.full_name AS creator_name FROM sqa_test_plans p
+            JOIN employees e ON e.employee_id=p.created_by WHERE p.test_plan_id=%s""",(plan_id,))
+        plan=cur.fetchone()
+        if plan:
+            cur.execute("""SELECT c.test_case_id,c.case_key,c.title,c.preconditions,c.steps,c.expected_result,
+                (SELECT x.result FROM sqa_test_executions x WHERE x.test_case_id=c.test_case_id
+                 ORDER BY x.executed_at DESC,x.execution_id DESC LIMIT 1) AS latest_result
+                FROM sqa_test_cases c WHERE c.test_plan_id=%s ORDER BY c.case_key""",(plan_id,))
+            plan["cases"]=cur.fetchall()
+            cur.execute("""SELECT d.defect_id,d.defect_key,d.title,d.severity,d.status,d.created_at
+                FROM sqa_defects d JOIN sqa_test_executions x ON x.execution_id=d.execution_id
+                JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
+                WHERE c.test_plan_id=%s ORDER BY d.created_at DESC""",(plan_id,))
+            plan["defects"]=cur.fetchall()
+    finally:
+        cur.close(); conn.close()
+    _require_plan_permission(actor_employee_id,"sqa.plan.read",plan)
+    plan["can_update"]=has_permission(actor_employee_id,"sqa.plan.update",_plan_context(plan))
+    plan["can_add_case"]=has_permission(actor_employee_id,"sqa.case.create",_plan_context(plan))
+    plan["can_execute"]=has_permission(actor_employee_id,"sqa.execution.create",_plan_context(plan))
+    plan["can_create_defect"]=has_permission(actor_employee_id,"sqa.defect.create",_plan_context(plan))
+    return plan
+
+
+def create_test_plan(*, actor_employee_id: int, title: str, scope_description: str, release_key: str | None):
+    if not has_permission(actor_employee_id,"sqa.plan.create"):
+        raise SQAError("Not authorized to create SQA plans.")
+    title=title.strip()
+    if not title or len(title)>200:
+        raise SQAError("Plan title is required (maximum 200 characters).")
+    release_key=(release_key or "").strip().upper() or None
+    conn=get_connection(); cur=conn.cursor()
+    try:
+        if release_key:
+            cur.execute("SELECT release_id,created_by FROM software_releases WHERE release_key=%s",(release_key,))
+            release=cur.fetchone()
+            if not release:
+                raise SQAError("Selected release was not found.")
+            if not has_permission(actor_employee_id,"release.read",
+                ResourceContext(owner_employee_id=release[1],resource_type="release",resource_id=str(release[0]))):
+                raise SQAError("Not authorized to associate this release.")
+        plan_key="SQA-"+secrets.token_hex(5).upper()
+        cur.execute("""INSERT INTO sqa_test_plans
+            (plan_key,release_key,title,scope_description,created_by,status)
+            VALUES (%s,%s,%s,%s,%s,'ACTIVE')""",
+            (plan_key,release_key,title,scope_description.strip() or None,actor_employee_id))
+        plan_id=int(cur.lastrowid)
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_PLAN_CREATED','sqa_plan',%s,'SUCCESS')""",(actor_employee_id,str(plan_id)))
+        conn.commit(); return plan_id
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def add_test_case(*, actor_employee_id: int, plan_id: int, case_key: str, title: str,
+                  preconditions: str, steps: str, expected_result: str):
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        plan=_load_plan(cur,plan_id)
+        _require_plan_permission(actor_employee_id,"sqa.case.create",plan)
+        if plan["status"]!="ACTIVE":
+            raise SQAError("Test cases can only be added to active plans.")
+        case_key=case_key.strip().upper(); title=title.strip(); steps=steps.strip(); expected_result=expected_result.strip()
+        if not case_key or len(case_key)>80 or not title or len(title)>200 or not steps or not expected_result:
+            raise SQAError("A valid case key, title, test steps and expected result are required.")
+        cur.execute("""INSERT INTO sqa_test_cases
+            (test_plan_id,case_key,title,preconditions,steps,expected_result)
+            VALUES (%s,%s,%s,%s,%s,%s)""",
+            (plan_id,case_key,title,preconditions.strip() or None,steps,expected_result))
+        case_id=int(cur.lastrowid)
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_CASE_CREATED','sqa_test_case',%s,'SUCCESS')""",(actor_employee_id,str(case_id)))
+        conn.commit(); return case_id
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def record_execution(*, actor_employee_id: int, plan_id: int, case_id: int, result: str, actual_result: str):
+    result=result.strip().upper()
+    if result not in TEST_RESULTS:
+        raise SQAError("Choose a valid test execution result.")
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        plan=_load_plan(cur,plan_id)
+        _require_plan_permission(actor_employee_id,"sqa.execution.create",plan)
+        if plan["status"]!="ACTIVE":
+            raise SQAError("Executions can only be recorded against active plans.")
+        cur.execute("SELECT test_case_id FROM sqa_test_cases WHERE test_case_id=%s AND test_plan_id=%s",(case_id,plan_id))
+        if not cur.fetchone():
+            raise SQAError("Test case not found in this plan.")
+        cur.execute("""INSERT INTO sqa_test_executions
+            (test_case_id,executed_by,result,actual_result,executed_at)
+            VALUES (%s,%s,%s,%s,UTC_TIMESTAMP())""",(case_id,actor_employee_id,result,actual_result.strip() or None))
+        execution_id=int(cur.lastrowid)
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_EXECUTION_RECORDED','sqa_execution',%s,'SUCCESS')""",(actor_employee_id,str(execution_id)))
+        conn.commit(); return execution_id
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def create_defect(*, actor_employee_id: int, plan_id: int, execution_id: int,
+                  title: str, description: str, severity: str):
+    title=title.strip(); description=description.strip(); severity=severity.strip().upper()
+    if not title or len(title)>200 or not description or severity not in DEFECT_SEVERITIES:
+        raise SQAError("Provide a valid defect title, description and severity.")
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        plan=_load_plan(cur,plan_id)
+        _require_plan_permission(actor_employee_id,"sqa.defect.create",plan)
+        cur.execute("""SELECT x.execution_id,x.result FROM sqa_test_executions x
+            JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
+            WHERE x.execution_id=%s AND c.test_plan_id=%s""",(execution_id,plan_id))
+        execution=cur.fetchone()
+        if not execution or execution["result"]!="FAIL":
+            raise SQAError("Defects must reference a failed execution in this plan.")
+        defect_key="BUG-"+secrets.token_hex(5).upper()
+        cur.execute("""INSERT INTO sqa_defects (defect_key,execution_id,title,description,severity)
+            VALUES (%s,%s,%s,%s,%s)""",(defect_key,execution_id,title,description,severity))
+        defect_id=int(cur.lastrowid)
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_DEFECT_CREATED','sqa_defect',%s,'SUCCESS')""",(actor_employee_id,str(defect_id)))
+        conn.commit(); return defect_id
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def _assert_plan_ready(cur, plan_id: int):
+    cur.execute("SELECT COUNT(*) FROM sqa_test_cases WHERE test_plan_id=%s",(plan_id,))
+    if cur.fetchone()[0]<1:
+        raise SQAError("A plan needs at least one test case before completion.")
+    cur.execute("""SELECT COUNT(*) FROM sqa_test_cases c WHERE c.test_plan_id=%s
+        AND NOT EXISTS (SELECT 1 FROM sqa_test_executions x
+            WHERE x.test_case_id=c.test_case_id AND x.execution_id=(
+                SELECT x2.execution_id FROM sqa_test_executions x2
+                WHERE x2.test_case_id=c.test_case_id
+                ORDER BY x2.executed_at DESC,x2.execution_id DESC LIMIT 1)
+            AND x.result='PASS')""",(plan_id,))
+    if cur.fetchone()[0]:
+        raise SQAError("Every test case must have a latest PASS result.")
+    cur.execute("""SELECT COUNT(*) FROM sqa_defects d
+        JOIN sqa_test_executions x ON x.execution_id=d.execution_id
+        JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
+        WHERE c.test_plan_id=%s AND d.severity IN ('HIGH','CRITICAL')
+        AND d.status NOT IN ('FIXED','CLOSED','REJECTED')""",(plan_id,))
+    if cur.fetchone()[0]:
+        raise SQAError("Unresolved High/Critical defects prevent SQA approval.")
+
+
+def complete_test_plan(*, actor_employee_id: int, plan_id: int):
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        plan=_load_plan(cur,plan_id)
+        _require_plan_permission(actor_employee_id,"sqa.plan.update",plan)
+        if plan["status"]!="ACTIVE":
+            raise SQAError("Only active plans can be completed.")
+        _assert_plan_ready(cur,plan_id)
+        cur.execute("UPDATE sqa_test_plans SET status='COMPLETED' WHERE test_plan_id=%s",(plan_id,))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_PLAN_COMPLETED','sqa_plan',%s,'SUCCESS')""",(actor_employee_id,str(plan_id)))
+        conn.commit()
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def record_release_signoff(*, actor_employee_id: int, release_key: str, decision: str, comments: str):
+    release_key=release_key.strip().upper(); decision=decision.strip().upper()
+    if decision not in SIGNOFF_DECISIONS or not release_key:
+        raise SQAError("A release and valid sign-off decision are required.")
+    if not has_permission(actor_employee_id,"sqa.signoff.create"):
+        raise SQAError("Not authorized to record SQA sign-off.")
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT release_id,created_by FROM software_releases WHERE release_key=%s",(release_key,))
+        release=cur.fetchone()
+        if not release:
+            raise SQAError("Release record not found.")
+        if not has_permission(actor_employee_id,"release.read",
+            ResourceContext(owner_employee_id=release["created_by"],resource_type="release",resource_id=str(release["release_id"]))):
+            raise SQAError("Not authorized to sign off this release.")
+        if decision=="APPROVED":
+            cur.execute("SELECT test_plan_id FROM sqa_test_plans WHERE release_key=%s AND status='COMPLETED'",(release_key,))
+            plans=cur.fetchall()
+            if not plans:
+                raise SQAError("Complete at least one linked SQA test plan before approval.")
+            for plan in plans:
+                _assert_plan_ready(cur,plan["test_plan_id"])
+        cur.execute("""INSERT INTO sqa_release_signoffs (release_key,signed_by,decision,comments)
+            VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE decision=VALUES(decision),
+            comments=VALUES(comments),signed_at=UTC_TIMESTAMP()""",
+            (release_key,actor_employee_id,decision,comments.strip() or None))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'SQA_RELEASE_SIGNOFF','release',%s,'SUCCESS')""",(actor_employee_id,release_key))
+        conn.commit()
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
+    if not has_permission(actor_employee_id,"sqa.signoff.read"):
+        return []
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        cur.execute("""SELECT s.release_key,s.decision,s.comments,s.signed_at,e.full_name AS signer
+            FROM sqa_release_signoffs s JOIN employees e ON e.employee_id=s.signed_by
+            WHERE s.release_key=%s ORDER BY s.signed_at DESC""",(release_key,))
+        return cur.fetchall()
+    finally:
+        cur.close(); conn.close()
