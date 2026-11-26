@@ -81,15 +81,21 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
         conn.close()
 
 
-def list_incidents(*, actor_employee_id: int, limit: int = 50) -> list[dict]:
+def list_incidents(*, actor_employee_id: int, limit: int = 50, team_id: int | None = None, status: str | None = None, priority: str | None = None) -> list[dict]:
     """Return only incidents readable under the caller's OWN/TEAM scopes."""
     limit = max(1, min(int(limit), 100))
+    clauses, params = [], []
+    if team_id is not None:
+        clauses.append("assigned_team_id=%s"); params.append(team_id)
+    if status in {"NEW", "OPEN", "IN_PROGRESS", "PENDING", "RESOLVED", "CLOSED", "CANCELLED"}:
+        clauses.append("status=%s"); params.append(status)
+    if priority in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        clauses.append("priority=%s"); params.append(priority)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT ticket_id,ticket_number,title,status,priority,requester_employee_id,
-            assigned_team_id,created_at,updated_at
-            FROM incident_tickets ORDER BY created_at DESC,ticket_id DESC LIMIT %s""", (limit * 3,))
+        cur.execute("SELECT ticket_id,ticket_number,title,status,priority,requester_employee_id,assigned_team_id,created_at,updated_at FROM incident_tickets" + where + " ORDER BY created_at DESC,ticket_id DESC LIMIT %s", tuple(params + [limit * 3]))
         candidates = cur.fetchall()
     finally:
         cur.close()
@@ -304,3 +310,14 @@ def list_assignable_teams(*, actor_employee_id: int, ticket_id: int) -> list[dic
         ResourceContext(owner_employee_id=ticket["requester_employee_id"],
                         team_id=team["team_id"]))]
 
+
+
+def list_accessible_incident_teams(*, actor_employee_id: int) -> list[dict]:
+    """Return active teams where the actor can read incident records."""
+    conn = get_connection(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT team_id,team_name FROM teams WHERE is_active=TRUE ORDER BY team_name")
+        teams = cur.fetchall()
+    finally:
+        cur.close(); conn.close()
+    return [team for team in teams if has_permission(actor_employee_id, "incident.read", ResourceContext(team_id=team["team_id"]))]
