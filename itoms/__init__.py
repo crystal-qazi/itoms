@@ -3,6 +3,7 @@ from flask import Flask
 
 from itoms.config import Config
 from itoms.logging_config import configure_logging
+from itoms.cli import register_cli
 
 
 def create_app(config_class: type[Config] = Config) -> Flask:
@@ -26,4 +27,5 @@ def create_app(config_class: type[Config] = Config) -> Flask:
 
     from itoms.web.health import health_bp
     app.register_blueprint(health_bp)
+    register_cli(app)
     return app
