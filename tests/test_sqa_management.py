@@ -1,6 +1,6 @@
 """SQA route registration and lifecycle contract tests."""
 from itoms import create_app
-from itoms.services.sqa import DEFECT_SEVERITIES, SIGNOFF_DECISIONS, TEST_RESULTS
+from itoms.services.sqa import DEFECT_SEVERITIES, DEFECT_STATUSES, DEFECT_TRANSITIONS, SIGNOFF_DECISIONS, TEST_RESULTS
 
 
 class TestConfig:
@@ -23,7 +23,7 @@ def test_sqa_blueprint_registers_all_workflow_routes():
     app = create_app(TestConfig)
     expected = {
         "sqa.index", "sqa.create_plan", "sqa.detail", "sqa.add_case",
-        "sqa.execute_case", "sqa.defect", "sqa.complete", "sqa.signoff",
+        "sqa.execute_case", "sqa.defect", "sqa.complete", "sqa.signoff", "sqa.update_defect",
     }
     assert expected.issubset(app.view_functions)
 
@@ -32,6 +32,9 @@ def test_sqa_result_and_severity_catalogues_are_closed_sets():
     assert TEST_RESULTS == {"PASS", "FAIL", "BLOCKED", "RETEST"}
     assert DEFECT_SEVERITIES == {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
     assert SIGNOFF_DECISIONS == {"APPROVED", "REJECTED", "CONDITIONAL"}
+    assert DEFECT_STATUSES == {"OPEN", "TRIAGED", "FIXED", "RETEST", "CLOSED", "REJECTED"}
+    assert DEFECT_TRANSITIONS["OPEN"] == {"TRIAGED", "REJECTED"}
+    assert DEFECT_TRANSITIONS["CLOSED"] == set()
 
 
 
