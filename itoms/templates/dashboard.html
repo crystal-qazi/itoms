@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Overview · ITOMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">WORKSPACE</p><h1>Overview</h1><p class="text-secondary mb-0">Your operational workspace at a glance.</p></div>
+  <span class="status-pill"><span></span> Platform foundation</span>
+</div>
+<section class="row g-3 mt-2" aria-label="Operational summary">
+  {% for item in summary %}
+  <div class="col-12 col-sm-6 col-xl-3"><article class="metric-card h-100"><div class="metric-label">{{ item.label }}</div><div class="metric-value">—</div><div class="metric-note">{{ item.note }}</div></article></div>
+  {% endfor %}
+</section>
+<section class="row g-3 mt-1">
+  <div class="col-12 col-xl-8"><article class="panel-card h-100"><div class="panel-heading"><div><h2>Operational modules</h2><p>Modules will appear here as they are released.</p></div></div><div class="module-placeholder"><div class="placeholder-icon">IT</div><div><strong>Platform foundation is being built</strong><p class="mb-0 text-secondary">Identity, access control and shared services are under implementation.</p></div></div></article></div>
+  <div class="col-12 col-xl-4"><article class="panel-card h-100"><div class="panel-heading"><div><h2>My workspace</h2><p>Personal work queue</p></div></div><div class="empty-state"><div class="empty-state-mark">✓</div><strong>You're signed in</strong><p class="text-secondary mb-0">Your assigned work will appear here when the task modules are enabled.</p></div></article></div>
+</section>
+{% endblock %}
