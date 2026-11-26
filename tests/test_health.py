@@ -45,3 +45,9 @@ def test_service_inventory_blueprint_is_registered() -> None:
     assert "service_inventory.index" in app.view_functions
     assert "service_inventory.create" in app.view_functions
     assert "service_inventory.lifecycle" in app.view_functions
+
+
+def test_notifications_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "notifications.index" in app.view_functions
+    assert "notifications.read" in app.view_functions
