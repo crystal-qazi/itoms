@@ -38,3 +38,10 @@ def test_engineering_task_blueprint_is_registered() -> None:
     assert "engineering_tasks.create" in app.view_functions
     assert "engineering_tasks.detail" in app.view_functions
     assert "engineering_tasks.update_status" in app.view_functions
+
+
+def test_service_inventory_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "service_inventory.index" in app.view_functions
+    assert "service_inventory.create" in app.view_functions
+    assert "service_inventory.lifecycle" in app.view_functions
