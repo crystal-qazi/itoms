@@ -67,6 +67,14 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
                 cipher = Fernet(current_app.config["TOTP_ENCRYPTION_KEY"].encode("utf-8"))
                 secret = cipher.decrypt(bytes(secret_row[0])).decode("utf-8")
                 valid_otp = pyotp.TOTP(secret).verify(otp_code, valid_window=1)
+            if not valid_otp and otp_code:
+                cur.execute("SELECT recovery_code_id, code_hash FROM account_recovery_codes WHERE account_id=%s AND used_at IS NULL", (account_id,))
+                for recovery_id, code_hash in cur.fetchall():
+                    if check_password_hash(code_hash, otp_code.upper()):
+                        cur.execute("UPDATE account_recovery_codes SET used_at=UTC_TIMESTAMP() WHERE recovery_code_id=%s AND used_at IS NULL", (recovery_id,))
+                        valid_otp = cur.rowcount == 1
+                        if valid_otp:
+                            break
             if not valid_otp:
                 cur.execute("""INSERT INTO authentication_events
                     (account_id,username_attempted,event_type,ip_address,user_agent)
