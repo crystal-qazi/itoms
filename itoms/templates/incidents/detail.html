@@ -9,7 +9,7 @@
   <div class="col-12 col-xl-8">
     <section class="panel-card">
       <div class="d-flex flex-wrap gap-2 mb-3"><span class="badge text-bg-secondary">{{ ticket.priority }}</span><span class="badge text-bg-light">{{ ticket.source }}</span></div>
-      <h2 class="h6">Description</h2><p class="mb-0" class="preserve-lines">{{ ticket.description }}</p>
+      <h2 class="h6">Description</h2><p class="mb-0 preserve-lines">{{ ticket.description }}</p>
       <hr>
       <dl class="row mb-0"><dt class="col-sm-4">Created</dt><dd class="col-sm-8">{{ ticket.created_at }}</dd><dt class="col-sm-4">First response due</dt><dd class="col-sm-8">{{ ticket.first_response_due_at or 'Not configured' }}</dd><dt class="col-sm-4">Resolution due</dt><dd class="col-sm-8">{{ ticket.resolution_due_at or 'Not configured' }}</dd></dl>
     </section>
@@ -19,7 +19,7 @@
       <article class="border rounded-3 p-3 mt-3">
         <div class="d-flex justify-content-between gap-2"><strong>{{ item.author_name }}</strong><small class="text-secondary">{{ item.created_at }}</small></div>
         {% if item.is_internal %}<span class="badge text-bg-warning mt-2">Internal note</span>{% endif %}
-        <p class="mb-0 mt-2" style="white-space:pre-wrap">{{ item.comment_body }}</p>
+        <p class="mb-0 mt-2 preserve-lines">{{ item.comment_body }}</p>
       </article>
       {% else %}<p class="text-secondary mt-3">No comments yet.</p>{% endfor %}
       <form method="post" action="{{ url_for('incidents.comment', ticket_id=ticket.ticket_id) }}" class="mt-4">
@@ -30,6 +30,22 @@
     </section>
   </div>
   <div class="col-12 col-xl-4">
+    {% if can_assign %}
+    <section class="panel-card mb-3">
+      <h2 class="h6">Team assignment</h2>
+      <p class="small text-secondary">Choose a team you are authorized to assign this incident to. Changing team clears any individual assignee.</p>
+      <form method="post" action="{{ url_for('incidents.assign', ticket_id=ticket.ticket_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+        <label class="form-label" for="assigned-team">Assigned team</label>
+        <select class="form-select" id="assigned-team" name="assigned_team_id" required>
+          {% for team in assignable_teams %}
+          <option value="{{ team.team_id }}" {% if team.team_id == ticket.assigned_team_id %}selected{% endif %}>{{ team.team_name }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-outline-primary mt-3" type="submit">Save assignment</button>
+      </form>
+    </section>
+    {% endif %}
     <section class="panel-card">
       <h2 class="h6">Update status</h2>
       <form method="post" action="{{ url_for('incidents.update_status', ticket_id=ticket.ticket_id) }}">
