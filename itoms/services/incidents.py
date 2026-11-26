@@ -209,6 +209,10 @@ def add_comment(*, actor_employee_id: int, ticket_id: int, body: str, internal: 
         cur.execute("""INSERT INTO incident_activity
             (ticket_id,actor_employee_id,activity_key,new_value)
             VALUES (%s,%s,'COMMENT_ADDED',%s)""", (ticket_id,actor_employee_id,"INTERNAL" if internal else "PUBLIC"))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'INCIDENT_COMMENT_ADDED','incident',%s,'SUCCESS')""",
+            (actor_employee_id, str(ticket_id)))
         conn.commit()
         return comment_id
     except Exception:
