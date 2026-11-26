@@ -76,10 +76,14 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
                         if valid_otp:
                             break
             if not valid_otp:
+                failed += 1
+                lock_until = now + timedelta(minutes=LOCKOUT_MINUTES) if failed >= MAX_FAILED_LOGINS else None
+                cur.execute("UPDATE user_accounts SET failed_login_count=%s, locked_until=%s WHERE account_id=%s",
+                            (failed, lock_until, account_id))
                 cur.execute("""INSERT INTO authentication_events
                     (account_id,username_attempted,event_type,ip_address,user_agent)
-                    VALUES (%s,%s,'MFA_FAILURE',%s,%s)""",
-                    (account_id, username, ip_address, user_agent))
+                    VALUES (%s,%s,%s,%s,%s)""",
+                    (account_id, username, "LOCKOUT" if lock_until else "MFA_FAILURE", ip_address, user_agent))
                 conn.commit()
                 return None
             cur.execute("""INSERT INTO authentication_events
