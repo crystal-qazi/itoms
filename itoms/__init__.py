@@ -39,6 +39,8 @@ def create_app(config_class: type[Config] = Config) -> Flask:
 
     @app.after_request
     def apply_security_headers(response):
+        response.headers.setdefault("Cache-Control", "no-store, private")
+        response.headers.setdefault("Pragma", "no-cache")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
