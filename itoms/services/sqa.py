@@ -18,14 +18,17 @@ SIGNOFF_DECISIONS = {"APPROVED", "REJECTED", "CONDITIONAL"}
 
 
 def _plan_context(row):
-    return ResourceContext(owner_employee_id=row["created_by"],
-                           resource_type="sqa_plan",
+    return ResourceContext(owner_employee_id=row["created_by"], team_id=row.get("team_id"),
+                           department_id=row.get("department_id"), resource_type="sqa_plan",
                            resource_id=str(row["test_plan_id"]))
 
 
 def _load_plan(cur, plan_id: int):
-    cur.execute("""SELECT test_plan_id,plan_key,release_key,title,status,created_by
-        FROM sqa_test_plans WHERE test_plan_id=%s""", (plan_id,))
+    cur.execute("""SELECT p.test_plan_id,p.plan_key,p.release_key,p.title,p.status,p.created_by,
+        e.department_id,m.team_id
+        FROM sqa_test_plans p JOIN employees e ON e.employee_id=p.created_by
+        LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+        WHERE p.test_plan_id=%s""", (plan_id,))
     return cur.fetchone()
 
 
@@ -37,8 +40,11 @@ def _require_plan_permission(actor_employee_id: int, permission: str, plan):
 def list_test_plans(*, actor_employee_id: int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT test_plan_id,plan_key,release_key,title,status,created_by,created_at
-            FROM sqa_test_plans ORDER BY created_at DESC LIMIT 200""")
+        cur.execute("""SELECT p.test_plan_id,p.plan_key,p.release_key,p.title,p.status,p.created_by,
+            p.created_at,e.department_id,m.team_id
+            FROM sqa_test_plans p JOIN employees e ON e.employee_id=p.created_by
+            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+            ORDER BY p.created_at DESC LIMIT 200""")
         rows=cur.fetchall()
     finally:
         cur.close(); conn.close()
@@ -48,8 +54,10 @@ def list_test_plans(*, actor_employee_id: int):
 def get_test_plan(*, actor_employee_id: int, plan_id: int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT p.*,e.full_name AS creator_name FROM sqa_test_plans p
-            JOIN employees e ON e.employee_id=p.created_by WHERE p.test_plan_id=%s""",(plan_id,))
+        cur.execute("""SELECT p.*,e.full_name AS creator_name,e.department_id,m.team_id
+            FROM sqa_test_plans p JOIN employees e ON e.employee_id=p.created_by
+            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+            WHERE p.test_plan_id=%s""",(plan_id,))
         plan=cur.fetchone()
         if plan:
             cur.execute("""SELECT c.test_case_id,c.case_key,c.title,c.preconditions,c.steps,c.expected_result,
@@ -73,14 +81,19 @@ def get_test_plan(*, actor_employee_id: int, plan_id: int):
 
 
 def create_test_plan(*, actor_employee_id: int, title: str, scope_description: str, release_key: str | None):
-    if not has_permission(actor_employee_id,"sqa.plan.create"):
-        raise SQAError("Not authorized to create SQA plans.")
     title=title.strip()
     if not title or len(title)>200:
         raise SQAError("Plan title is required (maximum 200 characters).")
     release_key=(release_key or "").strip().upper() or None
     conn=get_connection(); cur=conn.cursor()
     try:
+        cur.execute("""SELECT e.department_id,m.team_id FROM employees e
+            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+            WHERE e.employee_id=%s AND e.is_active=TRUE""",(actor_employee_id,))
+        actor_scope=cur.fetchone()
+        if not actor_scope or not has_permission(actor_employee_id,"sqa.plan.create",
+            ResourceContext(owner_employee_id=actor_employee_id,department_id=actor_scope[0],team_id=actor_scope[1])):
+            raise SQAError("Not authorized to create SQA plans.")
         if release_key:
             cur.execute("SELECT release_id,created_by FROM software_releases WHERE release_key=%s",(release_key,))
             release=cur.fetchone()
@@ -232,17 +245,22 @@ def record_release_signoff(*, actor_employee_id: int, release_key: str, decision
     release_key=release_key.strip().upper(); decision=decision.strip().upper()
     if decision not in SIGNOFF_DECISIONS or not release_key:
         raise SQAError("A release and valid sign-off decision are required.")
-    if not has_permission(actor_employee_id,"sqa.signoff.create"):
-        raise SQAError("Not authorized to record SQA sign-off.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT release_id,created_by FROM software_releases WHERE release_key=%s",(release_key,))
+        cur.execute("""SELECT r.release_id,r.created_by,e.department_id,s.owner_team_id
+            FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
+            LEFT JOIN service_records s ON s.service_id=r.service_id
+            WHERE r.release_key=%s""",(release_key,))
         release=cur.fetchone()
         if not release:
             raise SQAError("Release record not found.")
-        if not has_permission(actor_employee_id,"release.read",
-            ResourceContext(owner_employee_id=release["created_by"],resource_type="release",resource_id=str(release["release_id"]))):
+        release_context=ResourceContext(owner_employee_id=release["created_by"],
+            team_id=release["owner_team_id"],department_id=release["department_id"],
+            resource_type="release",resource_id=str(release["release_id"]))
+        if not has_permission(actor_employee_id,"release.read",release_context):
             raise SQAError("Not authorized to sign off this release.")
+        if not has_permission(actor_employee_id,"sqa.signoff.create",release_context):
+            raise SQAError("Not authorized to record SQA sign-off for this release.")
         if decision=="APPROVED":
             cur.execute("SELECT test_plan_id FROM sqa_test_plans WHERE release_key=%s AND status='COMPLETED'",(release_key,))
             plans=cur.fetchall()
@@ -265,10 +283,19 @@ def record_release_signoff(*, actor_employee_id: int, release_key: str, decision
 
 
 def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
-    if not has_permission(actor_employee_id,"sqa.signoff.read"):
-        return []
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
+        cur.execute("""SELECT r.release_id,r.created_by,e.department_id,srv.owner_team_id
+            FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
+            LEFT JOIN service_records srv ON srv.service_id=r.service_id WHERE r.release_key=%s""",
+            (release_key,))
+        release=cur.fetchone()
+        if not release:
+            return []
+        context=ResourceContext(owner_employee_id=release["created_by"],team_id=release["owner_team_id"],
+            department_id=release["department_id"],resource_type="release",resource_id=str(release["release_id"]))
+        if not has_permission(actor_employee_id,"sqa.signoff.read",context):
+            return []
         cur.execute("""SELECT s.release_key,s.decision,s.comments,s.signed_at,e.full_name AS signer
             FROM sqa_release_signoffs s JOIN employees e ON e.employee_id=s.signed_by
             WHERE s.release_key=%s ORDER BY s.signed_at DESC""",(release_key,))
