@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Helpdesk & Incidents · ITOMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">OPERATIONS</p><h1>Helpdesk & Incidents</h1><p class="text-secondary mb-0">Track operational issues and service interruptions.</p></div>
+  <span class="status-pill"><span></span> Live queue</span>
+</div>
+{% if can_create %}
+<section class="panel-card mt-4" aria-labelledby="new-incident-heading">
+  <div class="panel-heading"><div><h2 id="new-incident-heading">Report an incident</h2><p>Provide a clear summary and impact description.</p></div></div>
+  <form method="post" action="{{ url_for('incidents.create') }}" class="row g-3 mt-1">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-lg-8"><label class="form-label" for="incident-title">Title</label><input class="form-control" id="incident-title" name="title" maxlength="240" required></div>
+    <div class="col-12 col-lg-4"><label class="form-label" for="incident-priority">Priority</label><select class="form-select" id="incident-priority" name="priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div>
+    <div class="col-12"><label class="form-label" for="incident-description">Description</label><textarea class="form-control" id="incident-description" name="description" rows="3" required></textarea></div>
+    <div class="col-12"><button class="btn btn-primary" type="submit">Create incident</button></div>
+  </form>
+</section>
+{% endif %}
+<section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Incident queue</h2><p>Only records within your assigned access scope are shown.</p></div></div>
+  {% if incidents %}
+  <div class="table-responsive mt-3"><table class="table align-middle">
+    <thead><tr><th scope="col">Ticket</th><th scope="col">Summary</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col">Created</th></tr></thead>
+    <tbody>{% for item in incidents %}<tr>
+      <td class="text-nowrap"><strong>{{ item.ticket_number }}</strong></td><td>{{ item.title }}</td>
+      <td><span class="badge text-bg-secondary">{{ item.priority }}</span></td>
+      <td><span class="badge text-bg-light">{{ item.status|replace('_',' ') }}</span></td>
+      <td class="text-nowrap">{{ item.created_at }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><div class="empty-state-mark">—</div><strong>No incidents available</strong><p class="text-secondary mb-0">No incidents are currently visible in your access scope.</p></div>
+  {% endif %}
+</section>
+{% endblock %}
