@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 from itoms.security.decorators import login_required
-from itoms.services.engineering_tasks import (TaskError, TASK_TRANSITIONS, create_task, change_task_status, get_task_detail, list_accessible_task_teams, list_tasks)
+from itoms.services.engineering_tasks import (TaskError, TASK_TRANSITIONS, create_task, change_task_status, get_task_detail, list_accessible_task_teams, list_task_assignees, list_tasks)
 
 engineering_tasks_bp = Blueprint("engineering_tasks", __name__, url_prefix="/engineering/tasks")
 
@@ -18,7 +18,8 @@ def index():
     if team_id and team_id not in {item["team_id"] for item in teams}: team_id = None
     tasks = list_tasks(actor_employee_id=g.employee_id, team_id=team_id, status=status, priority=priority)
     create_teams = list_accessible_task_teams(actor_employee_id=g.employee_id, permission_key="engineering.tasks.create")
-    return render_template("engineering_tasks/index.html", tasks=tasks, teams=teams, create_teams=create_teams, selected_team=team_id, selected_status=status or "", selected_priority=priority or "", csrf_token_value=session.get("csrf_token", ""))
+    assignees = list_task_assignees(actor_employee_id=g.employee_id)
+    return render_template("engineering_tasks/index.html", tasks=tasks, teams=teams, create_teams=create_teams, assignees=assignees, selected_team=team_id, selected_status=status or "", selected_priority=priority or "", csrf_token_value=session.get("csrf_token", ""))
 
 @engineering_tasks_bp.post("/")
 @login_required
