@@ -25,12 +25,16 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         token = session.get("server_session_token")
         if not token:
             g.account_id = None
+            g.employee_id = None
             return
         from itoms.services.auth import validate_session
-        account_id = validate_session(token)
-        if account_id is None:
+        identity = validate_session(token)
+        if identity is None:
             session.clear()
-        g.account_id = account_id
+            g.account_id = None
+            g.employee_id = None
+        else:
+            g.account_id, g.employee_id = identity
 
     @app.after_request
     def apply_security_headers(response):
