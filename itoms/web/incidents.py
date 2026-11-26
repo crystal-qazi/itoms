@@ -3,8 +3,8 @@ from __future__ import annotations
 import hmac
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 from itoms.security.decorators import login_required
-from itoms.services.authorization import has_permission
-from itoms.services.incidents import (IncidentError, add_comment, create_incident, get_incident_detail, list_incidents, transition_incident)
+from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.incidents import (IncidentError, add_comment, assign_incident, create_incident, get_incident_detail, list_assignable_teams, list_incidents, transition_incident)
 
 incidents_bp = Blueprint("incidents", __name__, url_prefix="/incidents")
 
@@ -42,7 +42,15 @@ def detail(ticket_id: int):
         ticket = get_incident_detail(actor_employee_id=g.employee_id, ticket_id=ticket_id)
     except IncidentError:
         return "Incident not found.", 404
+    try:
+        assignable_teams = list_assignable_teams(actor_employee_id=g.employee_id, ticket_id=ticket_id)
+    except IncidentError:
+        assignable_teams = []
+    can_assign = bool(assignable_teams) and has_permission(
+        g.employee_id, "incident.assign",
+        ResourceContext(owner_employee_id=ticket["requester_employee_id"], team_id=ticket["assigned_team_id"]))
     return render_template("incidents/detail.html", ticket=ticket,
+                           assignable_teams=assignable_teams, can_assign=can_assign,
                            csrf_token_value=session.get("csrf_token", ""))
 
 @incidents_bp.post("/<int:ticket_id>/status")
@@ -74,4 +82,26 @@ def comment(ticket_id: int):
         flash(str(exc), "danger")
     else:
         flash("Comment added.", "success")
+    return redirect(url_for("incidents.detail", ticket_id=ticket_id))
+
+ 
+@incidents_bp.post("/<int:ticket_id>/assignment")
+@login_required
+def assign(ticket_id: int):
+    csrf = session.get("csrf_token", "")
+    if not csrf or not hmac.compare_digest(str(csrf), str(request.form.get("csrf_token", ""))):
+        return "Invalid request token", 400
+    raw_team_id = request.form.get("assigned_team_id", "").strip()
+    try:
+        team_id = int(raw_team_id) if raw_team_id else None
+        if raw_team_id and team_id <= 0:
+            raise ValueError
+        assign_incident(actor_employee_id=g.employee_id, ticket_id=ticket_id,
+                        assigned_team_id=team_id)
+    except (ValueError, TypeError):
+        flash("Select a valid team.", "danger")
+    except IncidentError as exc:
+        flash(str(exc), "danger")
+    else:
+        flash("Incident assignment updated.", "success")
     return redirect(url_for("incidents.detail", ticket_id=ticket_id))
