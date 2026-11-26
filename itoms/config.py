@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 
 
 class Config:
