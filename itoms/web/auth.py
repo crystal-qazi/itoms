@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hmac
 import secrets
-from flask import Blueprint, flash, g, redirect, render_template_string, request, session, url_for
+from flask import Blueprint, flash, g, redirect, render_template, render_template_string, request, session, url_for
 from itoms.services.auth import authenticate, revoke_session, change_password, AuthenticationError, begin_totp_enrollment, confirm_totp_enrollment
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -62,7 +62,7 @@ def home():
         return redirect(url_for("auth.login"))
     if session.get("must_change_password"):
         return redirect(url_for("auth.change_password_route"))
-    from flask import render_template\n    return render_template("dashboard.html", csrf_token_value=session.get("csrf_token", ""), summary=[{"label":"Open incidents","note":"Helpdesk module pending"},{"label":"My tasks","note":"Engineering tasks pending"},{"label":"Pending changes","note":"Change management pending"},{"label":"Service inventory","note":"Inventory module pending"}])
+    return render_template("dashboard.html", csrf_token_value=session.get("csrf_token", ""), summary=[{"label":"Open incidents","note":"Helpdesk module pending"},{"label":"My tasks","note":"Engineering tasks pending"},{"label":"Pending changes","note":"Change management pending"},{"label":"Service inventory","note":"Inventory module pending"}])
 
 @auth_bp.route("/change-password", methods=["GET", "POST"])
 def change_password_route():
