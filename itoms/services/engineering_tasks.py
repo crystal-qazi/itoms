@@ -29,8 +29,9 @@ def create_task(*,actor_employee_id:int,team_id:int,title:str,description:str=""
         cur.execute("SELECT 1 FROM teams WHERE team_id=%s AND is_active=TRUE",(team_id,))
         if not cur.fetchone(): raise TaskError("Team is inactive or unavailable.")
         if assigned_to is not None:
-            cur.execute("""SELECT 1 FROM employee_team_memberships
-                WHERE employee_id=%s AND team_id=%s""",(assigned_to,team_id))
+            cur.execute("""SELECT 1 FROM employee_team_memberships m
+                JOIN employees e ON e.employee_id=m.employee_id AND e.is_active=TRUE
+                WHERE m.employee_id=%s AND m.team_id=%s""",(assigned_to,team_id))
             if not cur.fetchone(): raise TaskError("Assignee must be a member of the task team.")
         number="TASK-"+datetime.now(timezone.utc).strftime("%Y%m%d")+"-"+secrets.token_hex(3).upper()
         cur.execute("""INSERT INTO engineering_tasks
