@@ -8,3 +8,23 @@ def test_health_endpoint() -> None:
     response = app.test_client().get("/health")
     assert response.status_code == 200
     assert response.json == {"status": "ok", "application": "ITOMS"}
+
+
+def test_app_factory_accepts_test_configuration() -> None:
+    class TestConfig:
+        SECRET_KEY = "testing-key"
+        TESTING = True
+        DB_HOST = "127.0.0.1"
+        DB_PORT = 3306
+        DB_NAME = "test"
+        DB_USER = "test"
+        DB_PASSWORD = ""
+        DB_CONNECT_TIMEOUT = 1
+        LOG_LEVEL = "CRITICAL"
+
+        @classmethod
+        def validate(cls, config):
+            return None
+
+    app = create_app(TestConfig)
+    assert app.config["TESTING"] is True
