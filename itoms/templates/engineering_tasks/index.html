@@ -9,7 +9,7 @@
 <div class="col-12 col-lg-3"><label class="form-label" for="task-team">Team</label><select class="form-select" id="task-team" name="team_id" required><option value="">Select team</option>{% for team in create_teams %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>
 <div class="col-12 col-lg-3"><label class="form-label" for="task-priority">Priority</label><select class="form-select" id="task-priority" name="priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div>
 <div class="col-12"><label class="form-label" for="task-description">Description</label><textarea class="form-control" id="task-description" name="description" rows="2"></textarea></div>
-<div class="col-12 col-md-6"><label class="form-label" for="task-assignee">Assignee employee ID (optional)</label><input class="form-control" id="task-assignee" name="assigned_to" inputmode="numeric" pattern="[0-9]*"></div>
+<div class="col-12 col-md-6"><label class="form-label" for="task-assignee">Assignee (optional)</label><select class="form-select" id="task-assignee" name="assigned_to"><option value="">Unassigned</option>{% for person in assignees %}<option value="{{ person.employee_id }}">{{ person.full_name }} · Team {{ person.team_id }}</option>{% endfor %}</select></div>
 <div class="col-12 col-md-6"><label class="form-label" for="task-due">Due date (optional)</label><input class="form-control" id="task-due" name="due_at" type="datetime-local"></div>
 <div class="col-12"><button class="btn btn-primary" type="submit">Create task</button></div></form></section>
 {% endif %}
