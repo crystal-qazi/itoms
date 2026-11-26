@@ -105,19 +105,31 @@ def list_incidents(*, actor_employee_id: int, limit: int = 50) -> list[dict]:
     return visible
 
 def transition_incident(*, actor_employee_id: int, ticket_id: int, new_status: str) -> None:
-    """Apply an allowed state transition after checking resource-scoped permission."""
+    """Apply an allowed state transition after checking trusted resource scope."""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""SELECT requester_employee_id,assigned_team_id
+            FROM incident_tickets WHERE ticket_id=%s""", (ticket_id,))
+        snapshot = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    if not snapshot:
+        raise IncidentError("Incident not found.")
+    requester_id, team_id = snapshot
+    context = ResourceContext(owner_employee_id=requester_id, team_id=team_id)
+    if not has_permission(actor_employee_id, "incident.update", context):
+        raise IncidentError("Not authorized to update this incident.")
     conn = get_connection()
     cur = conn.cursor()
     try:
         cur.execute("""SELECT status,requester_employee_id,assigned_team_id
             FROM incident_tickets WHERE ticket_id=%s FOR UPDATE""", (ticket_id,))
         row = cur.fetchone()
-        if not row:
-            raise IncidentError("Incident not found.")
-        old_status, requester_id, team_id = row
-        context = ResourceContext(owner_employee_id=requester_id, team_id=team_id)
-        if not has_permission(actor_employee_id, "incident.update", context):
-            raise IncidentError("Not authorized to update this incident.")
+        if not row or row[1] != requester_id or row[2] != team_id:
+            raise IncidentError("Incident changed; reload and try again.")
+        old_status = row[0]
         if new_status not in TRANSITIONS.get(old_status, set()):
             raise IncidentError(f"Transition from {old_status} to {new_status} is not allowed.")
         cur.execute("""UPDATE incident_tickets SET status=%s,
