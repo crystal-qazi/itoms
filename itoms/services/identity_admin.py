@@ -169,11 +169,12 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
 
 
 def _assert_role_permission_scope(
-    cur, *, actor_employee_id: int, role_id: int, actor_department_id: int | None = None
+    cur, *, actor_employee_id: int, role_id: int,
+    actor_department_id: int | None = None, actor_department_checked: bool = False
 ) -> None:
     """Allow editing only roles assigned exclusively to active employees in actor's department."""
     department_id = actor_department_id
-    if department_id is None:
+    if not actor_department_checked and department_id is None:
         cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",
                     (actor_employee_id,))
         actor = cur.fetchone()
