@@ -23,3 +23,74 @@ jobs:
         run: python -m compileall -q itoms tests
       - name: Run test suite
         run: pytest -q
+
+  mysql-migrations:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: itoms-ci-root
+          MYSQL_DATABASE: itoms_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pitoms-ci-root"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    env:
+      ITOMS_DB_HOST: 127.0.0.1
+      ITOMS_DB_PORT: 3306
+      ITOMS_DB_NAME: itoms_ci
+      ITOMS_DB_USER: root
+      ITOMS_DB_PASSWORD: itoms-ci-root
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Apply all migrations twice on MySQL 8.4
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from itoms import create_app
+          from itoms.config import Config
+          from itoms.db.connection import get_connection
+
+          class CIConfig(Config):
+              TESTING = True
+              SECRET_KEY = "ci-only-secret"
+              DB_HOST = "127.0.0.1"
+              DB_PORT = 3306
+              DB_NAME = "itoms_ci"
+              DB_USER = "root"
+              DB_PASSWORD = "itoms-ci-root"
+
+          app = create_app(CIConfig)
+          runner = app.test_cli_runner()
+          for attempt in range(2):
+              result = runner.invoke(args=["db-migrate"])
+              if result.exit_code:
+                  raise RuntimeError(f"Migration attempt {attempt + 1} failed: {result.output}")
+
+          expected = len(list((Path("itoms/db/migrations/versions")).glob("*.sql")))
+          with app.app_context():
+              connection = get_connection()
+              cursor = connection.cursor()
+              try:
+                  cursor.execute("SELECT COUNT(*) FROM schema_migrations")
+                  applied = cursor.fetchone()[0]
+                  if applied != expected:
+                      raise AssertionError(f"Expected {expected} migrations, found {applied}")
+                  cursor.execute("SELECT migration_name FROM schema_migrations WHERE migration_name='025_role_permission_administration.sql'")
+                  if not cursor.fetchone():
+                      raise AssertionError("Latest role-permission migration was not applied")
+              finally:
+                  cursor.close()
+                  connection.close()
+          print(f"Verified {applied} MySQL migrations and idempotent second run.")
+          PY
