@@ -3,7 +3,7 @@ from __future__ import annotations
 from itoms.db.connection import get_connection
 from itoms.security.password_policy import validate_password
 from itoms.services.auth import hash_password
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import ResourceContext, has_permission
 
 class IdentityAdministrationError(ValueError):
     """Identity administration request was invalid or not authorized."""
@@ -13,8 +13,6 @@ def create_employee_account(*, actor_employee_id: int, employee_code: str,
                             department_id: int | None = None, email: str | None = None,
                             job_title: str | None = None, primary_team_id: int | None = None) -> int:
     """Create an employee and active first-login account after a permission check."""
-    if not has_permission(actor_employee_id, "identity.accounts.create"):
-        raise IdentityAdministrationError("Not authorized to create accounts.")
     if not all((employee_code.strip(), full_name.strip(), username.strip())):
         raise IdentityAdministrationError("Employee code, name and username are required.")
     validate_password(initial_password)
@@ -22,17 +20,25 @@ def create_employee_account(*, actor_employee_id: int, employee_code: str,
     conn = get_connection()
     cur = conn.cursor()
     try:
-        if department_id is not None:
-            cur.execute("SELECT 1 FROM departments WHERE department_id=%s AND is_active=TRUE", (department_id,))
-            if not cur.fetchone():
-                raise IdentityAdministrationError("Department does not exist or is inactive.")
+        team_department_id = None
         if primary_team_id is not None:
             cur.execute("SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE", (primary_team_id,))
             team = cur.fetchone()
             if not team:
                 raise IdentityAdministrationError("Primary team does not exist or is inactive.")
-            if department_id is not None and team[0] != department_id:
+            team_department_id = team[0]
+            if department_id is not None and team_department_id != department_id:
                 raise IdentityAdministrationError("Primary team must belong to the employee department.")
+            if department_id is None:
+                department_id = team_department_id
+        if department_id is None:
+            raise IdentityAdministrationError("A department or department-owned primary team is required.")
+        cur.execute("SELECT 1 FROM departments WHERE department_id=%s AND is_active=TRUE", (department_id,))
+        if not cur.fetchone():
+            raise IdentityAdministrationError("Department does not exist or is inactive.")
+        context = ResourceContext(department_id=department_id, team_id=primary_team_id)
+        if not has_permission(actor_employee_id, "identity.accounts.create", context):
+            raise IdentityAdministrationError("Not authorized to create accounts in this department or team.")
         cur.execute("""INSERT INTO employees
             (employee_code,full_name,email,job_title,department_id)
             VALUES (%s,%s,%s,%s,%s)""",
@@ -61,8 +67,6 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
                 scope_type: str, scope_reference: str | None = None,
                 expires_at=None) -> int:
     """Assign a role only when the actor has the dedicated administration permission."""
-    if not has_permission(actor_employee_id, "identity.roles.assign"):
-        raise IdentityAdministrationError("Not authorized to assign roles.")
     if employee_id == actor_employee_id:
         raise IdentityAdministrationError("Self-assignment of roles is not permitted.")
     if scope_type not in {"OWN","TEAM","MANAGED_TEAMS","DEPARTMENT","RESOURCE"}:
@@ -70,9 +74,64 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE", (employee_id,))
-        if not cur.fetchone():
+        cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE", (employee_id,))
+        employee = cur.fetchone()
+        if not employee:
             raise IdentityAdministrationError("Employee does not exist or is inactive.")
+        employee_department_id = employee[0]
+        team_id = None
+        if scope_type == "TEAM":
+            if not scope_reference or not scope_reference.isdigit() or int(scope_reference) <= 0:
+                raise IdentityAdministrationError("TEAM scope requires a valid team ID reference.")
+            team_id = int(scope_reference)
+            cur.execute("""SELECT t.department_id FROM teams t
+                JOIN employee_team_memberships m ON m.team_id=t.team_id AND m.employee_id=%s
+                WHERE t.team_id=%s AND t.is_active=TRUE""", (employee_id, team_id))
+            team = cur.fetchone()
+            if not team:
+                raise IdentityAdministrationError("The employee must belong to the active team in the assignment scope.")
+            if employee_department_id is not None and team[0] != employee_department_id:
+                raise IdentityAdministrationError("The team must belong to the employee department.")
+            employee_department_id = team[0]
+        elif scope_type == "DEPARTMENT":
+            if employee_department_id is None:
+                raise IdentityAdministrationError("Department scope requires an employee department.")
+            expected = str(employee_department_id)
+            if scope_reference not in (None, "", expected):
+                raise IdentityAdministrationError("Department scope must match the employee department.")
+            scope_reference = expected
+        elif scope_type == "OWN":
+            if scope_reference not in (None, ""):
+                raise IdentityAdministrationError("OWN scope cannot have a scope reference.")
+            scope_reference = None
+        elif scope_type == "MANAGED_TEAMS":
+            if scope_reference not in (None, ""):
+                raise IdentityAdministrationError("MANAGED_TEAMS scope does not accept a reference.")
+            scope_reference = None
+            cur.execute("""SELECT t.team_id,t.department_id
+                FROM team_management_assignments m JOIN teams t ON t.team_id=m.team_id
+                WHERE m.manager_employee_id=%s AND t.is_active=TRUE""", (employee_id,))
+            managed = cur.fetchall()
+            if not managed:
+                raise IdentityAdministrationError("The employee has no active managed teams.")
+            for managed_team_id, managed_department_id in managed:
+                if not has_permission(actor_employee_id, "identity.roles.assign",
+                    ResourceContext(team_id=managed_team_id, department_id=managed_department_id)):
+                    raise IdentityAdministrationError("Not authorized to assign roles for every managed team.")
+        elif scope_type == "RESOURCE":
+            if not scope_reference or ":" not in scope_reference or len(scope_reference) > 255:
+                raise IdentityAdministrationError("RESOURCE scope requires a resource_type:resource_id reference.")
+        context = ResourceContext(
+            owner_employee_id=employee_id if scope_type in {"OWN", "RESOURCE"} else None,
+            team_id=team_id,
+            department_id=employee_department_id,
+            resource_type=scope_reference.split(":", 1)[0] if scope_type == "RESOURCE" else None,
+            resource_id=scope_reference.split(":", 1)[1] if scope_type == "RESOURCE" else None,
+        )
+        if scope_type != "MANAGED_TEAMS" and not has_permission(
+            actor_employee_id, "identity.roles.assign", context
+        ):
+            raise IdentityAdministrationError("Not authorized to assign roles within this employee scope.")
         cur.execute("SELECT 1 FROM application_roles WHERE role_id=%s AND is_active=TRUE", (role_id,))
         if not cur.fetchone():
             raise IdentityAdministrationError("Role does not exist or is inactive.")
