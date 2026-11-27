@@ -73,3 +73,60 @@ def test_release_cannot_be_approved_without_approved_linked_request(monkeypatch)
 
     assert second.rolled_back
     assert not second.committed
+
+def test_release_cannot_deploy_without_approved_linked_request(monkeypatch):
+    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "APPROVED"}
+    first = Connection([snapshot])
+    second = Connection([("APPROVED", 10, "REL-5"), None])
+    connections = iter([first, second])
+    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
+    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+
+    with pytest.raises(release_management.ReleaseError, match="fully approved"):
+        release_management.transition_release(
+            actor_employee_id=10,
+            release_id=5,
+            new_status="DEPLOYING",
+        )
+
+    assert second.rolled_back
+    assert not second.committed
+
+
+def test_release_approval_cannot_bypass_sqa_readiness_gate(monkeypatch):
+    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "READY"}
+    first = Connection([snapshot])
+    second = Connection([("READY", 10, "REL-5"), ("APPROVED",), (0,)])
+    connections = iter([first, second])
+    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
+    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+
+    with pytest.raises(release_management.ReleaseError, match="completed test plan"):
+        release_management.transition_release(
+            actor_employee_id=10,
+            release_id=5,
+            new_status="APPROVED",
+        )
+
+    assert second.rolled_back
+    assert not second.committed
+
+
+def test_release_deployment_rechecks_sqa_readiness_gate(monkeypatch):
+    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "APPROVED"}
+    first = Connection([snapshot])
+    second = Connection([("APPROVED", 10, "REL-5"), ("APPROVED",), (0,)])
+    connections = iter([first, second])
+    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
+    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+
+    with pytest.raises(release_management.ReleaseError, match="completed test plan"):
+        release_management.transition_release(
+            actor_employee_id=10,
+            release_id=5,
+            new_status="DEPLOYING",
+        )
+
+    assert second.rolled_back
+    assert not second.committed
+
