@@ -10,7 +10,7 @@ A MySQL advisory lock serializes attempts. A persistent `system_settings` comple
 
 The bootstrap creates `Initial System Administrator` and grants the permission catalogue entries registered at that moment. The role assignment uses the existing `DEPARTMENT` scope and the selected department reference. No GLOBAL scope is introduced. Permissions added later are not silently granted. The existing protection against modifying permissions on one's own assigned role remains active.
 
-The account is activated with `must_change_password=TRUE`. Change the password at first login and complete TOTP enrollment and recovery-code storage immediately. MFA enrollment is not yet enforced as a hard account-activation gate; that remains a separate security-hardening task.
+The account is activated with `must_change_password=TRUE`. Change the password at first login and complete TOTP enrollment and recovery-code storage immediately. The application enforces password rotation first and then blocks authenticated application routes until TOTP enrollment is confirmed. Session validation reloads MFA state from the database, so enforcement does not depend on a client-controlled flag or stale login snapshot.
 
 This command is not a recovery path for installations that already contain accounts. Recovery requires a separately reviewed, audited operator procedure. Do not delete the completion marker or bypass the account-count guard informally.
 

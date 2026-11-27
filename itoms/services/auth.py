@@ -23,7 +23,7 @@ def verify_password(password_hash: str, password: str) -> bool:
     return check_password_hash(password_hash, password)
 
 def authenticate(username: str, password: str, *, ip_address: str | None = None,
-                 user_agent: str | None = None, otp_code: str | None = None) -> tuple[int, str, bool] | None:
+                 user_agent: str | None = None, otp_code: str | None = None) -> tuple[int, str, bool, bool] | None:
     """Verify credentials, enforce lockout and create a server-side session."""
     conn = get_connection()
     cur = conn.cursor()
@@ -101,7 +101,7 @@ def authenticate(username: str, password: str, *, ip_address: str | None = None,
             (account_id,username_attempted,event_type,ip_address,user_agent)
             VALUES (%s,%s,'LOGIN_SUCCESS',%s,%s)""", (account_id, username, ip_address, user_agent))
         conn.commit()
-        return account_id, raw_token, bool(must_change)
+        return account_id, raw_token, bool(must_change), bool(mfa_enabled)
     except Exception:
         conn.rollback()
         raise
@@ -114,7 +114,7 @@ def validate_session(raw_token: str) -> tuple[int, int] | None:
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""SELECT s.account_id, a.employee_id FROM user_sessions s
+        cur.execute("""SELECT s.account_id, a.employee_id, a.mfa_enabled FROM user_sessions s
             JOIN user_accounts a ON a.account_id=s.account_id
             WHERE s.token_hash=%s AND s.revoked_at IS NULL
             AND s.expires_at>UTC_TIMESTAMP()
@@ -126,7 +126,7 @@ def validate_session(raw_token: str) -> tuple[int, int] | None:
             return None
         cur.execute("UPDATE user_sessions SET last_activity_at=UTC_TIMESTAMP(), expires_at=DATE_ADD(UTC_TIMESTAMP(), INTERVAL 60 MINUTE) WHERE token_hash=%s", (token_digest(raw_token),))
         conn.commit()
-        return row[0], row[1]
+        return row[0], row[1], bool(row[2])
     finally:
         cur.close()
         conn.close()

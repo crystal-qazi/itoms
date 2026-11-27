@@ -1,5 +1,5 @@
 """ITOMS application package."""
-from flask import Flask, g, session
+from flask import Flask, g, session, request, redirect, url_for
 
 from itoms.config import Config
 from itoms.logging_config import configure_logging
@@ -27,6 +27,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         if not token:
             g.account_id = None
             g.employee_id = None
+            g.mfa_enabled = False
             return
         from itoms.services.auth import validate_session
         identity = validate_session(token)
@@ -34,8 +35,19 @@ def create_app(config_class: type[Config] = Config) -> Flask:
             session.clear()
             g.account_id = None
             g.employee_id = None
+            g.mfa_enabled = False
         else:
-            g.account_id, g.employee_id = identity
+            g.account_id, g.employee_id, g.mfa_enabled = identity
+
+        # Require password rotation first, then verified MFA before app access.
+        if g.account_id:
+            endpoint = request.endpoint or ""
+            if session.get("must_change_password"):
+                if endpoint not in {"auth.change_password_route", "auth.logout", "static"}:
+                    return redirect(url_for("auth.change_password_route"))
+            elif not g.mfa_enabled:
+                if endpoint not in {"auth.mfa_enroll", "auth.logout", "static"}:
+                    return redirect(url_for("auth.mfa_enroll"))
 
     @app.after_request
     def apply_security_headers(response):
