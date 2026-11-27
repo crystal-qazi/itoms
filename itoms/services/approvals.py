@@ -52,7 +52,8 @@ def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
         raise ApprovalError("Approval comment is too long (maximum 4000 characters).")
     conn=get_connection(); cur=conn.cursor()
     try:
-        cur.execute("SELECT status,current_step FROM approval_requests WHERE approval_request_id=%s FOR UPDATE",(request_id,))
+        cur.execute("""SELECT status,current_step,request_type,resource_type,resource_id
+            FROM approval_requests WHERE approval_request_id=%s FOR UPDATE""",(request_id,))
         request=cur.fetchone()
         if not request or request[0]!="PENDING": raise ApprovalError("Approval is not pending.")
         cur.execute("""SELECT approval_step_id,decision FROM approval_steps
@@ -67,6 +68,17 @@ def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
             cur.execute("UPDATE approval_requests SET status='REJECTED',completed_at=UTC_TIMESTAMP() WHERE approval_request_id=%s",(request_id,))
             cur.execute("""UPDATE approval_steps SET decision='SKIPPED'
                 WHERE approval_request_id=%s AND decision='PENDING'""",(request_id,))
+            if request[2]=="CHANGE" and request[3]=="change":
+                cur.execute("""UPDATE change_records SET status='REJECTED'
+                    WHERE change_id=%s AND status='SUBMITTED'""",(int(request[4]),))
+                cur.execute("""INSERT INTO change_activity
+                    (change_id,actor_employee_id,action_key,details)
+                    VALUES (%s,%s,'APPROVAL_REJECTED',%s)""",(int(request[4]),actor_employee_id,comment))
+                cur.execute("""INSERT INTO audit_events
+                    (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                    VALUES (%s,'CHANGE_APPROVAL_REJECTED','change',%s,'SUCCESS',
+                        JSON_OBJECT('approval_request_id',%s))""",
+                    (actor_employee_id,str(request[4]),request_id))
         else:
             cur.execute("SELECT MAX(step_number) FROM approval_steps WHERE approval_request_id=%s",(request_id,))
             last_step=cur.fetchone()[0]

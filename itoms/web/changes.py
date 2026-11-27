@@ -31,7 +31,7 @@ def create():
 def detail(change_id:int):
     try: item=get_change(actor_employee_id=g.employee_id,change_id=change_id)
     except ChangeError: return "Change record not found",404
-    return render_template("changes/detail.html",item=item,transitions=["SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"],approvers=_owners() if item["can_update"] and item["status"]=="DRAFT" else [],csrf_token_value=session.get("csrf_token",""))
+    return render_template("changes/detail.html",item=item,transitions=["SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"],approvers=_owners() if item["can_update"] and item["status"] in {"DRAFT","REJECTED"} else [],csrf_token_value=session.get("csrf_token",""))
 @change_bp.post("/<int:change_id>/status")
 @login_required
 def status(change_id:int):

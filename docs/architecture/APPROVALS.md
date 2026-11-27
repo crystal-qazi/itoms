@@ -11,3 +11,8 @@ The owning module re-checks the final approved state and resource identity insid
 ## Inbox
 
 The authenticated Approval Inbox (`/approvals/`) lists only pending requests for which the signed-in employee is the current sequential approver. Decisions are submitted with CSRF protection and are validated again by the service under transaction locks. The inbox records decisions; the Change and Release services independently enforce the resulting approval state before allowing gated transitions.
+
+
+## Rejected change requests
+
+A rejected Change approval moves the linked change record to REJECTED in the same transaction as the approval decision, activity entry and audit event. An authorized change updater can submit the rejected request again with a new explicitly selected approver chain. Each attempt creates a new approval request; prior rejected requests and their decision history remain immutable. The change status enum is extended by migration 024.

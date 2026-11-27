@@ -8,8 +8,8 @@ class ChangeError(ValueError):
     """Invalid or unauthorized change operation."""
 CHANGE_TYPES={"NORMAL","STANDARD","EMERGENCY"}
 RISKS={"LOW","MEDIUM","HIGH","CRITICAL"}
-STATUSES={"DRAFT","SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"}
-TRANSITIONS={"DRAFT":{"SUBMITTED","CANCELLED"},"SUBMITTED":{"SCHEDULED","CANCELLED"},"SCHEDULED":{"IMPLEMENTING","CANCELLED"},"IMPLEMENTING":{"IMPLEMENTED","FAILED"},"IMPLEMENTED":{"CLOSED"},"FAILED":{"CLOSED"},"CANCELLED":set(),"CLOSED":set()}
+STATUSES={"DRAFT","SUBMITTED","REJECTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"}
+TRANSITIONS={"DRAFT":{"SUBMITTED","CANCELLED"},"SUBMITTED":{"SCHEDULED","CANCELLED"},"REJECTED":{"SUBMITTED","CANCELLED"},"SCHEDULED":{"IMPLEMENTING","CANCELLED"},"IMPLEMENTING":{"IMPLEMENTED","FAILED"},"IMPLEMENTED":{"CLOSED"},"FAILED":{"CLOSED"},"CANCELLED":set(),"CLOSED":set()}
 
 def _context(row):
     return ResourceContext(owner_employee_id=row["requested_by"], resource_type="change", resource_id=str(row["change_id"]))
@@ -34,10 +34,13 @@ def get_change(*,actor_employee_id:int,change_id:int):
         row=cur.fetchone()
         if row:
             cur.execute("SELECT actor_employee_id,action_key,details,occurred_at FROM change_activity WHERE change_id=%s ORDER BY occurred_at,change_activity_id",(change_id,)); row["activity"]=cur.fetchall()
-        cur.execute("""SELECT approval_request_id,status,current_step,request_reason,created_at,completed_at
-            FROM approval_requests WHERE resource_type='change' AND resource_id=%s
-            ORDER BY created_at DESC,approval_request_id DESC LIMIT 1""",(str(change_id),))
-        approval=cur.fetchone()
+        if row:
+            cur.execute("""SELECT approval_request_id,status,current_step,request_reason,created_at,completed_at
+                FROM approval_requests WHERE resource_type='change' AND resource_id=%s
+                ORDER BY created_at DESC,approval_request_id DESC LIMIT 1""",(str(change_id),))
+            approval=cur.fetchone()
+        else:
+            approval=None
         if approval:
             cur.execute("""SELECT s.step_number,s.decision,s.decided_at,s.decision_comment,e.full_name AS approver_name
                 FROM approval_steps s JOIN employees e ON e.employee_id=s.approver_employee_id
