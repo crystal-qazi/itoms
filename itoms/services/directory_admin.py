@@ -81,7 +81,7 @@ def list_directory(*, actor_employee_id: int) -> dict:
         )
         roles = cur.fetchall()
         cur.execute(
-            """SELECT a.assignment_id,a.employee_id,a.role_id,r.role_name,
+            """SELECT a.assignment_id,a.employee_id,e.full_name,a.role_id,r.role_name,
                       a.scope_type,a.scope_reference,a.expires_at
                FROM employee_role_assignments a
                JOIN employees e ON e.employee_id=a.employee_id

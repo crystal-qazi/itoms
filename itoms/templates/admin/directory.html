@@ -1,18 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Employee Directory · ITOMS{% endblock %}
 {% block content %}
-<div class="page-heading">
-  <div><p class="eyebrow">ADMINISTRATION</p><h1>Employee directory</h1><p class="text-secondary mb-0">Manage employee accounts, team memberships and team managers within your department.</p></div>
-</div>
-{% if can_create_accounts %}
+<div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Employee directory</h1><p class="text-secondary mb-0">Manage employees, teams, managers and scoped role assignments within your department.</p></div></div>
+{% if can_create %}
 <section class="panel-card mt-4">
   <div class="panel-heading"><div><h2>Create employee account</h2><p>New accounts must change the initial password and enrol MFA at first sign-in.</p></div></div>
-  <form method="post" action="{{ url_for('directory.create_employee') }}" class="row g-3 mt-1">
+  <form method="post" action="{{ url_for('directory_admin.create_employee') }}" class="row g-3 mt-1">
     <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
     <div class="col-12 col-md-4"><label class="form-label" for="employee-code">Employee code</label><input class="form-control" id="employee-code" name="employee_code" maxlength="80" required></div>
     <div class="col-12 col-md-4"><label class="form-label" for="full-name">Full name</label><input class="form-control" id="full-name" name="full_name" maxlength="200" required></div>
     <div class="col-12 col-md-4"><label class="form-label" for="username">Username</label><input class="form-control" id="username" name="username" maxlength="120" autocomplete="off" required></div>
-    <div class="col-12 col-md-4"><label class="form-label" for="initial-password">Initial password</label><input class="form-control" id="initial-password" name="initial_password" type="password" minlength="12" autocomplete="new-password" required><div class="form-text">Use a unique temporary password and share it securely.</div></div>
+    <div class="col-12 col-md-4"><label class="form-label" for="initial-password">Initial password</label><input class="form-control" id="initial-password" name="initial_password" type="password" minlength="12" autocomplete="new-password" required></div>
     <div class="col-12 col-md-4"><label class="form-label" for="employee-email">Email</label><input class="form-control" id="employee-email" name="email" type="email" maxlength="254"></div>
     <div class="col-12 col-md-4"><label class="form-label" for="job-title">Job title</label><input class="form-control" id="job-title" name="job_title" maxlength="150"></div>
     <div class="col-12 col-md-6"><label class="form-label" for="primary-team">Primary team</label><select class="form-select" id="primary-team" name="primary_team_id"><option value="">No primary team</option>{% for team in teams if team.is_active %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>
@@ -22,41 +20,53 @@
 {% endif %}
 <section class="panel-card mt-4">
   <div class="panel-heading"><div><h2>Employees</h2><p>{{ employees|length }} employees in this department.</p></div></div>
-  {% if employees %}
-  <div class="table-responsive mt-3"><table class="table align-middle">
-    <thead><tr><th scope="col">Employee</th><th scope="col">Job title</th><th scope="col">Status</th><th scope="col">Team membership</th></tr></thead>
-    <tbody>{% for employee in employees %}
-      <tr>
-        <td><strong>{{ employee.full_name }}</strong><div class="small text-secondary">{{ employee.employee_code }} · {{ employee.email or 'No email' }}</div></td>
-        <td>{{ employee.job_title or '—' }}</td>
-        <td>{% if employee.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
-        <td><form method="post" action="{{ url_for('directory.membership', employee_id=employee.employee_id) }}" class="d-flex flex-wrap gap-2 align-items-end">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
-          <div><label class="form-label small" for="team-{{ employee.employee_id }}">Team</label><select class="form-select form-select-sm" id="team-{{ employee.employee_id }}" name="team_id" required><option value="">Select team</option>{% for team in teams if team.is_active %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>
-          <label class="form-check small mb-1"><input class="form-check-input" type="checkbox" name="is_primary" value="1"> Make primary</label>
-          <button class="btn btn-sm btn-outline-primary" name="action" value="assign" type="submit">Add</button>
-          <button class="btn btn-sm btn-outline-danger" name="action" value="remove" type="submit">Remove</button>
-        </form></td>
-      </tr>
-    {% endfor %}</tbody>
-  </table></div>
-  {% else %}<div class="empty-state mt-3"><strong>No employees found</strong><p class="text-secondary mb-0">There are no employees in this department.</p></div>{% endif %}
+  {% if employees %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Employee</th><th>Job title</th><th>Status</th><th>Assign team</th></tr></thead><tbody>
+  {% for employee in employees %}<tr>
+    <td><strong>{{ employee.full_name }}</strong><div class="small text-secondary">{{ employee.employee_code }} · {{ employee.email or 'No email' }}</div></td>
+    <td>{{ employee.job_title or '—' }}</td>
+    <td>{% if employee.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+    <td><form method="post" action="{{ url_for('directory_admin.assign_membership') }}" class="d-flex flex-wrap gap-2 align-items-end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="employee_id" value="{{ employee.employee_id }}">
+      <div><label class="form-label small" for="team-{{ employee.employee_id }}">Team</label><select class="form-select form-select-sm" id="team-{{ employee.employee_id }}" name="team_id" required><option value="">Select team</option>{% for team in teams if team.is_active %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>
+      <label class="form-check small mb-1"><input class="form-check-input" type="checkbox" name="primary" value="1"> Make primary</label>
+      <button class="btn btn-sm btn-outline-primary" type="submit">Add membership</button>
+    </form></td>
+  </tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty-state mt-3"><strong>No employees found</strong><p class="text-secondary mb-0">There are no employees in this department.</p></div>{% endif %}
 </section>
 <section class="panel-card mt-4">
-  <div class="panel-heading"><div><h2>Team memberships</h2><p>Primary memberships cannot be removed until the employee is reassigned.</p></div></div>
-  {% if memberships %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Employee</th><th>Team</th><th>Type</th></tr></thead><tbody>{% for item in memberships %}<tr><td>{{ item.full_name }} <span class="small text-secondary">({{ item.employee_id }})</span></td><td>{{ item.team_name }}</td><td>{% if item.is_primary %}<span class="badge text-bg-primary">Primary</span>{% else %}<span class="badge text-bg-secondary">Additional</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-  {% else %}<p class="text-secondary mb-0">No team memberships are registered.</p>{% endif %}
+  <div class="panel-heading"><div><h2>Team memberships</h2><p>Reassign an employee's primary team before removing that membership.</p></div></div>
+  {% if memberships %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Employee</th><th>Team</th><th>Type</th><th>Action</th></tr></thead><tbody>
+  {% for item in memberships %}<tr><td>{{ item.full_name }} <span class="small text-secondary">({{ item.employee_id }})</span></td><td>{{ item.team_name }}</td><td>{% if item.is_primary %}<span class="badge text-bg-primary">Primary</span>{% else %}<span class="badge text-bg-secondary">Additional</span>{% endif %}</td><td>
+    {% if not item.is_primary %}<form method="post" action="{{ url_for('directory_admin.remove_membership') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="employee_id" value="{{ item.employee_id }}"><input type="hidden" name="team_id" value="{{ item.team_id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>{% else %}<span class="text-secondary small">Primary team</span>{% endif %}
+  </td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="text-secondary mb-0">No team memberships are registered.</p>{% endif %}
 </section>
 <section class="panel-card mt-4">
   <div class="panel-heading"><div><h2>Team managers</h2><p>A manager must be an active member of the team.</p></div></div>
   {% if managers %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Manager</th><th>Team</th><th>Action</th></tr></thead><tbody>
-    {% for item in managers %}<tr><td>{{ item.full_name }}</td><td>{{ item.team_name }}</td><td><form method="post" action="{{ url_for('directory.manager_assignment', employee_id=item.manager_employee_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="team_id" value="{{ item.team_id }}"><button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="remove">Remove manager</button></form></td></tr>{% endfor %}
+  {% for item in managers %}<tr><td>{{ item.full_name }}</td><td>{{ item.team_name }}</td><td><form method="post" action="{{ url_for('directory_admin.remove_manager') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="employee_id" value="{{ item.manager_employee_id }}"><input type="hidden" name="team_id" value="{{ item.team_id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove manager</button></form></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="text-secondary mb-0">No team managers are assigned.</p>{% endif %}
-  <form method="post" action="{{ url_for('directory.manager_assignment') }}" class="row g-2 mt-3">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
-    <div class="col-12 col-md-5"><label class="form-label" for="manager-employee">Manager</label><select class="form-select" id="manager-employee" name="manager_employee_id" required><option value="">Select employee</option>{% for employee in employees if employee.is_active %}<option value="{{ employee.employee_id }}">{{ employee.full_name }} ({{ employee.employee_code }})</option>{% endfor %}</select></div>
+  <form method="post" action="{{ url_for('directory_admin.assign_manager') }}" class="row g-2 mt-3"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-md-5"><label class="form-label" for="manager-employee">Manager</label><select class="form-select" id="manager-employee" name="employee_id" required><option value="">Select employee</option>{% for employee in employees if employee.is_active %}<option value="{{ employee.employee_id }}">{{ employee.full_name }} ({{ employee.employee_code }})</option>{% endfor %}</select></div>
     <div class="col-12 col-md-5"><label class="form-label" for="manager-team">Team</label><select class="form-select" id="manager-team" name="team_id" required><option value="">Select team</option>{% for team in teams if team.is_active %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>
-    <div class="col-12 col-md-2 align-self-end"><button class="btn btn-outline-primary w-100" type="submit" name="action" value="assign">Assign</button></div>
+    <div class="col-12 col-md-2 align-self-end"><button class="btn btn-outline-primary w-100" type="submit">Assign manager</button></div>
   </form>
 </section>
+{% if can_assign_roles %}
+<section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Role assignments</h2><p>Assign only the minimum role and scope required. Job titles do not grant access.</p></div></div>
+  <form method="post" action="{{ url_for('directory_admin.assign_employee_role') }}" class="row g-3 mt-1">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-md-4"><label class="form-label" for="role-employee">Employee</label><select class="form-select" id="role-employee" name="employee_id" required><option value="">Select employee</option>{% for employee in employees if employee.is_active %}<option value="{{ employee.employee_id }}">{{ employee.full_name }} ({{ employee.employee_code }})</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-4"><label class="form-label" for="application-role">Role</label><select class="form-select" id="application-role" name="role_id" required><option value="">Select role</option>{% for role in roles %}<option value="{{ role.role_id }}">{{ role.role_name }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-4"><label class="form-label" for="role-scope">Scope</label><select class="form-select" id="role-scope" name="scope_type" required><option value="">Select scope</option><option value="OWN">Own</option><option value="TEAM">Team</option><option value="MANAGED_TEAMS">Managed teams</option><option value="DEPARTMENT">Department</option><option value="RESOURCE">Resource</option></select></div>
+    <div class="col-12 col-md-6"><label class="form-label" for="scope-reference">Scope reference</label><input class="form-control" id="scope-reference" name="scope_reference" maxlength="255" placeholder="Team ID or resource_type:resource_id"><div class="form-text">Leave blank for OWN, MANAGED_TEAMS and DEPARTMENT (the employee's department is used).</div></div>
+    <div class="col-12"><button class="btn btn-primary" type="submit">Assign role</button></div>
+  </form>
+  {% if role_assignments %}<div class="table-responsive mt-4"><table class="table align-middle"><thead><tr><th>Employee</th><th>Role</th><th>Scope</th><th>Expiry</th><th>Action</th></tr></thead><tbody>
+  {% for item in role_assignments %}<tr><td>{{ item.full_name }} <span class="small text-secondary">({{ item.employee_id }})</span></td><td>{{ item.role_name }}</td><td>{{ item.scope_type }}{% if item.scope_reference %}<div class="small text-secondary">{{ item.scope_reference }}</div>{% endif %}</td><td>{{ item.expires_at or 'No expiry' }}</td><td><form method="post" action="{{ url_for('directory_admin.revoke_employee_role') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="assignment_id" value="{{ item.assignment_id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button></form></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="text-secondary mt-3 mb-0">No active role assignments in this department.</p>{% endif %}
+</section>
+{% endif %}
 {% endblock %}
