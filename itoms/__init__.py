@@ -59,6 +59,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.changes import change_bp
     from itoms.web.releases import release_bp
     from itoms.web.sqa import sqa_bp
+    from itoms.web.role_permissions import role_permissions_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(grafana_bp)
@@ -70,5 +71,6 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(change_bp)
     app.register_blueprint(release_bp)
     app.register_blueprint(sqa_bp)
+    app.register_blueprint(role_permissions_bp)
     register_cli(app)
     return app

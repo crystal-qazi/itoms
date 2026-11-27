@@ -180,3 +180,30 @@ def revoke_role_permission(*, actor_employee_id: int, role_id: int, permission_k
     finally:
         cur.close()
         conn.close()
+
+
+def list_role_permission_options(*, actor_employee_id: int, role_id: int | None = None) -> dict:
+    """Return active roles and permission catalogue for the selected role."""
+    if not has_permission(actor_employee_id, "identity.roles.permissions.manage"):
+        raise IdentityAdministrationError("Not authorized to manage role permissions.")
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT role_id,role_name FROM application_roles WHERE is_active=TRUE ORDER BY role_name")
+        roles = cur.fetchall()
+        if not roles:
+            return {"roles": [], "permissions": [], "selected_role_id": None}
+        available = {int(role["role_id"]) for role in roles}
+        selected = int(role_id) if role_id is not None else int(roles[0]["role_id"])
+        if selected not in available:
+            raise IdentityAdministrationError("Select an active application role.")
+        cur.execute("""SELECT p.permission_key,p.description,
+            (rp.permission_id IS NOT NULL) AS is_granted
+            FROM permissions p
+            LEFT JOIN role_permissions rp
+              ON rp.permission_id=p.permission_id AND rp.role_id=%s
+            ORDER BY p.permission_key""", (selected,))
+        return {"roles": roles, "permissions": cur.fetchall(), "selected_role_id": selected}
+    finally:
+        cur.close()
+        conn.close()
