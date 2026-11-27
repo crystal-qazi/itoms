@@ -28,6 +28,18 @@ def register_cli(app: Flask) -> None:
         click.echo("Change the password at first login and enroll TOTP immediately.")
 
 
+
+    @app.cli.command("incidents-process-sla-escalations")
+    @click.option("--batch-size", default=200, type=click.IntRange(1, 1000))
+    def incidents_process_sla_escalations(batch_size: int) -> None:
+        """Check due incidents and create idempotent in-app SLA escalations."""
+        from itoms.services.sla_escalations import process_sla_escalations
+        result = process_sla_escalations(batch_size=batch_size)
+        click.echo(
+            f"Created {result['events_created']} escalation event(s) and "
+            f"{result['notifications_created']} in-app notification(s)."
+        )
+
     @app.cli.command("notifications-process-outbox")
     @click.option("--batch-size", default=25, type=click.IntRange(1, 100))
     def notifications_process_outbox(batch_size: int) -> None:
