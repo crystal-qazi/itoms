@@ -67,7 +67,7 @@ def claim_outbox_batch(*, batch_size: int = 25) -> list[dict]:
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT outbox_id,notification_id,channel,attempt_count
-            FROM notification_outbox WHERE delivery_status='PENDING'
+            FROM notification_outbox WHERE delivery_status='PENDING' AND channel='IN_APP'
             AND available_at<=UTC_TIMESTAMP() ORDER BY outbox_id
             LIMIT %s FOR UPDATE SKIP LOCKED""",(batch_size,))
         rows=cur.fetchall()
@@ -117,3 +117,102 @@ def count_unread(*, employee_id: int) -> int:
         return int(cur.fetchone()[0])
     finally:
         cur.close(); conn.close()
+
+
+def process_in_app_outbox_batch(*, batch_size: int = 25) -> int:
+    """Complete queued in-app deliveries; other channels remain untouched until configured."""
+    rows = claim_outbox_batch(batch_size=batch_size)
+    completed = 0
+    for row in rows:
+        complete_outbox_item(outbox_id=row["outbox_id"], success=True)
+        completed += 1
+    return completed
+
+
+def recover_stale_outbox(
+    *, stale_after_seconds: int = 300, max_attempts: int = 8, batch_size: int = 100,
+) -> dict:
+    """Release abandoned worker claims and retry or dead-letter them safely."""
+    stale_after_seconds = max(60, min(int(stale_after_seconds), 86400))
+    max_attempts = max(1, min(int(max_attempts), 20))
+    batch_size = max(1, min(int(batch_size), 500))
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    recovered = 0
+    dead = 0
+    try:
+        cur.execute(
+            """SELECT outbox_id,attempt_count FROM notification_outbox
+               WHERE delivery_status='PROCESSING'
+                 AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s SECOND)
+               ORDER BY locked_at,outbox_id LIMIT %s FOR UPDATE SKIP LOCKED""",
+            (stale_after_seconds, batch_size),
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            attempts = int(row["attempt_count"]) + 1
+            is_dead = attempts >= max_attempts
+            delay = min(3600, 2 ** min(attempts, 10) * 15)
+            cur.execute(
+                """UPDATE notification_outbox
+                   SET delivery_status=%s,attempt_count=%s,
+                       available_at=CASE WHEN %s=1 THEN available_at
+                           ELSE DATE_ADD(UTC_TIMESTAMP(),INTERVAL %s SECOND) END,
+                       locked_at=NULL,last_error=%s
+                   WHERE outbox_id=%s AND delivery_status='PROCESSING'""",
+                ("DEAD" if is_dead else "PENDING", attempts, int(is_dead), delay,
+                 "Recovered stale worker claim", row["outbox_id"]),
+            )
+            if cur.rowcount:
+                recovered += 1
+                dead += int(is_dead)
+                cur.execute(
+                    """INSERT INTO audit_events
+                       (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                       VALUES (NULL,'NOTIFICATION_OUTBOX_RECOVERED','notification_outbox',%s,'SUCCESS',
+                               JSON_OBJECT('attempt_count',%s,'dead_lettered',%s))""",
+                    (str(row["outbox_id"]), attempts, bool(is_dead)),
+                )
+        conn.commit()
+        return {"recovered": recovered, "dead_lettered": dead}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def replay_dead_letter(*, actor_employee_id: int, outbox_id: int) -> None:
+    """Audited, permission-controlled replay of one dead-lettered outbox row."""
+    if not has_permission(actor_employee_id, "notifications.outbox.replay"):
+        raise NotificationError("Not authorized to replay notification outbox items.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT delivery_status FROM notification_outbox WHERE outbox_id=%s FOR UPDATE",
+            (outbox_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[0] != "DEAD":
+            raise NotificationError("Outbox item is not in the dead-letter queue.")
+        cur.execute(
+            """UPDATE notification_outbox SET delivery_status='PENDING',
+               attempt_count=0,available_at=UTC_TIMESTAMP(),locked_at=NULL,
+               last_error=NULL,sent_at=NULL WHERE outbox_id=%s""",
+            (outbox_id,),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'NOTIFICATION_OUTBOX_REPLAYED','notification_outbox',%s,'SUCCESS')""",
+            (actor_employee_id, str(outbox_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
