@@ -99,7 +99,7 @@ Use two independent connections and deterministic barriers/events; do not rely o
 
 ## Repository audit — 2026-11-27 (refreshed after identity scope-lock change)
 
-The following inventory was verified from the current feature branch source and migrations. CI Run #216 for commit `798a5d89f7f3a9c58f34c62eca80cbc064a5bd46` passed both jobs: Python quality and MySQL 8.4 integration (29 passed); all 26 migrations applied successfully and a second run was a no-op.
+The following inventory was verified from the current feature branch source and migrations. CI Run #46008936383 for commit `4edc324785f1dc6bab51bc5133efb8d88513aa24` passed both jobs: Python quality and MySQL 8.4 integration (41 passed); all 39 migrations applied successfully and a second run was a no-op.
 
 ### Authorization schema and available indexes
 
@@ -118,8 +118,8 @@ Do not add indexes solely by intuition. Capture `EXPLAIN` plans for the proposed
 | Writer | Current behavior | Consistency gap / required treatment |
 |---|---|---|
 | `identity_admin.assign_role` | Locks target employee, then (for TEAM scope) active team and exact membership, then role; checks actor permission on a separate connection; inserts assignment and audit | Target scope is serialized with directory membership writers, but actor authorization is still outside the write transaction. The complete cross-service lock protocol is not yet proven |
-| `identity_admin.grant_role_permission` | Checks actor permission separately, locks role row, validates role's department assignments, inserts role-permission row and audit | Actor authorization is outside transaction; role-first lock must be part of documented order |
-| `identity_admin.revoke_role_permission` | Same pattern; deletes role-permission row while role row is locked | This is the currently implemented permission-revocation writer |
+| `identity_admin.grant_role_permission` | Locks the active actor employee, applicable role rows in ascending ID, the actor's active role assignments, and exact management permission rows; then validates target-role department scope and writes grant plus audit in the same transaction | Bounded actor/role-permission revocation consistency is covered by MySQL race tests; global lock ordering with other protected mutations is still unproven |
+| `identity_admin.revoke_role_permission` | Uses the same transaction-bound authorization helper and lock order, then deletes the exact role-permission row and writes audit | The revoke-vs-grant race is tested in both orderings; this guarantee does not automatically extend to other service mutations |
 | `directory.assign_employee_to_team` | Locks employee, then team, then exact membership; updates/inserts membership and commits | Uses employee → team → membership order; a MySQL concurrency test covers primary-team reassignment racing with removal of a non-primary membership |
 | `directory.remove_employee_from_team` | Locks employee, then team, then exact membership; refuses removal of primary membership and deletes non-primary membership | Now uses the same employee → team → membership order as assignment; covered by the concurrent primary-assignment/removal MySQL test |
 | `bootstrap.bootstrap_admin` | Creates initial role, role-permission rows, employee assignment and audit in a one-time bootstrap transaction | Bootstrap-only path; ensure it cannot run after initialization and document its exception to runtime locking |
@@ -175,7 +175,7 @@ Before coding the transaction-bound evaluator:
 
 ## Targeted implementation — role-permission administration
 
-The following bounded slice is now implemented in `identity_admin.py`:
+The following bounded slice is implemented in `identity_admin.py` and verified by CI Run #46008936383 (Python quality passed; MySQL 8.4: 41 passed; all 39 migrations applied and the second run was idempotent):
 
 - `grant_role_permission` and `revoke_role_permission` no longer authorize through the independent-connection `has_permission` helper.
 - Both operations use their own mutation transaction for authorization and the role-permission write.
