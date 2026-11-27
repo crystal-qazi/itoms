@@ -233,7 +233,7 @@ def _assert_plan_ready(cur, plan_id: int):
         JOIN sqa_test_executions x ON x.execution_id=d.execution_id
         JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
         WHERE c.test_plan_id=%s AND d.severity IN ('HIGH','CRITICAL')
-        AND d.status NOT IN ('FIXED','CLOSED','REJECTED')""",(plan_id,))
+        AND d.status NOT IN ('CLOSED','REJECTED')""",(plan_id,))
     if cur.fetchone()["unresolved_defects"]:
         raise SQAError("Unresolved High/Critical defects prevent SQA approval.")
 
@@ -314,8 +314,10 @@ def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
             department_id=release["department_id"],resource_type="release",resource_id=str(release["release_id"]))
         if not has_permission(actor_employee_id,"sqa.signoff.read",context):
             return []
-        cur.execute("""SELECT s.release_key,s.decision,s.comments,s.signed_at,e.full_name AS signer
-            FROM sqa_release_signoffs s JOIN employees e ON e.employee_id=s.signed_by
+        cur.execute("""SELECT s.release_key,s.decision,s.comments,s.signed_at,
+            COALESCE(e.full_name,'Former or inactive user') AS signer
+            FROM sqa_release_signoffs s
+            LEFT JOIN employees e ON e.employee_id=s.signed_by AND e.is_active=TRUE
             WHERE s.release_key=%s ORDER BY s.signed_at DESC""",(release_key,))
         return cur.fetchall()
     finally:
