@@ -74,8 +74,11 @@ def list_releases(*,actor_employee_id:int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT r.release_id,r.release_key,r.version_label,r.status,r.target_at,
-            r.released_at,r.created_by,s.service_name FROM software_releases r
-            LEFT JOIN service_records s ON s.service_id=r.service_id
+            r.released_at,r.created_by,s.service_name,
+            (SELECT ar.status FROM approval_requests ar
+             WHERE ar.resource_type='release' AND ar.resource_id=CAST(r.release_id AS CHAR)
+             ORDER BY ar.created_at DESC,ar.approval_request_id DESC LIMIT 1) AS approval_status
+            FROM software_releases r LEFT JOIN service_records s ON s.service_id=r.service_id
             ORDER BY r.created_at DESC LIMIT 200""")
         rows=cur.fetchall()
     finally:

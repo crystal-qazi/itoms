@@ -34,6 +34,16 @@ def get_change(*,actor_employee_id:int,change_id:int):
         row=cur.fetchone()
         if row:
             cur.execute("SELECT actor_employee_id,action_key,details,occurred_at FROM change_activity WHERE change_id=%s ORDER BY occurred_at,change_activity_id",(change_id,)); row["activity"]=cur.fetchall()
+        cur.execute("""SELECT approval_request_id,status,current_step,request_reason,created_at,completed_at
+            FROM approval_requests WHERE resource_type='change' AND resource_id=%s
+            ORDER BY created_at DESC,approval_request_id DESC LIMIT 1""",(str(change_id),))
+        approval=cur.fetchone()
+        if approval:
+            cur.execute("""SELECT s.step_number,s.decision,s.decided_at,s.decision_comment,e.full_name AS approver_name
+                FROM approval_steps s JOIN employees e ON e.employee_id=s.approver_employee_id
+                WHERE s.approval_request_id=%s ORDER BY s.step_number""",(approval["approval_request_id"],))
+            approval["steps"]=cur.fetchall()
+        row["approval"]=approval
     finally: cur.close(); conn.close()
     if not row or not has_permission(actor_employee_id,"change.read",_context(row)): raise ChangeError("Change record not found.")
     row["can_update"]=has_permission(actor_employee_id,"change.update",_context(row))
