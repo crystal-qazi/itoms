@@ -57,6 +57,8 @@ def test_permanent_delete_returns_not_found_for_missing_document(monkeypatch):
             return Cursor()
         def close(self):
             return None
+        def rollback(self):
+            return None
 
     monkeypatch.setattr(documents, "has_permission", lambda *_: True)
     monkeypatch.setattr(documents, "get_connection", lambda: Connection())
