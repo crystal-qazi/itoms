@@ -108,3 +108,32 @@ def test_manager_route_uses_selected_employee_and_team(monkeypatch):
     assert calls == [{
         "actor_employee_id": 10, "manager_employee_id": 25, "team_id": 8,
     }]
+
+
+
+def test_directory_page_renders_department_records(monkeypatch):
+    from itoms.web import directory as directory_web
+
+    app = _app_with_identity()
+    monkeypatch.setattr(directory_web, "has_permission", lambda *_: True)
+    monkeypatch.setattr(directory_web, "list_directory", lambda **_: {
+        "department_id": 7,
+        "employees": [{
+            "employee_id": 25, "employee_code": "E-25",
+            "full_name": "Example Employee", "email": None,
+            "job_title": "Engineer", "is_active": True,
+        }],
+        "teams": [{"team_id": 8, "team_name": "Platform", "is_active": True}],
+        "memberships": [{
+            "employee_id": 25, "team_id": 8, "is_primary": True,
+            "team_name": "Platform", "full_name": "Example Employee",
+        }],
+        "managers": [],
+    })
+    response = app.test_client().get("/admin/directory/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Example Employee" in body
+    assert "Platform" in body
+    assert "Make primary" in body
+    assert "Select employee" in body
