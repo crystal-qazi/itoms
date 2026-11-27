@@ -347,6 +347,8 @@ def list_documents(*, employee_id: int) -> list[dict]:
             )
             row["can_share"] = has_permission(employee_id, "document.share", context)
             row["can_version"] = has_permission(employee_id, "document.version.manage", context)
+            row["can_archive"] = has_permission(employee_id, "document.archive", context)
+            row["can_delete"] = has_permission(employee_id, "document.delete", context)
             visible.append(row)
     return visible
 
