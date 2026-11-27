@@ -66,3 +66,9 @@ def test_release_management_blueprint_is_registered() -> None:
     assert "releases.index" in app.view_functions
     assert "releases.create" in app.view_functions
     assert "releases.status" in app.view_functions
+
+
+def test_approval_inbox_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "approvals.inbox" in app.view_functions
+    assert "approvals.decision" in app.view_functions
