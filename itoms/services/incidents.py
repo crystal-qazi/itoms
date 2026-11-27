@@ -421,7 +421,7 @@ def list_assignable_teams(*, actor_employee_id: int, ticket_id: int) -> list[dic
         conn.close()
     return [team for team in teams if has_permission(
         actor_employee_id, "incident.assign",
-        ResourceContext(owner_employee_id=ticket[0],
+        ResourceContext(owner_employee_id=ticket["requester_employee_id"],
                         team_id=team["team_id"], department_id=team["department_id"]))]
 
 

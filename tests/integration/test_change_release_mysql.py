@@ -242,6 +242,13 @@ def workflow_fixture():
             f"DELETE FROM audit_events WHERE actor_employee_id IN ({marks})",
             ids,
         )
+        cur.execute("SELECT ticket_id FROM incident_tickets WHERE requester_employee_id=%s", (requester,))
+        incident_ids = [int(row[0]) for row in cur.fetchall()]
+        if incident_ids:
+            incident_marks = ",".join(["%s"] * len(incident_ids))
+            cur.execute(f"DELETE FROM incident_comments WHERE ticket_id IN ({incident_marks})", incident_ids)
+            cur.execute(f"DELETE FROM incident_activity WHERE ticket_id IN ({incident_marks})", incident_ids)
+            cur.execute(f"DELETE FROM incident_tickets WHERE ticket_id IN ({incident_marks})", incident_ids)
         cur.execute("DELETE FROM service_records WHERE service_key LIKE %s", (f"SVC-IT-{suffix}-%",))
         cur.execute(f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})", ids)
         cur.execute(f"DELETE FROM employee_team_memberships WHERE employee_id IN ({marks})", ids)
