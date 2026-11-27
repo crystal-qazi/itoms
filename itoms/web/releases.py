@@ -25,7 +25,9 @@ def _approvers():
 def index():
     can_create=has_permission(g.employee_id,"release.create")
     services,changes=_choices() if can_create else ([],[])
-    return render_template("releases/index.html",releases=list_releases(actor_employee_id=g.employee_id),can_create=can_create,services=services,changes=changes,approvers=_approvers() if has_permission(g.employee_id,"release.update") else [],states=sorted(RELEASE_STATES),csrf_token_value=session.get("csrf_token",""))
+    releases=list_releases(actor_employee_id=g.employee_id)
+    can_manage_any=any(item["can_update"] for item in releases)
+    return render_template("releases/index.html",releases=releases,can_create=can_create,services=services,changes=changes,approvers=_approvers() if can_manage_any else [],states=sorted(RELEASE_STATES),csrf_token_value=session.get("csrf_token",""))
 @release_bp.post("/")
 @login_required
 def create():
