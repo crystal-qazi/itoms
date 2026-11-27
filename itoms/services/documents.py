@@ -7,6 +7,7 @@ import re
 import socket
 import uuid
 import zipfile
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -317,10 +318,15 @@ def list_documents(*, employee_id: int) -> list[dict]:
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """SELECT file_id,opaque_id,original_filename,detected_mime_type,
-                      file_size_bytes,classification,scan_status,lifecycle_status,
-                      uploaded_by,created_at
-               FROM managed_files ORDER BY created_at DESC,file_id DESC LIMIT 500"""
+            """SELECT f.file_id,f.opaque_id,f.original_filename,f.detected_mime_type,
+                      f.file_size_bytes,f.classification,f.scan_status,f.lifecycle_status,
+                      f.uploaded_by,f.created_at,
+                      EXISTS(SELECT 1 FROM managed_file_shares s
+                             WHERE s.file_id=f.file_id AND s.shared_with_employee_id=%s
+                               AND s.permission='DOWNLOAD' AND s.revoked_at IS NULL
+                               AND s.expires_at>UTC_TIMESTAMP()) AS shared_download
+               FROM managed_files f ORDER BY f.created_at DESC,f.file_id DESC LIMIT 500""",
+            (employee_id,),
         )
         rows = cur.fetchall()
     finally:
@@ -332,12 +338,15 @@ def list_documents(*, employee_id: int) -> list[dict]:
             owner_employee_id=row["uploaded_by"], resource_type="document",
             resource_id=str(row["file_id"]),
         )
-        if has_permission(employee_id, "document.read", context):
+        can_read = has_permission(employee_id, "document.read", context) or bool(row["shared_download"])
+        if can_read:
             row["can_download"] = (
                 row["scan_status"] == "CLEAN"
                 and row["lifecycle_status"] == "ACTIVE"
-                and has_permission(employee_id, "document.download", context)
+                and (bool(row["shared_download"]) or has_permission(employee_id, "document.download", context))
             )
+            row["can_share"] = has_permission(employee_id, "document.share", context)
+            row["can_version"] = has_permission(employee_id, "document.version.manage", context)
             visible.append(row)
     return visible
 
@@ -347,10 +356,14 @@ def download_document(*, employee_id: int, file_id: int) -> tuple[bytes, str, st
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """SELECT original_filename,storage_key,detected_mime_type,sha256_checksum,
-                      scan_status,lifecycle_status,uploaded_by
-               FROM managed_files WHERE file_id=%s""",
-            (file_id,),
+            """SELECT f.original_filename,f.storage_key,f.detected_mime_type,f.sha256_checksum,
+                      f.scan_status,f.lifecycle_status,f.uploaded_by,
+                      EXISTS(SELECT 1 FROM managed_file_shares s
+                             WHERE s.file_id=f.file_id AND s.shared_with_employee_id=%s
+                               AND s.permission='DOWNLOAD' AND s.revoked_at IS NULL
+                               AND s.expires_at>UTC_TIMESTAMP()) AS shared_download
+               FROM managed_files f WHERE f.file_id=%s""",
+            (employee_id, file_id),
         )
         row = cur.fetchone()
     finally:
@@ -362,7 +375,7 @@ def download_document(*, employee_id: int, file_id: int) -> tuple[bytes, str, st
         owner_employee_id=row["uploaded_by"], resource_type="document",
         resource_id=str(file_id),
     )
-    if not has_permission(employee_id, "document.download", context):
+    if not row["shared_download"] and not has_permission(employee_id, "document.download", context):
         raise DocumentError("Document was not found.")
     if row["scan_status"] != "CLEAN" or row["lifecycle_status"] != "ACTIVE":
         raise DocumentError("Document is unavailable until a clean scan and active lifecycle are confirmed.")
@@ -376,3 +389,262 @@ def download_document(*, employee_id: int, file_id: int) -> tuple[bytes, str, st
     if hashlib.sha256(content).hexdigest() != row["sha256_checksum"]:
         raise DocumentError("Stored document integrity check failed.")
     return content, row["original_filename"], row["detected_mime_type"]
+
+
+def _validate_document_payload(filename: str, content: bytes) -> tuple[str, str, str]:
+    if not isinstance(content, bytes) or not content or len(content) > MAX_FILE_BYTES:
+        raise DocumentError("Document must be non-empty and no larger than 10 MiB.")
+    raw_name = (filename or "").replace("\\", "/").split("/")[-1]
+    if (not raw_name or len(raw_name) > 255
+            or any(ord(char) < 32 or ord(char) == 127 for char in raw_name)):
+        raise DocumentError("Document filename is invalid.")
+    detected = detect_file_type(raw_name, content)
+    if not detected:
+        raise DocumentError("File signature is unsupported or does not match its extension.")
+    extension, mime_type = detected
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """SELECT 1 FROM document_file_type_allowlist
+               WHERE extension=%s AND mime_type=%s AND is_active=TRUE""",
+            (extension, mime_type),
+        )
+        if not cur.fetchone():
+            raise DocumentError("This file type is not enabled by the administrator.")
+    finally:
+        cur.close()
+        conn.close()
+    return raw_name, extension, mime_type
+
+
+def _store_scanned_version(
+    *, actor_employee_id: int, file_id: int, filename: str, content: bytes,
+    classification: str,
+) -> dict:
+    raw_name, _extension, mime_type = _validate_document_payload(filename, content)
+    scan = scan_with_trend_micro(content)
+    scan_status = scan.get("status", "ERROR")
+    if scan_status not in {"CLEAN", "INFECTED", "ERROR"}:
+        scan_status = "ERROR"
+    lifecycle = "ACTIVE" if scan_status == "CLEAN" else "QUARANTINED"
+    storage_key = f"files/{uuid.uuid4().hex}"
+    path = _safe_storage_path(storage_key)
+    root = _storage_root()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
+    try:
+        descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+    except OSError as exc:
+        raise DocumentError("Document could not be stored safely.") from exc
+    checksum = hashlib.sha256(content).hexdigest()
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT file_id FROM managed_files WHERE file_id=%s FOR UPDATE", (file_id,))
+        if not cur.fetchone():
+            raise DocumentError("Document was not found.")
+        cur.execute(
+            "SELECT COALESCE(MAX(version_number),0)+1 FROM managed_file_versions WHERE file_id=%s",
+            (file_id,),
+        )
+        version_number = int(cur.fetchone()[0])
+        cur.execute(
+            """INSERT INTO managed_file_versions
+               (file_id,version_number,storage_key,file_size_bytes,
+                sha256_checksum,detected_mime_type,scan_status,uploaded_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (file_id, version_number, storage_key, len(content), checksum,
+             mime_type, scan_status, actor_employee_id),
+        )
+        version_id = int(cur.lastrowid)
+        cur.execute(
+            """UPDATE managed_files SET original_filename=%s,storage_key=%s,
+               detected_mime_type=%s,file_size_bytes=%s,sha256_checksum=%s,
+               classification=%s,scan_status=%s,lifecycle_status=%s
+               WHERE file_id=%s""",
+            (raw_name, storage_key, mime_type, len(content), checksum,
+             classification, scan_status, lifecycle, file_id),
+        )
+        cur.execute(
+            """INSERT INTO file_scan_events
+               (file_id,file_version_id,scanner_name,scanner_engine_version,scan_result,details)
+               VALUES (%s,%s,'Trend Micro ICAP',%s,%s,%s)""",
+            (file_id, version_id, scan.get("engine_version"), scan_status,
+             (scan.get("details") or "No scanner details.")[:500]),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'DOCUMENT_VERSION_UPLOADED','managed_file',%s,'SUCCESS',
+                       JSON_OBJECT('version_number',%s,'scan_status',%s))""",
+            (actor_employee_id, str(file_id), version_number, scan_status),
+        )
+        conn.commit()
+        return {"file_id": file_id, "version_number": version_number,
+                "scan_status": scan_status, "lifecycle_status": lifecycle}
+    except Exception:
+        conn.rollback()
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def upload_document_version(
+    *, actor_employee_id: int, file_id: int, filename: str, content: bytes,
+) -> dict:
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT uploaded_by,classification,lifecycle_status
+               FROM managed_files WHERE file_id=%s""",
+            (file_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    if not row:
+        raise DocumentError("Document was not found.")
+    context = ResourceContext(
+        owner_employee_id=row["uploaded_by"], resource_type="document",
+        resource_id=str(file_id),
+    )
+    if not has_permission(actor_employee_id, "document.version.manage", context):
+        raise DocumentError("Document was not found.")
+    if row["lifecycle_status"] != "ACTIVE":
+        raise DocumentError("Only active documents can receive a new version.")
+    return _store_scanned_version(
+        actor_employee_id=actor_employee_id, file_id=file_id,
+        filename=filename, content=content, classification=row["classification"],
+    )
+
+
+def create_document_share(
+    *, actor_employee_id: int, file_id: int, recipient_employee_id: int,
+    permission: str, expires_at: str, approval_request_id: int | None = None,
+) -> int:
+    if permission != "DOWNLOAD":
+        raise DocumentError("Only explicit DOWNLOAD shares are currently supported.")
+    try:
+        expiry = datetime.fromisoformat(expires_at)
+    except (TypeError, ValueError):
+        raise DocumentError("Share expiry must be a valid ISO date and time.") from None
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if expiry <= now or expiry > now + timedelta(days=365):
+        raise DocumentError("Share expiry must be in the future and within 365 days.")
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT uploaded_by,classification,scan_status,lifecycle_status
+               FROM managed_files WHERE file_id=%s""",
+            (file_id,),
+        )
+        file_row = cur.fetchone()
+        if not file_row:
+            raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=file_row["uploaded_by"], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission(actor_employee_id, "document.share", context):
+            raise DocumentError("Document was not found.")
+        if file_row["scan_status"] != "CLEAN" or file_row["lifecycle_status"] != "ACTIVE":
+            raise DocumentError("Only clean active documents can be shared.")
+        cur.execute(
+            "SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
+            (recipient_employee_id,),
+        )
+        if not cur.fetchone():
+            raise DocumentError("Share recipient is inactive or unavailable.")
+        if file_row["classification"] in {"RESTRICTED", "CONFIDENTIAL"}:
+            if not approval_request_id:
+                raise DocumentError("Restricted and confidential shares require an approved approval request.")
+            cur.execute(
+                """SELECT 1 FROM approval_requests
+                   WHERE approval_request_id=%s AND requested_by=%s
+                     AND request_type='DOCUMENT_SHARE' AND resource_type='managed_file'
+                     AND resource_id=%s AND status='APPROVED'""",
+                (approval_request_id, actor_employee_id, str(file_id)),
+            )
+            if not cur.fetchone():
+                raise DocumentError("A matching approved document-share request is required.")
+        elif approval_request_id is not None:
+            raise DocumentError("Approval request is only accepted for restricted or confidential shares.")
+        cur.execute(
+            """INSERT INTO managed_file_shares
+               (file_id,shared_with_employee_id,shared_by_employee_id,permission,
+                expires_at,approval_request_id)
+               VALUES (%s,%s,%s,'DOWNLOAD',%s,%s)""",
+            (file_id, recipient_employee_id, actor_employee_id, expiry.replace(tzinfo=None), approval_request_id),
+        )
+        share_id = int(cur.lastrowid)
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'DOCUMENT_SHARED','managed_file_share',%s,'SUCCESS',
+                       JSON_OBJECT('file_id',%s,'recipient_employee_id',%s,
+                                   'expires_at',%s,'approval_request_id',%s))""",
+            (actor_employee_id, str(share_id), file_id, recipient_employee_id,
+             expiry.isoformat(), approval_request_id),
+        )
+        conn.commit()
+        return share_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def revoke_document_share(*, actor_employee_id: int, share_id: int) -> None:
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT s.file_id,f.uploaded_by FROM managed_file_shares s
+               JOIN managed_files f ON f.file_id=s.file_id
+               WHERE s.share_id=%s FOR UPDATE""",
+            (share_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise DocumentError("Document share was not found.")
+        context = ResourceContext(
+            owner_employee_id=row["uploaded_by"], resource_type="document",
+            resource_id=str(row["file_id"]),
+        )
+        if not has_permission(actor_employee_id, "document.share", context):
+            raise DocumentError("Document share was not found.")
+        cur.execute(
+            "UPDATE managed_file_shares SET revoked_at=UTC_TIMESTAMP() WHERE share_id=%s AND revoked_at IS NULL",
+            (share_id,),
+        )
+        if cur.rowcount:
+            cur.execute(
+                """INSERT INTO audit_events
+                   (actor_employee_id,event_key,target_type,target_id,outcome)
+                   VALUES (%s,'DOCUMENT_SHARE_REVOKED','managed_file_share',%s,'SUCCESS')""",
+                (actor_employee_id, str(share_id)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
