@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Service Requests · ITOMS{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">SERVICE MANAGEMENT</p><h1>Service Requests</h1><p class="text-secondary mb-0">Submit and track routine IT service requests.</p></div>
+  <span class="status-pill"><span></span> Request workflow</span>
+</div>
+{% if can_create %}
+<section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Submit a request</h2><p>Describe what you need and select the closest category.</p></div></div>
+  <form method="post" action="{{ url_for('service_requests.create') }}" class="row g-3 mt-1">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-lg-6"><label class="form-label" for="sr-title">Request title</label><input class="form-control" id="sr-title" name="title" maxlength="240" required></div>
+    <div class="col-6 col-lg-3"><label class="form-label" for="sr-category">Category</label><select class="form-select" id="sr-category" name="category_id"><option value="">Uncategorized</option>{% for category in categories %}<option value="{{ category.category_id }}">{{ category.category_name }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-lg-3"><label class="form-label" for="sr-priority">Priority</label><select class="form-select" id="sr-priority" name="priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div>
+    <div class="col-12"><label class="form-label" for="sr-description">Request details</label><textarea class="form-control" id="sr-description" name="description" rows="3" maxlength="20000" required></textarea></div>
+    <div class="col-12"><button class="btn btn-primary" type="submit">Submit request</button></div>
+  </form>
+</section>
+{% endif %}
+{% if can_manage_categories %}
+<section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Category administration</h2><p>Manage the categories available on the request form.</p></div></div>
+  <form method="post" action="{{ url_for('service_requests.category_create') }}" class="row g-2 mt-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-md-4"><label class="form-label" for="category-name">Category name</label><input class="form-control" id="category-name" name="category_name" maxlength="120" required></div>
+    <div class="col-12 col-md-6"><label class="form-label" for="category-description">Description</label><input class="form-control" id="category-description" name="description" maxlength="500"></div>
+    <div class="col-12 col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Add category</button></div>
+  </form>
+  {% if category_admin %}
+  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Category</th><th>Description</th><th>Status</th><th>Action</th></tr></thead><tbody>
+  {% for category in category_admin %}<tr><td>{{ category.category_name }}</td><td>{{ category.description or '—' }}</td><td>{{ 'Active' if category.is_active else 'Inactive' }}</td><td>
+    <form method="post" action="{{ url_for('service_requests.category_active', category_id=category.category_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="is_active" value="{{ '0' if category.is_active else '1' }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Deactivate' if category.is_active else 'Activate' }}</button></form>
+  </td></tr>{% endfor %}
+  </tbody></table></div>
+  {% endif %}
+</section>
+{% endif %}
+<section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Request queue</h2><p>Only requests within your access scope are listed.</p></div></div>
+  <form method="get" class="row g-2 mt-2">
+    <div class="col-6 col-md-4"><label class="form-label" for="sr-status">Status</label><select class="form-select" id="sr-status" name="status"><option value="">All statuses</option>{% for value in ['OPEN','IN_PROGRESS','ON_HOLD','COMPLETED','CANCELLED'] %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ value|replace('_',' ') }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-4"><label class="form-label" for="sr-priority-filter">Priority</label><select class="form-select" id="sr-priority-filter" name="priority"><option value="">All priorities</option>{% for value in ['LOW','MEDIUM','HIGH','CRITICAL'] %}<option value="{{ value }}" {% if selected_priority == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-4 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Apply filters</button></div>
+  </form>
+  {% if requests %}
+  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Request</th><th>Title</th><th>Priority</th><th>Status</th><th>Created</th></tr></thead><tbody>
+  {% for item in requests %}<tr><td class="text-nowrap"><strong>{{ item.request_number }}</strong></td><td><a href="{{ url_for('service_requests.detail', request_id=item.request_id) }}">{{ item.title }}</a></td><td>{{ item.priority }}</td><td>{{ item.status|replace('_',' ') }}</td><td class="text-nowrap">{{ item.created_at }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state"><strong>No service requests found</strong><p class="text-secondary mb-0">Requests visible in your access scope will appear here.</p></div>{% endif %}
+</section>
+{% endblock %}

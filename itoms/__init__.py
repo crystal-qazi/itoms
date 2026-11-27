@@ -64,6 +64,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.auth import auth_bp
     from itoms.web.grafana import grafana_bp
     from itoms.web.incidents import incidents_bp
+    from itoms.web.service_requests import service_requests_bp
     from itoms.web.engineering_tasks import engineering_tasks_bp
     from itoms.web.service_inventory import service_inventory_bp
     from itoms.web.notifications import notifications_bp
@@ -76,6 +77,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(grafana_bp)
     app.register_blueprint(incidents_bp)
+    app.register_blueprint(service_requests_bp)
     app.register_blueprint(engineering_tasks_bp)
     app.register_blueprint(service_inventory_bp)
     app.register_blueprint(notifications_bp)
