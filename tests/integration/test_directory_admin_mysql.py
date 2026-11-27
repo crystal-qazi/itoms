@@ -72,7 +72,7 @@ def directory_admin_fixture():
         )
         cursor.execute(
             """INSERT INTO employee_team_memberships (employee_id,team_id,is_primary)
-               VALUES (%s,%s,TRUE)""",
+               VALUES (%s,%s,FALSE)""",
             (manager_id, team_id),
         )
         connection.commit()
