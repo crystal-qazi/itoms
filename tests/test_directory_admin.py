@@ -64,3 +64,22 @@ def test_manager_assignment_rejects_cross_department_before_write(monkeypatch):
 
     assert not connection.cur.statements[1:]
     assert not connection.committed
+
+
+
+def test_create_team_rejects_blank_name_before_database(monkeypatch):
+    monkeypatch.setattr(
+        directory_admin, "get_connection",
+        lambda: pytest.fail("database must not be opened for an invalid team name"),
+    )
+    with pytest.raises(DirectoryAdministrationError, match="Team name is required"):
+        directory_admin.create_team(actor_employee_id=1, team_name="  ")
+
+
+def test_set_team_active_rejects_invalid_values_before_database(monkeypatch):
+    monkeypatch.setattr(
+        directory_admin, "get_connection",
+        lambda: pytest.fail("database must not be opened for invalid arguments"),
+    )
+    with pytest.raises(DirectoryAdministrationError, match="boolean"):
+        directory_admin.set_team_active(actor_employee_id=1, team_id=2, is_active="false")

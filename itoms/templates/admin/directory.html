@@ -19,6 +19,19 @@
 </section>
 {% endif %}
 <section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Teams</h2><p>Create and maintain teams in this department. A team can be deactivated only after all memberships and manager mappings are removed.</p></div></div>
+  <form method="post" action="{{ url_for('directory_admin.create_team_route') }}" class="row g-2 mt-2 mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-md-8"><label class="form-label" for="new-team-name">New team name</label><input class="form-control" id="new-team-name" name="team_name" maxlength="150" required></div>
+    <div class="col-12 col-md-4 align-self-end"><button class="btn btn-outline-primary" type="submit">Create team</button></div>
+  </form>
+  <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Team</th><th>Status</th><th>Action</th></tr></thead><tbody>
+  {% for team in teams %}<tr><td>{{ team.team_name }}</td><td>{% if team.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td><td><form method="post" action="{{ url_for('directory_admin.update_team_status') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="team_id" value="{{ team.team_id }}"><input type="hidden" name="is_active" value="{{ '0' if team.is_active else '1' }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Deactivate' if team.is_active else 'Activate' }}</button></form></td></tr>
+  {% else %}<tr><td colspan="3" class="text-secondary">No teams configured for this department.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel-card mt-4">
   <div class="panel-heading"><div><h2>Employees</h2><p>{{ employees|length }} employees in this department.</p></div></div>
   {% if employees %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Employee</th><th>Job title</th><th>Status</th><th>Assign team</th></tr></thead><tbody>
   {% for employee in employees %}<tr>

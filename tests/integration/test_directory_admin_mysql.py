@@ -94,6 +94,7 @@ def directory_admin_fixture():
         "app": app, "department_id": department_id, "team_id": team_id,
         "actor_id": actor_id, "manager_id": manager_id, "member_id": member_id,
         "role_id": role_id, "member_role_id": member_role_id, "employee_ids": employees,
+        "extra_team_ids": [],
     }
     yield data
 
@@ -108,6 +109,8 @@ def directory_admin_fixture():
         cursor.execute("DELETE FROM role_permissions WHERE role_id IN (%s,%s)", (role_id, member_role_id))
         cursor.execute("DELETE FROM application_roles WHERE role_id IN (%s,%s)", (role_id, member_role_id))
         cursor.execute(f"DELETE FROM employees WHERE employee_id IN ({marks})", tuple(employees))
+        for extra_team_id in data["extra_team_ids"]:
+            cursor.execute("DELETE FROM teams WHERE team_id=%s", (extra_team_id,))
         cursor.execute("DELETE FROM teams WHERE team_id=%s", (team_id,))
         cursor.execute("DELETE FROM departments WHERE department_id=%s", (department_id,))
         cleanup.commit()
@@ -122,8 +125,8 @@ def directory_admin_fixture():
 
 def test_department_scoped_directory_membership_and_manager_workflow(directory_admin_fixture):
     from itoms.services.directory_admin import (
-        assign_team_manager, assign_team_membership, list_directory,
-        remove_team_manager, remove_team_membership,
+        assign_team_manager, assign_team_membership, create_team, list_directory,
+        remove_team_manager, remove_team_membership, set_team_active,
     )
     from itoms.services.directory_admin import DirectoryAdministrationError
 
@@ -177,6 +180,23 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
     assert remove_team_membership(
         actor_employee_id=actor_id, employee_id=member_id, team_id=team_id,
     ) is None
+
+    extra_team_id = create_team(
+        actor_employee_id=actor_id, team_name=f"Directory Extra {team_id}",
+    )
+    data["extra_team_ids"].append(extra_team_id)
+    assert set_team_active(
+        actor_employee_id=actor_id, team_id=extra_team_id, is_active=False,
+    ) is True
+    assert set_team_active(
+        actor_employee_id=actor_id, team_id=extra_team_id, is_active=True,
+    ) is True
+    assert set_team_active(
+        actor_employee_id=actor_id, team_id=team_id, is_active=False,
+    ) is True
+    assert set_team_active(
+        actor_employee_id=actor_id, team_id=team_id, is_active=True,
+    ) is True
 
     assignment_id = assign_role(
         actor_employee_id=actor_id, employee_id=member_id,

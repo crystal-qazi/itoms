@@ -9,8 +9,8 @@ from itoms.security.decorators import login_required
 from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.directory_admin import (
     DirectoryAdministrationError, assign_team_manager, assign_team_membership,
-    create_directory_employee, list_directory, remove_team_manager,
-    remove_team_membership,
+    create_directory_employee, create_team, list_directory, remove_team_manager,
+    remove_team_membership, set_team_active,
 )
 from itoms.services.identity_admin import (
     IdentityAdministrationError, assign_role, revoke_role_assignment,
@@ -47,6 +47,39 @@ def index():
         can_assign_roles=has_permission(g.employee_id, "identity.roles.assign", department_context),
         csrf_token_value=session.get("csrf_token", ""),
     )
+
+
+@directory_admin_bp.post("/teams")
+@login_required
+def create_team_route():
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        team_id = create_team(
+            actor_employee_id=g.employee_id,
+            team_name=request.form.get("team_name", ""),
+        )
+        flash(f"Team created (team ID {team_id}).", "success")
+    except (DirectoryAdministrationError, ValueError) as exc:
+        flash(str(exc) or "Could not create team.", "danger")
+    return _directory_redirect()
+
+
+@directory_admin_bp.post("/teams/status")
+@login_required
+def update_team_status():
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        changed = set_team_active(
+            actor_employee_id=g.employee_id,
+            team_id=int(request.form.get("team_id", "")),
+            is_active=request.form.get("is_active") == "1",
+        )
+        flash("Team status updated." if changed else "Team status was already set.", "success")
+    except (DirectoryAdministrationError, ValueError, TypeError) as exc:
+        flash(str(exc) or "Could not update team status.", "danger")
+    return _directory_redirect()
 
 
 @directory_admin_bp.post("/employees")

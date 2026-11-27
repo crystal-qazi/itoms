@@ -105,6 +105,118 @@ def list_directory(*, actor_employee_id: int) -> dict:
         conn.close()
 
 
+def create_team(*, actor_employee_id: int, team_name: str) -> int:
+    """Create a team in the actor's department and audit the change."""
+    name = (team_name or "").strip()
+    if not name or len(name) > 150:
+        raise DirectoryAdministrationError("Team name is required and must be at most 150 characters.")
+    department_id = _actor_department(actor_employee_id)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+            (actor_employee_id,),
+        )
+        actor = cur.fetchone()
+        if not actor or not actor[1] or actor[0] != department_id:
+            raise DirectoryAdministrationError("Actor department changed; retry the operation.")
+        cur.execute(
+            "SELECT 1 FROM teams WHERE department_id=%s AND team_name=%s FOR UPDATE",
+            (department_id, name),
+        )
+        if cur.fetchone():
+            raise DirectoryAdministrationError("A team with that name already exists in this department.")
+        cur.execute(
+            "INSERT INTO teams (department_id,team_name,is_active) VALUES (%s,%s,TRUE)",
+            (department_id, name),
+        )
+        team_id = int(cur.lastrowid)
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'DIRECTORY_TEAM_CREATED','team',%s,'SUCCESS',
+                       JSON_OBJECT('team_name',%s,'department_id',%s))""",
+            (actor_employee_id, str(team_id), name, department_id),
+        )
+        conn.commit()
+        return team_id
+    except Exception as exc:
+        conn.rollback()
+        if getattr(exc, "errno", None) == 1062:
+            raise DirectoryAdministrationError("A team with that name already exists in this department.") from exc
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def set_team_active(
+    *, actor_employee_id: int, team_id: int, is_active: bool,
+) -> bool:
+    """Activate a team or deactivate it only after memberships and manager mappings are removed."""
+    if (not isinstance(actor_employee_id, int) or isinstance(actor_employee_id, bool)
+            or actor_employee_id <= 0 or not isinstance(team_id, int)
+            or isinstance(team_id, bool) or team_id <= 0 or not isinstance(is_active, bool)):
+        raise DirectoryAdministrationError("Valid actor/team IDs and an active-state boolean are required.")
+    department_id = _actor_department(actor_employee_id)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+            (actor_employee_id,),
+        )
+        actor = cur.fetchone()
+        if not actor or not actor[1] or actor[0] != department_id:
+            raise DirectoryAdministrationError("Actor department changed; retry the operation.")
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (team_id,),
+        )
+        team = cur.fetchone()
+        if not team or team[0] != department_id:
+            raise DirectoryAdministrationError("Team does not exist in the actor's department.")
+        if bool(team[1]) == is_active:
+            conn.commit()
+            return False
+        if not is_active:
+            cur.execute(
+                "SELECT COUNT(*) FROM employee_team_memberships WHERE team_id=%s",
+                (team_id,),
+            )
+            membership_count = int(cur.fetchone()[0])
+            cur.execute(
+                "SELECT COUNT(*) FROM team_management_assignments WHERE team_id=%s",
+                (team_id,),
+            )
+            manager_count = int(cur.fetchone()[0])
+            if membership_count or manager_count:
+                raise DirectoryAdministrationError(
+                    "Remove all employee memberships and manager assignments before deactivating this team."
+                )
+        cur.execute("UPDATE teams SET is_active=%s WHERE team_id=%s", (is_active, team_id))
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,%s,'team',%s,'SUCCESS',JSON_OBJECT('is_active',%s))""",
+            (
+                actor_employee_id,
+                "DIRECTORY_TEAM_ACTIVATED" if is_active else "DIRECTORY_TEAM_DEACTIVATED",
+                str(team_id),
+                is_active,
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def create_directory_employee(
     *, actor_employee_id: int, employee_code: str, full_name: str,
     username: str, initial_password: str, email: str | None,
