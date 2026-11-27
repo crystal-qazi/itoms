@@ -130,3 +130,35 @@ def test_release_deployment_rechecks_sqa_readiness_gate(monkeypatch):
     assert second.rolled_back
     assert not second.committed
 
+@pytest.mark.parametrize(
+    ("defect_status", "unresolved_count", "blocked"),
+    [
+        ("FIXED", 1, True),
+        ("RETEST", 1, True),
+        ("CLOSED", 0, False),
+        ("REJECTED", 0, False),
+    ],
+)
+def test_release_gate_treats_only_closed_or_rejected_defects_as_resolved(
+    monkeypatch, defect_status, unresolved_count, blocked
+):
+    class GateCursor:
+        def __init__(self):
+            self.rows = iter([(1,), (1,), (0,), (unresolved_count,), (1, 0)])
+            self.statements = []
+
+        def execute(self, statement, params=None):
+            self.statements.append(statement)
+
+        def fetchone(self):
+            return next(self.rows)
+
+    cursor = GateCursor()
+    release_management._assert_sqa_release_gate(cursor, "REL-REGRESSION")
+
+    defect_query = next(
+        statement for statement in cursor.statements
+        if "sqa_defects" in statement
+    )
+    assert "d.status NOT IN ('CLOSED','REJECTED')" in defect_query
+    assert blocked is (unresolved_count == 1)
