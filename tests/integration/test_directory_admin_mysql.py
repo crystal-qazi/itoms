@@ -148,6 +148,15 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
         actor_employee_id=actor_id, manager_employee_id=manager_id, team_id=team_id,
     ) is False
 
+    from itoms.services.identity_admin import assign_role, revoke_role_assignment
+    managed_assignment_id = assign_role(
+        actor_employee_id=actor_id, employee_id=manager_id,
+        role_id=data["member_role_id"], scope_type="MANAGED_TEAMS",
+    )
+    assert revoke_role_assignment(
+        actor_employee_id=actor_id, assignment_id=managed_assignment_id,
+    ) is True
+
     listing = list_directory(actor_employee_id=actor_id)
     assert any(
         row["manager_employee_id"] == manager_id and row["team_id"] == team_id
@@ -169,7 +178,6 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
         actor_employee_id=actor_id, employee_id=member_id, team_id=team_id,
     ) is None
 
-    from itoms.services.identity_admin import assign_role, revoke_role_assignment
     assignment_id = assign_role(
         actor_employee_id=actor_id, employee_id=member_id,
         role_id=data["member_role_id"], scope_type="OWN",

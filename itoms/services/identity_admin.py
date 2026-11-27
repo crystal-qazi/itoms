@@ -296,16 +296,21 @@ def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> boo
         elif scope_type == "MANAGED_TEAMS":
             for managed_team_id, _department_id in managed_team_ids:
                 cur.execute(
-                    "SELECT team_id FROM teams WHERE team_id=%s FOR UPDATE",
+                    """SELECT team_id,department_id,is_active FROM teams
+                       WHERE team_id=%s FOR UPDATE""",
                     (managed_team_id,),
                 )
-                if not cur.fetchone():
-                    continue
+                locked_team = cur.fetchone()
+                if (not locked_team or not locked_team[2]
+                        or locked_team[1] != _department_id):
+                    raise IdentityAdministrationError("Managed-team scope changed; retry the revocation.")
                 cur.execute(
                     """SELECT 1 FROM employee_team_memberships
                        WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
                     (target_employee_id, managed_team_id),
                 )
+                if not cur.fetchone():
+                    raise IdentityAdministrationError("Manager team membership changed; retry the revocation.")
                 cur.execute(
                     """SELECT 1 FROM team_management_assignments
                        WHERE manager_employee_id=%s AND team_id=%s FOR UPDATE""",
