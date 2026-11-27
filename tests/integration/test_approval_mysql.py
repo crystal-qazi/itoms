@@ -341,7 +341,7 @@ def test_failed_history_insert_rolls_back_entire_approval_submission(approval_fi
         connection.close()
 
 
-def test_concurrent_duplicate_decision_commits_only_once(approval_fixture):
+def test_concurrent_duplicate_decision_commits_only_once(approval_fixture, mysql_app):
     from itoms.services.approvals import ApprovalError, decide_approval
 
     data = approval_fixture
@@ -349,17 +349,18 @@ def test_concurrent_duplicate_decision_commits_only_once(approval_fixture):
     barrier = threading.Barrier(2)
 
     def decide():
-        barrier.wait(timeout=10)
-        try:
-            decide_approval(
+        with mysql_app.app_context():
+            barrier.wait(timeout=10)
+            try:
+                decide_approval(
                 actor_employee_id=data["approver_one"],
                 request_id=request_id,
                 decision="APPROVED",
-                comment="Concurrent integration decision",
-            )
-            return "committed"
-        except ApprovalError:
-            return "rejected"
+                    comment="Concurrent integration decision",
+                )
+                return "committed"
+            except ApprovalError:
+                return "rejected"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = list(pool.map(lambda _: decide(), range(2)))
