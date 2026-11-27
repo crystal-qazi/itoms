@@ -671,3 +671,178 @@ def list_document_shares(*, employee_id: int) -> list[dict]:
     finally:
         cur.close()
         conn.close()
+
+
+def list_document_versions(*, employee_id: int, file_id: int) -> list[dict]:
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT uploaded_by FROM managed_files WHERE file_id=%s",
+            (file_id,),
+        )
+        owner = cur.fetchone()
+        if not owner:
+            raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=owner["uploaded_by"], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission(employee_id, "document.read", context):
+            raise DocumentError("Document was not found.")
+        cur.execute(
+            """SELECT file_version_id,version_number,file_size_bytes,
+                      detected_mime_type,scan_status,created_at
+               FROM managed_file_versions WHERE file_id=%s
+               ORDER BY version_number DESC""",
+            (file_id,),
+        )
+        return cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def archive_document(*, actor_employee_id: int, file_id: int) -> None:
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT uploaded_by,lifecycle_status FROM managed_files WHERE file_id=%s FOR UPDATE",
+            (file_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=row["uploaded_by"], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission(actor_employee_id, "document.archive", context):
+            raise DocumentError("Document was not found.")
+        if row["lifecycle_status"] not in {"ACTIVE", "QUARANTINED"}:
+            raise DocumentError("Only active or quarantined documents can be archived.")
+        cur.execute(
+            "UPDATE managed_files SET lifecycle_status='ARCHIVED' WHERE file_id=%s",
+            (file_id,),
+        )
+        cur.execute(
+            "UPDATE managed_file_shares SET revoked_at=UTC_TIMESTAMP() WHERE file_id=%s AND revoked_at IS NULL",
+            (file_id,),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'DOCUMENT_ARCHIVED','managed_file',%s,'SUCCESS')""",
+            (actor_employee_id, str(file_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def permanently_delete_document(
+    *, actor_employee_id: int, file_id: int, approval_request_id: int,
+) -> None:
+    """Two-phase, approval-gated deletion; failed filesystem cleanup remains blocked as PENDING_DELETE."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT uploaded_by,lifecycle_status FROM managed_files
+               WHERE file_id=%s FOR UPDATE""",
+            (file_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=row["uploaded_by"], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission(actor_employee_id, "document.delete", context):
+            raise DocumentError("Document was not found.")
+        cur.execute(
+            """SELECT 1 FROM approval_requests
+               WHERE approval_request_id=%s AND requested_by=%s
+                 AND request_type='DOCUMENT_DELETE' AND resource_type='managed_file'
+                 AND resource_id=%s AND status='APPROVED'""",
+            (approval_request_id, actor_employee_id, str(file_id)),
+        )
+        if not cur.fetchone():
+            raise DocumentError("A matching approved document-deletion request is required.")
+        cur.execute(
+            "UPDATE managed_files SET lifecycle_status='PENDING_DELETE' WHERE file_id=%s",
+            (file_id,),
+        )
+        cur.execute(
+            "UPDATE managed_file_shares SET revoked_at=UTC_TIMESTAMP() WHERE file_id=%s AND revoked_at IS NULL",
+            (file_id,),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'DOCUMENT_DELETE_APPROVED','managed_file',%s,'SUCCESS')""",
+            (actor_employee_id, str(file_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+    lookup = get_connection()
+    lookup_cur = lookup.cursor()
+    try:
+        lookup_cur.execute(
+            "SELECT storage_key FROM managed_file_versions WHERE file_id=%s",
+            (file_id,),
+        )
+        storage_keys = {row[0] for row in lookup_cur.fetchall()}
+        lookup_cur.execute("SELECT storage_key FROM managed_files WHERE file_id=%s", (file_id,))
+        current = lookup_cur.fetchone()
+        if current:
+            storage_keys.add(current[0])
+    finally:
+        lookup_cur.close()
+        lookup.close()
+    for storage_key in storage_keys:
+        path = _safe_storage_path(storage_key)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise DocumentError("Document is blocked as PENDING_DELETE; filesystem cleanup must be retried.") from exc
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT lifecycle_status FROM managed_files WHERE file_id=%s FOR UPDATE",
+            (file_id,),
+        )
+        state = cur.fetchone()
+        if not state or state[0] != "PENDING_DELETE":
+            raise DocumentError("Document deletion state changed; retry after review.")
+        cur.execute("DELETE FROM managed_file_shares WHERE file_id=%s", (file_id,))
+        cur.execute("DELETE FROM file_scan_events WHERE file_id=%s", (file_id,))
+        cur.execute("DELETE FROM managed_file_versions WHERE file_id=%s", (file_id,))
+        cur.execute("DELETE FROM managed_files WHERE file_id=%s", (file_id,))
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'DOCUMENT_PERMANENTLY_DELETED','managed_file',%s,'SUCCESS')""",
+            (actor_employee_id, str(file_id)),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()

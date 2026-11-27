@@ -11,6 +11,7 @@ from itoms.services.documents import (
     DocumentError, list_allowed_file_types, list_documents, list_document_shares,
     set_file_type_allowlist, upload_document, upload_document_version,
     create_document_share, revoke_document_share, download_document,
+    list_document_versions, archive_document, permanently_delete_document,
 )
 
 documents_bp = Blueprint("documents", __name__, url_prefix="/documents")
@@ -35,6 +36,8 @@ def index():
             allowed_types = []
     return render_template(
         "documents/index.html", documents=items, shares=list_document_shares(employee_id=g.employee_id),
+        versions={item["file_id"]: list_document_versions(employee_id=g.employee_id, file_id=item["file_id"])
+                  for item in items},
         can_upload=has_permission(g.employee_id, "document.upload"),
         can_manage_types=can_manage_types, allowed_types=allowed_types,
         csrf_token_value=session.get("csrf_token", ""),
@@ -137,6 +140,36 @@ def share_revoke(share_id: int):
         flash("Document share revoked.", "success")
     except DocumentError as exc:
         flash(str(exc), "danger")
+    return redirect(url_for("documents.index"))
+
+
+
+@documents_bp.post("/<int:file_id>/archive")
+@login_required
+def archive(file_id: int):
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        archive_document(actor_employee_id=g.employee_id, file_id=file_id)
+        flash("Document archived and active shares revoked.", "success")
+    except DocumentError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("documents.index"))
+
+
+@documents_bp.post("/<int:file_id>/delete")
+@login_required
+def permanent_delete(file_id: int):
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        permanently_delete_document(
+            actor_employee_id=g.employee_id, file_id=file_id,
+            approval_request_id=int(request.form.get("approval_request_id", "")),
+        )
+        flash("Document permanently deleted after approval.", "success")
+    except (DocumentError, ValueError, TypeError) as exc:
+        flash(str(exc) or "Invalid deletion approval.", "danger")
     return redirect(url_for("documents.index"))
 
 

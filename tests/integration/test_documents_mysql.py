@@ -53,7 +53,7 @@ def document_fixture(monkeypatch):
         )
         role_id = int(cursor.lastrowid)
         for key in ("document.upload", "document.read", "document.download", "document.allowlist.manage",
-                    "document.share", "document.version.manage"):
+                    "document.share", "document.version.manage", "document.archive", "document.delete"):
             cursor.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
             permission = cursor.fetchone()
             assert permission, f"{key} must be seeded by migrations"
@@ -221,3 +221,27 @@ def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture
         documents.download_document(employee_id=recipient_id, file_id=result["file_id"])
     with pytest.raises(documents.DocumentError, match="not found"):
         documents.download_document(employee_id=recipient_id, file_id=confidential["file_id"])
+
+    documents.archive_document(actor_employee_id=employee_id, file_id=result["file_id"])
+    with pytest.raises(documents.DocumentError, match="unavailable until a clean scan"):
+        documents.download_document(employee_id=employee_id, file_id=result["file_id"])
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO approval_requests
+               (request_type,resource_type,resource_id,requested_by,status,completed_at)
+               VALUES ('DOCUMENT_DELETE','managed_file',%s,%s,'APPROVED',UTC_TIMESTAMP())""",
+            (str(result["file_id"]), employee_id),
+        )
+        delete_approval_id = int(cursor.lastrowid)
+        connection.commit()
+    finally:
+        cursor.close()
+        connection.close()
+    documents.permanently_delete_document(
+        actor_employee_id=employee_id, file_id=result["file_id"],
+        approval_request_id=delete_approval_id,
+    )
+    with pytest.raises(documents.DocumentError, match="not found"):
+        documents.download_document(employee_id=employee_id, file_id=result["file_id"])

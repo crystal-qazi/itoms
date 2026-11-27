@@ -40,3 +40,15 @@ def test_document_share_expiry_validation_precedes_database(monkeypatch):
             actor_employee_id=1, file_id=1, recipient_employee_id=2,
             permission="DOWNLOAD", expires_at="not-a-date",
         )
+
+def test_permanent_delete_requires_approved_request_before_database(monkeypatch):
+    from itoms.services import documents
+    monkeypatch.setattr(documents, "has_permission", lambda *_: True)
+    monkeypatch.setattr(
+        documents, "get_connection",
+        lambda: pytest.fail("database should not be opened for missing approval"),
+    )
+    with pytest.raises(documents.DocumentError, match="approved document-deletion"):
+        documents.permanently_delete_document(
+            actor_employee_id=1, file_id=1, approval_request_id=1,
+        )
