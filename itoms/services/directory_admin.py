@@ -56,7 +56,7 @@ def list_directory(*, actor_employee_id: int) -> dict:
         )
         teams = cur.fetchall()
         cur.execute(
-            """SELECT m.employee_id,m.team_id,m.is_primary,t.team_name
+            """SELECT m.employee_id,m.team_id,m.is_primary,t.team_name,e.full_name
                FROM employee_team_memberships m
                JOIN employees e ON e.employee_id=m.employee_id
                JOIN teams t ON t.team_id=m.team_id
@@ -75,12 +75,30 @@ def list_directory(*, actor_employee_id: int) -> dict:
             (department_id, department_id),
         )
         managers = cur.fetchall()
+        cur.execute(
+            """SELECT role_id,role_name FROM application_roles
+               WHERE is_active=TRUE ORDER BY role_name"""
+        )
+        roles = cur.fetchall()
+        cur.execute(
+            """SELECT a.assignment_id,a.employee_id,a.role_id,r.role_name,
+                      a.scope_type,a.scope_reference,a.expires_at
+               FROM employee_role_assignments a
+               JOIN employees e ON e.employee_id=a.employee_id
+               JOIN application_roles r ON r.role_id=a.role_id
+               WHERE e.department_id=%s
+               ORDER BY e.full_name,r.role_name,a.assignment_id""",
+            (department_id,),
+        )
+        role_assignments = cur.fetchall()
         return {
             "department_id": department_id,
             "employees": employees,
             "teams": teams,
             "memberships": memberships,
             "managers": managers,
+            "roles": roles,
+            "role_assignments": role_assignments,
         }
     finally:
         cur.close()

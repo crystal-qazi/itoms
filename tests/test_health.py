@@ -95,3 +95,13 @@ def test_pwa_manifest_is_served() -> None:
     assert response.json["name"].startswith("ITOMS")
     assert response.json["display"] == "standalone"
     assert response.json["scope"] == "/"
+
+
+
+def test_employee_directory_blueprint_is_registered() -> None:
+    app = create_app(TestConfig)
+    assert "directory_admin.index" in app.view_functions
+    assert "directory_admin.create_employee" in app.view_functions
+    assert "directory_admin.assign_membership" in app.view_functions
+    assert "directory_admin.assign_manager" in app.view_functions
+    assert "directory_admin.assign_employee_role" in app.view_functions
