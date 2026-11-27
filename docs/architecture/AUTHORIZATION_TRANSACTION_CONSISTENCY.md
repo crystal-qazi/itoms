@@ -97,9 +97,9 @@ Use two independent connections and deterministic barriers/events; do not rely o
 **No broad authorization refactor is included in this change.** The existing independent-connection behavior remains until the lock-order protocol and MySQL race tests prove the replacement. This avoids claiming revocation consistency that the current code does not guarantee and avoids introducing an untested deadlock or privilege regression.
 
 
-## Repository audit — 2026-11-27
+## Repository audit — 2026-11-27 (refreshed after identity scope-lock change)
 
-The following inventory was verified from the current feature branch source and migrations.
+The following inventory was verified from the current feature branch source and migrations. CI Run #216 for commit `798a5d89f7f3a9c58f34c62eca80cbc064a5bd46` passed both jobs: Python quality and MySQL 8.4 integration (29 passed); all 26 migrations applied successfully and a second run was a no-op.
 
 ### Authorization schema and available indexes
 
@@ -117,11 +117,11 @@ Do not add indexes solely by intuition. Capture `EXPLAIN` plans for the proposed
 
 | Writer | Current behavior | Consistency gap / required treatment |
 |---|---|---|
-| `identity_admin.assign_role` | Reads target employee/team scope, checks actor permission on a separate connection, locks the role row, inserts assignment and audit | Target employee and team/membership reads are not locked as one protocol; actor authorization is outside the write transaction |
+| `identity_admin.assign_role` | Locks target employee, then (for TEAM scope) active team and exact membership, then role; checks actor permission on a separate connection; inserts assignment and audit | Target scope is serialized with directory membership writers, but actor authorization is still outside the write transaction. The complete cross-service lock protocol is not yet proven |
 | `identity_admin.grant_role_permission` | Checks actor permission separately, locks role row, validates role's department assignments, inserts role-permission row and audit | Actor authorization is outside transaction; role-first lock must be part of documented order |
 | `identity_admin.revoke_role_permission` | Same pattern; deletes role-permission row while role row is locked | This is the currently implemented permission-revocation writer |
-| `directory.assign_employee_to_team` | Locks employee, then team; updates/inserts membership and commits | Existing order is employee → team → membership; preserve or deliberately migrate it |
-| `directory.remove_employee_from_team` | Locks membership row, refuses removal of primary membership, deletes non-primary membership | Does not currently lock employee/team first; align before introducing a competing order |
+| `directory.assign_employee_to_team` | Locks employee, then team, then exact membership; updates/inserts membership and commits | Uses employee → team → membership order; a MySQL concurrency test covers primary-team reassignment racing with removal of a non-primary membership |
+| `directory.remove_employee_from_team` | Locks employee, then team, then exact membership; refuses removal of primary membership and deletes non-primary membership | Now uses the same employee → team → membership order as assignment; covered by the concurrent primary-assignment/removal MySQL test |
 | `bootstrap.bootstrap_admin` | Creates initial role, role-permission rows, employee assignment and audit in a one-time bootstrap transaction | Bootstrap-only path; ensure it cannot run after initialization and document its exception to runtime locking |
 | `create_employee_account` | Creates employee/account and optional primary membership after an external permission check | The new employee is not yet a concurrent authorization subject, but actor/team/department validation should eventually share the transaction |
 
@@ -155,7 +155,7 @@ The source audit suggests the following candidate order, subject to proof with M
 
 **Important:** this is a candidate, not an approved protocol. It requires writer changes:
 - Make role assignment administration lock the target employee before role and assignment writes.
-- Make membership writers use the same employee → team → membership order; removal currently starts at membership and must be changed before rollout.
+- Preserve the now-aligned employee → team → membership order in both directory writers; keep the MySQL concurrency regression test as a required gate.
 - Define a single team/manager-assignment order before any manager assignment CRUD is introduced.
 - Ensure role permission grant/revoke and role deactivation follow role-first locking and cannot acquire employee/assignment locks in a reverse order.
 - Ensure every protected service obtains authorization locks before resource locks, then validates the resource snapshot after acquiring its resource lock.
