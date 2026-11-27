@@ -295,7 +295,7 @@ def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_ke
             raise IdentityAdministrationError("You cannot modify permissions on a role assigned to your own account.")
         _assert_role_permission_scope(
             cur, actor_employee_id=actor_employee_id, role_id=role_id,
-            actor_department_id=actor_department_id,
+            actor_department_id=actor_department_id, actor_department_checked=True,
         )
         cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
         permission = cur.fetchone()
