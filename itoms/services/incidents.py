@@ -336,7 +336,7 @@ def assign_incident(*, actor_employee_id: int, ticket_id: int,
     requester_id, old_team_id, old_employee_id, old_department_id = snapshot
     old_context = ResourceContext(owner_employee_id=requester_id, team_id=old_team_id,
                                   department_id=old_department_id)
-    if old_team_id is not None and not has_permission(actor_employee_id, "incident.assign", old_context):
+    if not has_permission(actor_employee_id, "incident.assign", old_context):
         raise IncidentError("Not authorized to reassign this incident.")
     if assigned_team_id is None and old_team_id is None:
         raise IncidentError("Incident has no current team assignment.")
@@ -378,7 +378,7 @@ def assign_incident(*, actor_employee_id: int, ticket_id: int,
         row = cur.fetchone()
         if not row or row != snapshot:
             raise IncidentError("Incident assignment changed; reload and try again.")
-        if old_team_id is not None and not has_permission(actor_employee_id, "incident.assign", old_context):
+        if not has_permission(actor_employee_id, "incident.assign", old_context):
             raise IncidentError("Not authorized to reassign this incident.")
         if assigned_team_id is not None and not has_permission(actor_employee_id, "incident.assign", new_context):
             raise IncidentError("Not authorized to assign incidents to the selected team.")
@@ -407,11 +407,22 @@ def list_assignable_teams(*, actor_employee_id: int, ticket_id: int) -> list[dic
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT i.requester_employee_id FROM incident_tickets i
+        cur.execute("""SELECT i.requester_employee_id,i.assigned_team_id,
+            COALESCE(t.department_id,e.department_id) AS department_id
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id
             WHERE i.ticket_id=%s""", (ticket_id,))
         ticket = cur.fetchone()
         if not ticket:
             raise IncidentError("Incident not found.")
+        current_context = ResourceContext(
+            owner_employee_id=ticket["requester_employee_id"],
+            team_id=ticket["assigned_team_id"],
+            department_id=ticket["department_id"],
+        )
+        if not has_permission(actor_employee_id, "incident.assign", current_context):
+            raise IncidentError("Not authorized to assign this incident.")
         cur.execute("""SELECT t.team_id,t.team_name,t.department_id FROM teams t
             JOIN departments d ON d.department_id=t.department_id AND d.is_active=TRUE
             WHERE t.is_active=TRUE ORDER BY t.team_name""")

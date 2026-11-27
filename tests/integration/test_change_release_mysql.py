@@ -949,8 +949,21 @@ def test_incident_department_scope_covers_queue_detail_comments_and_assignment(w
         actor_employee_id=data["requester"])}
     assert data["team_a"] in visible_team_ids
     assert data["team_b"] in visible_team_ids
-    assert all(row["team_id"] != data["team_a"] for row in list_assignable_teams(
-        actor_employee_id=data["outsider"], ticket_id=ticket_id))
+    with pytest.raises(IncidentError, match="Not authorized"):
+        list_assignable_teams(actor_employee_id=data["outsider"], ticket_id=ticket_id)
+
+    unassigned_ticket = create_incident(
+        actor_employee_id=data["requester"],
+        requester_employee_id=data["requester"],
+        title="Unassigned incident scope test",
+        description="Team-only permission must not assign another employee's unassigned incident.",
+    )
+    with pytest.raises(IncidentError, match="Not authorized"):
+        assign_incident(
+            actor_employee_id=data["approver_one"],
+            ticket_id=unassigned_ticket,
+            assigned_team_id=data["team_a"],
+        )
 
     add_comment(actor_employee_id=data["requester"], ticket_id=ticket_id,
                 body="Internal department note", internal=True)
