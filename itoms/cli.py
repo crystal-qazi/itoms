@@ -48,6 +48,17 @@ def register_cli(app: Flask) -> None:
         processed = process_in_app_outbox_batch(batch_size=batch_size)
         click.echo(f"Completed {processed} in-app outbox item(s).")
 
+    @app.cli.command("notifications-process-email-outbox")
+    @click.option("--batch-size", default=25, type=click.IntRange(1, 100))
+    def notifications_process_email_outbox(batch_size: int) -> None:
+        """Deliver explicitly queued EMAIL notifications over configured secure SMTP."""
+        from itoms.services.notifications import NotificationError, process_email_outbox_batch
+        try:
+            sent = process_email_outbox_batch(batch_size=batch_size)
+        except NotificationError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Sent {sent} email notification(s).")
+
     @app.cli.command("notifications-recover-outbox")
     @click.option("--stale-after", default=300, type=click.IntRange(60, 86400))
     def notifications_recover_outbox(stale_after: int) -> None:

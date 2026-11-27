@@ -1,31 +1,60 @@
 """In-app notifications and durable outbox primitives."""
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.utils import parseaddr
+import smtplib
+import ssl
+
+from flask import current_app
+
 from itoms.db.connection import get_connection
 from itoms.services.authorization import has_permission
 
 class NotificationError(ValueError):
     """Notification operation was invalid or unauthorized."""
 
+def _valid_email_address(value: str | None) -> bool:
+    """Accept a single mailbox address without header injection or display-name ambiguity."""
+    if not value or any(char in value for char in "\\r\\n"):
+        return False
+    parsed = parseaddr(value.strip())[1]
+    return bool(parsed and parsed == value.strip() and "@" in parsed and len(parsed) <= 254)
+
+
 def create_notification(*, actor_employee_id: int, recipient_employee_id: int,
                         notification_type: str, title: str, body: str,
-                        target_type: str | None = None, target_id: str | None = None) -> int:
+                        target_type: str | None = None, target_id: str | None = None,
+                        channels: tuple[str, ...] | list[str] = ("IN_APP",)) -> int:
     """Persist notification and delivery outbox atomically."""
     if not has_permission(actor_employee_id, "notifications.send"):
         raise NotificationError("Not authorized to send notifications.")
     if not title.strip() or not body.strip() or len(title) > 200 or len(notification_type) > 80:
         raise NotificationError("A valid type, title and body are required; title limit is 200 characters.")
+    if not isinstance(channels, (tuple, list)) or not channels:
+        raise NotificationError("Select at least one supported notification channel.")
+    normalized_channels = tuple(dict.fromkeys(str(channel).upper() for channel in channels))
+    if any(channel not in {"IN_APP", "EMAIL"} for channel in normalized_channels):
+        raise NotificationError("Unsupported notification delivery channel.")
     conn=get_connection(); cur=conn.cursor()
     try:
-        cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(recipient_employee_id,))
-        if not cur.fetchone():
+        cur.execute("SELECT email FROM employees WHERE employee_id=%s AND is_active=TRUE",(recipient_employee_id,))
+        recipient = cur.fetchone()
+        if not recipient:
             raise NotificationError("Recipient is unavailable.")
+        recipient_email = recipient[0]
+        if "EMAIL" in normalized_channels and not _valid_email_address(recipient_email):
+            raise NotificationError("Recipient does not have a valid email address.")
         cur.execute("""INSERT INTO notifications
             (recipient_employee_id,notification_type,title,body,target_type,target_id)
             VALUES (%s,%s,%s,%s,%s,%s)""",
             (recipient_employee_id,notification_type,title.strip(),body.strip(),target_type,target_id))
         notification_id=int(cur.lastrowid)
-        cur.execute("INSERT INTO notification_outbox (notification_id,channel) VALUES (%s,'IN_APP')",(notification_id,))
+        for channel in normalized_channels:
+            cur.execute(
+                "INSERT INTO notification_outbox (notification_id,channel) VALUES (%s,%s)",
+                (notification_id, channel),
+            )
         cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'NOTIFICATION_CREATED','notification',%s,'SUCCESS')", (actor_employee_id,str(notification_id)))
         conn.commit()
         return notification_id
@@ -61,15 +90,18 @@ def mark_read(*, employee_id: int, notification_id: int) -> bool:
     finally:
         cur.close(); conn.close()
 
-def claim_outbox_batch(*, batch_size: int = 25) -> list[dict]:
-    """Atomically claim due rows for a worker; supports concurrent workers on MySQL 8."""
+def claim_outbox_batch(*, batch_size: int = 25, channel: str = "IN_APP") -> list[dict]:
+    """Atomically claim due rows for one delivery channel on MySQL 8."""
+    channel = (channel or "").upper()
+    if channel not in {"IN_APP", "EMAIL"}:
+        raise NotificationError("Unsupported notification delivery channel.")
     batch_size=max(1,min(int(batch_size),100))
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT outbox_id,notification_id,channel,attempt_count
-            FROM notification_outbox WHERE delivery_status='PENDING' AND channel='IN_APP'
+            FROM notification_outbox WHERE delivery_status='PENDING' AND channel=%s
             AND available_at<=UTC_TIMESTAMP() ORDER BY outbox_id
-            LIMIT %s FOR UPDATE SKIP LOCKED""",(batch_size,))
+            LIMIT %s FOR UPDATE SKIP LOCKED""",(channel,batch_size))
         rows=cur.fetchall()
         if rows:
             ids=[row["outbox_id"] for row in rows]
@@ -121,7 +153,7 @@ def count_unread(*, employee_id: int) -> int:
 
 def process_in_app_outbox_batch(*, batch_size: int = 25) -> int:
     """Complete queued in-app deliveries; other channels remain untouched until configured."""
-    rows = claim_outbox_batch(batch_size=batch_size)
+    rows = claim_outbox_batch(batch_size=batch_size, channel="IN_APP")
     completed = 0
     for row in rows:
         complete_outbox_item(outbox_id=row["outbox_id"], success=True)
@@ -182,6 +214,84 @@ def recover_stale_outbox(
         cur.close()
         conn.close()
 
+
+
+def _send_notification_email(notification_id: int) -> None:
+    """Send one plain-text notification using the configured authenticated SMTP transport."""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """SELECT e.email,n.title,n.body FROM notifications n
+               JOIN employees e ON e.employee_id=n.recipient_employee_id
+               WHERE n.notification_id=%s AND e.is_active=TRUE""",
+            (notification_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+    if not row or not _valid_email_address(row[0]):
+        raise NotificationError("Notification recipient email is unavailable.")
+
+    host = current_app.config.get("SMTP_HOST")
+    port = int(current_app.config.get("SMTP_PORT", 587))
+    sender = current_app.config.get("SMTP_FROM")
+    username = current_app.config.get("SMTP_USERNAME")
+    password = current_app.config.get("SMTP_PASSWORD")
+    use_starttls = bool(current_app.config.get("SMTP_USE_STARTTLS", True))
+    use_ssl = bool(current_app.config.get("SMTP_USE_SSL", False))
+    timeout = float(current_app.config.get("SMTP_TIMEOUT", 15))
+    if not host or not _valid_email_address(sender):
+        raise NotificationError("SMTP host and a valid sender address must be configured.")
+    if use_starttls == use_ssl:
+        raise NotificationError("Configure exactly one secure SMTP mode: STARTTLS or implicit TLS.")
+
+    message = EmailMessage()
+    message["Subject"] = str(row[1]).replace("\\r", " ").replace("\\n", " ")[:200]
+    message["From"] = sender
+    message["To"] = row[0]
+    message.set_content(str(row[2]))
+
+    context = ssl.create_default_context()
+    if use_ssl:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout, context=context) as smtp:
+            if username:
+                smtp.login(username, password or "")
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=context)
+            smtp.ehlo()
+            if username:
+                smtp.login(username, password or "")
+            smtp.send_message(message)
+
+
+def process_email_outbox_batch(*, batch_size: int = 25) -> int:
+    """Deliver explicitly queued EMAIL notifications; failures use the shared retry/dead-letter policy."""
+    if (not current_app.config.get("SMTP_HOST")
+            or not _valid_email_address(current_app.config.get("SMTP_FROM"))):
+        raise NotificationError("SMTP is not configured; email outbox items remain queued.")
+    use_starttls = bool(current_app.config.get("SMTP_USE_STARTTLS", True))
+    use_ssl = bool(current_app.config.get("SMTP_USE_SSL", False))
+    if use_starttls == use_ssl:
+        raise NotificationError("Configure exactly one secure SMTP mode: STARTTLS or implicit TLS.")
+    rows = claim_outbox_batch(batch_size=batch_size, channel="EMAIL")
+    sent = 0
+    for row in rows:
+        try:
+            _send_notification_email(int(row["notification_id"]))
+        except Exception as exc:
+            complete_outbox_item(
+                outbox_id=row["outbox_id"], success=False,
+                error=f"SMTP delivery failed ({type(exc).__name__}).",
+            )
+        else:
+            complete_outbox_item(outbox_id=row["outbox_id"], success=True)
+            sent += 1
+    return sent
 
 def replay_dead_letter(*, actor_employee_id: int, outbox_id: int) -> None:
     """Audited, permission-controlled replay of one dead-lettered outbox row."""

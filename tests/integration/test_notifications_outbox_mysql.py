@@ -37,9 +37,9 @@ def notification_fixture():
         cursor.execute("INSERT INTO departments (department_name) VALUES (%s)", (f"Notify Test {suffix}",))
         department_id = int(cursor.lastrowid)
         cursor.execute(
-            """INSERT INTO employees (employee_code,full_name,department_id,is_active)
-               VALUES (%s,%s,%s,TRUE)""",
-            (f"NTF-{suffix}", f"Notify Test Employee {suffix}", department_id),
+            """INSERT INTO employees (employee_code,full_name,email,department_id,is_active)
+               VALUES (%s,%s,%s,%s,TRUE)""",
+            (f"NTF-{suffix}", f"Notify Test Employee {suffix}", f"notify-{suffix}@example.invalid", department_id),
         )
         employee_id = int(cursor.lastrowid)
         cursor.execute(
@@ -93,7 +93,7 @@ def notification_fixture():
         context.pop()
 
 
-def test_outbox_process_recover_and_audited_replay(notification_fixture):
+def test_outbox_process_recover_and_audited_replay(notification_fixture, monkeypatch):
     from itoms.services.notifications import (
         create_notification, process_in_app_outbox_batch, recover_stale_outbox,
         replay_dead_letter,
@@ -104,15 +104,40 @@ def test_outbox_process_recover_and_audited_replay(notification_fixture):
     notification_id = create_notification(
         actor_employee_id=employee_id, recipient_employee_id=employee_id,
         notification_type="TEST", title="Outbox test", body="Notification body",
+        channels=("IN_APP", "EMAIL"),
     )
     assert process_in_app_outbox_batch(batch_size=10) == 1
+
+    from flask import current_app
+    current_app.config.update(
+        SMTP_HOST="smtp.example.invalid", SMTP_FROM="itoms@example.invalid",
+        SMTP_USE_STARTTLS=True, SMTP_USE_SSL=False,
+    )
+    delivered = []
+    from itoms.services import notifications
+    monkeypatch.setattr(
+        notifications, "_send_notification_email",
+        lambda item_id: delivered.append(item_id),
+    )
+    assert notifications.process_email_outbox_batch(batch_size=10) == 1
+    assert delivered == [notification_id]
 
     connection = get_connection()
     cursor = connection.cursor()
     try:
-        cursor.execute("SELECT outbox_id,delivery_status FROM notification_outbox WHERE notification_id=%s", (notification_id,))
+        cursor.execute(
+            """SELECT outbox_id,delivery_status FROM notification_outbox
+               WHERE notification_id=%s AND channel='IN_APP'""",
+            (notification_id,),
+        )
         outbox_id, status = cursor.fetchone()
         assert status == "SENT"
+        cursor.execute(
+            """SELECT delivery_status FROM notification_outbox
+               WHERE notification_id=%s AND channel='EMAIL'""",
+            (notification_id,),
+        )
+        assert cursor.fetchone()[0] == "SENT"
         cursor.execute(
             """UPDATE notification_outbox SET delivery_status='PROCESSING',
                locked_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 600 SECOND)
