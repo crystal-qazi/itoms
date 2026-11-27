@@ -92,3 +92,16 @@ def test_remove_refuses_manager_membership_until_manager_assignment_removed(monk
     assert connection.rolled_back
     assert not connection.committed
     assert len(connection.fake_cursor.statements) == 4
+
+
+
+def test_remove_refuses_manager_membership_until_manager_assignment_removed(monkeypatch):
+    connection = Connection([(1, True), (1, True), (False,), (True,)])
+    monkeypatch.setattr(directory, "get_connection", lambda: connection)
+
+    with pytest.raises(DirectoryError, match="Remove the manager assignment"):
+        remove_employee_from_team(7, 12)
+
+    assert connection.rolled_back
+    assert not connection.committed
+    assert len(connection.fake_cursor.statements) == 4

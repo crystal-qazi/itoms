@@ -67,6 +67,8 @@ def assign_employee_to_team(
         employee = cur.fetchone()
         if not employee or not employee[1]:
             raise DirectoryError("Employee does not exist or is inactive.")
+        if authorized_department_id is not None and employee[0] != authorized_department_id:
+            raise DirectoryError("Employee department changed; retry the directory operation.")
         cur.execute(
             "SELECT department_id, is_active FROM teams WHERE team_id=%s FOR UPDATE",
             (team_id,),
