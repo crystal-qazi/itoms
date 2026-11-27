@@ -21,8 +21,13 @@ RELEASE_TRANSITIONS={
 
 
 def _ctx(row):
-    return ResourceContext(owner_employee_id=row["created_by"],
-        resource_type="release",resource_id=str(row["release_id"]))
+    return ResourceContext(
+        owner_employee_id=row["created_by"],
+        team_id=row.get("team_id"),
+        department_id=row.get("department_id"),
+        resource_type="release",
+        resource_id=str(row["release_id"]),
+    )
 
 
 def _assert_sqa_release_gate(cur, release_key: str):
@@ -74,11 +79,13 @@ def list_releases(*,actor_employee_id:int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT r.release_id,r.release_key,r.version_label,r.status,r.target_at,
-            r.released_at,r.created_by,s.service_name,
+            r.released_at,r.created_by,s.service_name,e.department_id,s.owner_team_id AS team_id,
             (SELECT ar.status FROM approval_requests ar
              WHERE ar.resource_type='release' AND ar.resource_id=CAST(r.release_id AS CHAR)
              ORDER BY ar.created_at DESC,ar.approval_request_id DESC LIMIT 1) AS approval_status
-            FROM software_releases r LEFT JOIN service_records s ON s.service_id=r.service_id
+            FROM software_releases r
+            JOIN employees e ON e.employee_id=r.created_by
+            LEFT JOIN service_records s ON s.service_id=r.service_id
             ORDER BY r.created_at DESC LIMIT 200""")
         rows=cur.fetchall()
     finally:
@@ -89,8 +96,15 @@ def list_releases(*,actor_employee_id:int):
 
 def create_release(*,actor_employee_id:int,release_key:str,version_label:str,release_notes:str,
                    service_id:int|None,target_at:str|None,change_id:int|None):
-    if not has_permission(actor_employee_id,"release.create"):
-        raise ReleaseError("Not authorized to create releases.")
+    actor_conn=get_connection(); actor_cur=actor_conn.cursor()
+    try:
+        actor_cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",(actor_employee_id,))
+        actor_row=actor_cur.fetchone()
+    finally: actor_cur.close(); actor_conn.close()
+    if not actor_row or actor_row[0] is None or not has_permission(
+        actor_employee_id,"release.create",ResourceContext(department_id=actor_row[0])
+    ):
+        raise ReleaseError("Not authorized to create releases in this department.")
     release_key=release_key.strip().upper(); version_label=version_label.strip()
     if not release_key or len(release_key)>100 or not version_label or len(version_label)>80:
         raise ReleaseError("Release key and version are required and must fit their limits.")
@@ -104,11 +118,14 @@ def create_release(*,actor_employee_id:int,release_key:str,version_label:str,rel
                 ResourceContext(team_id=service[1],resource_type="service",resource_id=str(service[0]))):
                 raise ReleaseError("Not authorized to link this service.")
         if change_id is not None:
-            cur.execute("SELECT change_id,requested_by FROM change_records WHERE change_id=%s",(change_id,))
+            cur.execute("""SELECT c.change_id,c.requested_by,e.department_id
+                FROM change_records c JOIN employees e ON e.employee_id=c.requested_by
+                WHERE c.change_id=%s""",(change_id,))
             change=cur.fetchone()
             if not change: raise ReleaseError("Change record not found.")
             if not has_permission(actor_employee_id,"change.read",
-                ResourceContext(owner_employee_id=change[1],resource_type="change",resource_id=str(change[0]))):
+                ResourceContext(owner_employee_id=change[1],department_id=change[2],
+                    resource_type="change",resource_id=str(change[0]))):
                 raise ReleaseError("Not authorized to link this change.")
         cur.execute("""INSERT INTO software_releases
             (release_key,service_id,version_label,release_notes,target_at,created_by)
@@ -142,7 +159,11 @@ def transition_release(*,actor_employee_id:int,release_id:int,new_status:str,
             raise ReleaseError("You are not authorized to submit a release approval workflow.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT release_id,release_key,created_by,status FROM software_releases WHERE release_id=%s",(release_id,))
+        cur.execute("""SELECT r.release_id,r.release_key,r.created_by,r.status,e.department_id,
+            s.owner_team_id AS team_id
+            FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
+            LEFT JOIN service_records s ON s.service_id=r.service_id
+            WHERE r.release_id=%s""",(release_id,))
         row=cur.fetchone()
     finally:
         cur.close(); conn.close()

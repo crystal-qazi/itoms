@@ -12,12 +12,28 @@ STATUSES={"DRAFT","SUBMITTED","REJECTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED
 TRANSITIONS={"DRAFT":{"SUBMITTED","CANCELLED"},"SUBMITTED":{"SCHEDULED","CANCELLED"},"REJECTED":{"SUBMITTED","CANCELLED"},"SCHEDULED":{"IMPLEMENTING","CANCELLED"},"IMPLEMENTING":{"IMPLEMENTED","FAILED"},"IMPLEMENTED":{"CLOSED"},"FAILED":{"CLOSED"},"CANCELLED":set(),"CLOSED":set()}
 
 def _context(row):
-    return ResourceContext(owner_employee_id=row["requested_by"], resource_type="change", resource_id=str(row["change_id"]))
+    return ResourceContext(
+        owner_employee_id=row["requested_by"],
+        team_id=row.get("team_id"),
+        department_id=row.get("department_id"),
+        resource_type="change",
+        resource_id=str(row["change_id"]),
+    )
 
 def list_changes(*, actor_employee_id:int, limit:int=100):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT change_id,change_number,title,change_type,risk_level,status,requested_by,owner_employee_id,planned_start,planned_end,created_at FROM change_records ORDER BY created_at DESC,change_id DESC LIMIT %s",(min(max(limit,1),200),))
+        cur.execute("""SELECT c.change_id,c.change_number,c.title,c.change_type,c.risk_level,c.status,
+            c.requested_by,c.owner_employee_id,c.planned_start,c.planned_end,c.created_at,
+            e.department_id,
+            COALESCE(ot.team_id,rt.team_id) AS team_id
+            FROM change_records c
+            JOIN employees e ON e.employee_id=c.requested_by
+            LEFT JOIN employee_team_memberships rt
+              ON rt.employee_id=c.requested_by AND rt.is_primary=TRUE
+            LEFT JOIN employee_team_memberships ot
+              ON ot.employee_id=c.owner_employee_id AND ot.is_primary=TRUE
+            ORDER BY c.created_at DESC,c.change_id DESC LIMIT %s""",(min(max(limit,1),200),))
         rows=cur.fetchall()
     finally: cur.close(); conn.close()
     visible=[]
@@ -30,7 +46,15 @@ def list_changes(*, actor_employee_id:int, limit:int=100):
 def get_change(*,actor_employee_id:int,change_id:int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT c.*,e.full_name AS requester_name,o.full_name AS owner_name FROM change_records c JOIN employees e ON e.employee_id=c.requested_by LEFT JOIN employees o ON o.employee_id=c.owner_employee_id WHERE c.change_id=%s",(change_id,))
+        cur.execute("""SELECT c.*,e.full_name AS requester_name,o.full_name AS owner_name,
+            e.department_id,COALESCE(ot.team_id,rt.team_id) AS team_id
+            FROM change_records c JOIN employees e ON e.employee_id=c.requested_by
+            LEFT JOIN employees o ON o.employee_id=c.owner_employee_id
+            LEFT JOIN employee_team_memberships rt
+              ON rt.employee_id=c.requested_by AND rt.is_primary=TRUE
+            LEFT JOIN employee_team_memberships ot
+              ON ot.employee_id=c.owner_employee_id AND ot.is_primary=TRUE
+            WHERE c.change_id=%s""",(change_id,))
         row=cur.fetchone()
         if row:
             cur.execute("SELECT actor_employee_id,action_key,details,occurred_at FROM change_activity WHERE change_id=%s ORDER BY occurred_at,change_activity_id",(change_id,)); row["activity"]=cur.fetchall()
@@ -46,14 +70,22 @@ def get_change(*,actor_employee_id:int,change_id:int):
                 FROM approval_steps s JOIN employees e ON e.employee_id=s.approver_employee_id
                 WHERE s.approval_request_id=%s ORDER BY s.step_number""",(approval["approval_request_id"],))
             approval["steps"]=cur.fetchall()
-        row["approval"]=approval
+        if row:
+            row["approval"]=approval
     finally: cur.close(); conn.close()
     if not row or not has_permission(actor_employee_id,"change.read",_context(row)): raise ChangeError("Change record not found.")
     row["can_update"]=has_permission(actor_employee_id,"change.update",_context(row))
     return row
 
 def create_change(*,actor_employee_id:int,title:str,description:str,change_type:str,risk_level:str,planned_start:str|None,planned_end:str|None,implementation_plan:str,rollback_plan:str,verification_plan:str,owner_employee_id:int|None=None):
-    if not has_permission(actor_employee_id,"change.create"): raise ChangeError("Not authorized to create changes.")
+    scope_conn=get_connection(); scope_cur=scope_conn.cursor()
+    try:
+        scope_cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",(actor_employee_id,))
+        actor_row=scope_cur.fetchone()
+    finally: scope_cur.close(); scope_conn.close()
+    if not actor_row or actor_row[0] is None or not has_permission(
+        actor_employee_id,"change.create",ResourceContext(department_id=actor_row[0])
+    ): raise ChangeError("Not authorized to create changes in this department.")
     title=title.strip(); description=description.strip()
     if not title or len(title)>240: raise ChangeError("Title is required (maximum 240 characters).")
     if not description: raise ChangeError("Description is required.")
@@ -66,6 +98,13 @@ def create_change(*,actor_employee_id:int,title:str,description:str,change_type:
         try: cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(owner_employee_id,)); valid=cur.fetchone()
         finally: cur.close(); conn.close()
         if not valid: raise ChangeError("Selected change owner is inactive or unavailable.")
+        owner_conn=get_connection(); owner_cur=owner_conn.cursor()
+        try:
+            owner_cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",(owner_employee_id,))
+            owner_department=owner_cur.fetchone()
+        finally: owner_cur.close(); owner_conn.close()
+        if not owner_department or owner_department[0] != actor_row[0]:
+            raise ChangeError("Change owner must belong to the requester's department.")
     change_number="CHG-"+secrets.token_hex(5).upper()
     conn=get_connection(); cur=conn.cursor()
     try:
@@ -88,7 +127,13 @@ def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,detai
         if details is not None and len(details)>4000:
             raise ChangeError("Approval reason is too long (maximum 4000 characters).")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
-    try: cur.execute("SELECT change_id,requested_by,status FROM change_records WHERE change_id=%s",(change_id,)); snapshot=cur.fetchone()
+    try:
+        cur.execute("""SELECT c.change_id,c.requested_by,c.status,e.department_id,
+            (SELECT m.team_id FROM employee_team_memberships m
+             WHERE m.employee_id=COALESCE(c.owner_employee_id,c.requested_by) AND m.is_primary=TRUE LIMIT 1) AS team_id
+            FROM change_records c JOIN employees e ON e.employee_id=c.requested_by
+            WHERE c.change_id=%s""",(change_id,))
+        snapshot=cur.fetchone()
     finally: cur.close(); conn.close()
     if not snapshot: raise ChangeError("Change record not found.")
     context=_context(snapshot)
