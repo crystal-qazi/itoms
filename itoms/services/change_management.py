@@ -26,13 +26,17 @@ def list_changes(*, actor_employee_id:int, limit:int=100):
         cur.execute("""SELECT c.change_id,c.change_number,c.title,c.change_type,c.risk_level,c.status,
             c.requested_by,c.owner_employee_id,c.planned_start,c.planned_end,c.created_at,
             e.department_id,
-            COALESCE(ot.team_id,rt.team_id) AS team_id
+            COALESCE(ot_team.team_id,rt_team.team_id) AS team_id
             FROM change_records c
             JOIN employees e ON e.employee_id=c.requested_by
             LEFT JOIN employee_team_memberships rt
               ON rt.employee_id=c.requested_by AND rt.is_primary=TRUE
+            LEFT JOIN teams rt_team
+              ON rt_team.team_id=rt.team_id AND rt_team.department_id=e.department_id
             LEFT JOIN employee_team_memberships ot
               ON ot.employee_id=c.owner_employee_id AND ot.is_primary=TRUE
+            LEFT JOIN teams ot_team
+              ON ot_team.team_id=ot.team_id AND ot_team.department_id=e.department_id
             ORDER BY c.created_at DESC,c.change_id DESC LIMIT %s""",(min(max(limit,1),200),))
         rows=cur.fetchall()
     finally: cur.close(); conn.close()
@@ -52,8 +56,12 @@ def get_change(*,actor_employee_id:int,change_id:int):
             LEFT JOIN employees o ON o.employee_id=c.owner_employee_id
             LEFT JOIN employee_team_memberships rt
               ON rt.employee_id=c.requested_by AND rt.is_primary=TRUE
+            LEFT JOIN teams rt_team
+              ON rt_team.team_id=rt.team_id AND rt_team.department_id=e.department_id
             LEFT JOIN employee_team_memberships ot
               ON ot.employee_id=c.owner_employee_id AND ot.is_primary=TRUE
+            LEFT JOIN teams ot_team
+              ON ot_team.team_id=ot.team_id AND ot_team.department_id=e.department_id
             WHERE c.change_id=%s""",(change_id,))
         row=cur.fetchone()
         if row:
@@ -130,7 +138,9 @@ def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,detai
     try:
         cur.execute("""SELECT c.change_id,c.requested_by,c.status,e.department_id,
             (SELECT m.team_id FROM employee_team_memberships m
-             WHERE m.employee_id=COALESCE(c.owner_employee_id,c.requested_by) AND m.is_primary=TRUE LIMIT 1) AS team_id
+             JOIN teams t ON t.team_id=m.team_id AND t.department_id=e.department_id
+             WHERE m.employee_id=COALESCE(c.owner_employee_id,c.requested_by)
+               AND m.is_primary=TRUE LIMIT 1) AS team_id
             FROM change_records c JOIN employees e ON e.employee_id=c.requested_by
             WHERE c.change_id=%s""",(change_id,))
         snapshot=cur.fetchone()

@@ -79,13 +79,15 @@ def list_releases(*,actor_employee_id:int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT r.release_id,r.release_key,r.version_label,r.status,r.target_at,
-            r.released_at,r.created_by,s.service_name,e.department_id,s.owner_team_id AS team_id,
+            r.released_at,r.created_by,s.service_name,e.department_id,
+            CASE WHEN st.department_id=e.department_id THEN s.owner_team_id ELSE NULL END AS team_id,
             (SELECT ar.status FROM approval_requests ar
              WHERE ar.resource_type='release' AND ar.resource_id=CAST(r.release_id AS CHAR)
              ORDER BY ar.created_at DESC,ar.approval_request_id DESC LIMIT 1) AS approval_status
             FROM software_releases r
             JOIN employees e ON e.employee_id=r.created_by
             LEFT JOIN service_records s ON s.service_id=r.service_id
+            LEFT JOIN teams st ON st.team_id=s.owner_team_id
             ORDER BY r.created_at DESC LIMIT 200""")
         rows=cur.fetchall()
     finally:
@@ -163,9 +165,10 @@ def transition_release(*,actor_employee_id:int,release_id:int,new_status:str,
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT r.release_id,r.release_key,r.created_by,r.status,e.department_id,
-            s.owner_team_id AS team_id
+            CASE WHEN st.department_id=e.department_id THEN s.owner_team_id ELSE NULL END AS team_id
             FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
             LEFT JOIN service_records s ON s.service_id=r.service_id
+            LEFT JOIN teams st ON st.team_id=s.owner_team_id
             WHERE r.release_id=%s""",(release_id,))
         row=cur.fetchone()
     finally:
