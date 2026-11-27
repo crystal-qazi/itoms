@@ -353,9 +353,9 @@ def test_concurrent_duplicate_decision_commits_only_once(approval_fixture, mysql
             barrier.wait(timeout=10)
             try:
                 decide_approval(
-                actor_employee_id=data["approver_one"],
-                request_id=request_id,
-                decision="APPROVED",
+                    actor_employee_id=data["approver_one"],
+                    request_id=request_id,
+                    decision="APPROVED",
                     comment="Concurrent integration decision",
                 )
                 return "committed"
