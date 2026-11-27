@@ -27,3 +27,16 @@ def test_icap_verdict_fails_closed():
     assert parse_icap_verdict(b"ICAP/1.0 204 No Content\r\n\r\n") [0] == "CLEAN"
     assert parse_icap_verdict(b"ICAP/1.0 200 OK\r\n\r\n") [0] == "INFECTED"
     assert parse_icap_verdict(b"HTTP/1.1 200 OK\r\n\r\n") [0] == "ERROR"
+
+def test_document_share_expiry_validation_precedes_database(monkeypatch):
+    from itoms.services import documents
+    monkeypatch.setattr(documents, "has_permission", lambda *_: True)
+    monkeypatch.setattr(
+        documents, "get_connection",
+        lambda: pytest.fail("database should not be opened for invalid expiry"),
+    )
+    with pytest.raises(documents.DocumentError, match="expiry"):
+        documents.create_document_share(
+            actor_employee_id=1, file_id=1, recipient_employee_id=2,
+            permission="DOWNLOAD", expires_at="not-a-date",
+        )

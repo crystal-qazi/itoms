@@ -542,6 +542,7 @@ def create_document_share(
         raise DocumentError("Share expiry must be a valid ISO date and time.") from None
     if expiry.tzinfo is None:
         expiry = expiry.replace(tzinfo=timezone.utc)
+    expiry = expiry.astimezone(timezone.utc)
     now = datetime.now(timezone.utc)
     if expiry <= now or expiry > now + timedelta(days=365):
         raise DocumentError("Share expiry must be in the future and within 365 days.")
@@ -645,6 +646,27 @@ def revoke_document_share(*, actor_employee_id: int, share_id: int) -> None:
     except Exception:
         conn.rollback()
         raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def list_document_shares(*, employee_id: int) -> list[dict]:
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT s.share_id,s.file_id,f.original_filename,
+                      s.shared_with_employee_id,e.full_name AS recipient_name,
+                      s.permission,s.expires_at,s.revoked_at
+               FROM managed_file_shares s
+               JOIN managed_files f ON f.file_id=s.file_id
+               JOIN employees e ON e.employee_id=s.shared_with_employee_id
+               WHERE f.uploaded_by=%s
+               ORDER BY s.created_at DESC,s.share_id DESC LIMIT 500""",
+            (employee_id,),
+        )
+        return cur.fetchall()
     finally:
         cur.close()
         conn.close()

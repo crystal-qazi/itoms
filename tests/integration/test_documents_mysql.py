@@ -52,7 +52,8 @@ def document_fixture(monkeypatch):
             (f"Document Test Role {suffix}", "Temporary integration role"),
         )
         role_id = int(cursor.lastrowid)
-        for key in ("document.upload", "document.read", "document.download", "document.allowlist.manage"):
+        for key in ("document.upload", "document.read", "document.download", "document.allowlist.manage",
+                    "document.share", "document.version.manage"):
             cursor.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
             permission = cursor.fetchone()
             assert permission, f"{key} must be seeded by migrations"
@@ -84,6 +85,7 @@ def document_fixture(monkeypatch):
         cursor.execute("SELECT file_id FROM managed_files WHERE uploaded_by=%s", (employee_id,))
         file_ids = [int(row[0]) for row in cursor.fetchall()]
         for file_id in file_ids:
+            cursor.execute("DELETE FROM managed_file_shares WHERE file_id=%s", (file_id,))
             cursor.execute("DELETE FROM file_scan_events WHERE file_id=%s", (file_id,))
             cursor.execute("DELETE FROM managed_file_versions WHERE file_id=%s", (file_id,))
         if file_ids:
@@ -147,3 +149,64 @@ def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture
     assert quarantined["lifecycle_status"] == "QUARANTINED"
     with pytest.raises(documents.DocumentError, match="unavailable until a clean scan"):
         download_document(employee_id=employee_id, file_id=quarantined["file_id"])
+
+    monkeypatch.setattr(
+        documents, "scan_with_trend_micro",
+        lambda _content: {"status": "CLEAN", "details": "Integration scanner verdict: CLEAN"},
+    )
+    versioned = documents.upload_document_version(
+        actor_employee_id=employee_id, file_id=result["file_id"],
+        filename="report-v2.pdf", content=b"%PDF-1.7 second version",
+    )
+    assert versioned["version_number"] == 2
+    latest_content, _, _ = download_document(employee_id=employee_id, file_id=result["file_id"])
+    assert latest_content == b"%PDF-1.7 second version"
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO employees (employee_code,full_name,department_id,is_active)
+               VALUES (%s,%s,%s,TRUE)""",
+            (f"DOC-R-{document_fixture['suffix']}", "Document Share Recipient", document_fixture["department_id"]),
+        )
+        recipient_id = int(cursor.lastrowid)
+        cursor.execute(
+            """INSERT INTO approval_requests
+               (request_type,resource_type,resource_id,requested_by,status,completed_at)
+               VALUES ('DOCUMENT_SHARE','managed_file',%s,%s,'APPROVED',UTC_TIMESTAMP())""",
+            (str(quarantined["file_id"]), employee_id),
+        )
+        approval_id = int(cursor.lastrowid)
+        connection.commit()
+    finally:
+        cursor.close()
+        connection.close()
+
+    from datetime import datetime, timedelta, timezone
+    expiry = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    with pytest.raises(documents.DocumentError, match="require an approved"):
+        documents.create_document_share(
+            actor_employee_id=employee_id, file_id=quarantined["file_id"],
+            recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
+        )
+    # A quarantined file cannot be shared even with approval.
+    with pytest.raises(documents.DocumentError, match="Only clean active"):
+        documents.create_document_share(
+            actor_employee_id=employee_id, file_id=quarantined["file_id"],
+            recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
+            approval_request_id=approval_id,
+        )
+
+    # Share the clean internal file and verify recipient access and revocation.
+    share_id = documents.create_document_share(
+        actor_employee_id=employee_id, file_id=result["file_id"],
+        recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
+    )
+    shared_content, _, _ = documents.download_document(
+        employee_id=recipient_id, file_id=result["file_id"]
+    )
+    assert shared_content == b"%PDF-1.7 second version"
+    documents.revoke_document_share(actor_employee_id=employee_id, share_id=share_id)
+    with pytest.raises(documents.DocumentError, match="not found"):
+        documents.download_document(employee_id=recipient_id, file_id=result["file_id"])
