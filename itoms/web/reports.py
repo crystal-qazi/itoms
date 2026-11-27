@@ -6,6 +6,7 @@ import re
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for, make_response
 
 from itoms.security.decorators import login_required
+from itoms.services.authorization import has_permission
 from itoms.services.reporting import DATASETS, ReportingError, build_csv, create_report, list_reports, run_report
 
 reports_bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -26,6 +27,7 @@ def index():
         reports = []
     return render_template(
         "reports/index.html", reports=reports, datasets=DATASETS,
+        can_create=has_permission(g.employee_id, "reports.create"),
         csrf_token_value=session.get("csrf_token", ""),
     )
 
