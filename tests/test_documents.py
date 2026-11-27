@@ -62,5 +62,5 @@ def test_permanent_delete_returns_not_found_for_missing_document(monkeypatch):
     monkeypatch.setattr(documents, "get_connection", lambda: Connection())
     with pytest.raises(documents.DocumentError, match="not found"):
         documents.permanently_delete_document(
-            actor_employee_id=1, file_id=1, approval_request_id=1,
+            actor_employee_id=1, file_id=1, approval_request_id=0,
         )

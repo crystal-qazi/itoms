@@ -751,6 +751,12 @@ def permanently_delete_document(
     *, actor_employee_id: int, file_id: int, approval_request_id: int,
 ) -> None:
     """Two-phase, approval-gated deletion; failed filesystem cleanup remains blocked as PENDING_DELETE."""
+    if (not isinstance(actor_employee_id, int) or isinstance(actor_employee_id, bool)
+            or actor_employee_id <= 0 or not isinstance(file_id, int)
+            or isinstance(file_id, bool) or file_id <= 0
+            or not isinstance(approval_request_id, int)
+            or isinstance(approval_request_id, bool) or approval_request_id <= 0):
+        raise DocumentError("A matching approved document-deletion request is required.")
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:

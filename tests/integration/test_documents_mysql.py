@@ -91,7 +91,26 @@ def document_fixture(monkeypatch):
         if file_ids:
             marks = ",".join(["%s"] * len(file_ids))
             cursor.execute(f"DELETE FROM managed_files WHERE file_id IN ({marks})", tuple(file_ids))
-        cursor.execute("DELETE FROM approval_requests WHERE requested_by=%s AND resource_type='managed_file'", (employee_id,))
+        cursor.execute(
+            "SELECT approval_request_id FROM approval_requests WHERE requested_by=%s",
+            (employee_id,),
+        )
+        approval_ids = [int(row[0]) for row in cursor.fetchall()]
+        if approval_ids:
+            approval_marks = ",".join(["%s"] * len(approval_ids))
+            approval_params = tuple(approval_ids)
+            cursor.execute(
+                f"DELETE FROM approval_history WHERE approval_request_id IN ({approval_marks})",
+                approval_params,
+            )
+            cursor.execute(
+                f"DELETE FROM approval_steps WHERE approval_request_id IN ({approval_marks})",
+                approval_params,
+            )
+            cursor.execute(
+                f"DELETE FROM approval_requests WHERE approval_request_id IN ({approval_marks})",
+                approval_params,
+            )
         cursor.execute("DELETE FROM employees WHERE employee_code=%s", (f"DOC-R-{suffix}",))
         cursor.execute("DELETE FROM audit_events WHERE actor_employee_id=%s", (employee_id,))
         cursor.execute("DELETE FROM employee_role_assignments WHERE employee_id=%s", (employee_id,))
