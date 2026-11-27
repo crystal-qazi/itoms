@@ -65,6 +65,11 @@ def directory_admin_fixture():
             (role_id, permission[0]),
         )
         cursor.execute(
+            "INSERT INTO application_roles (role_name,description) VALUES (%s,%s)",
+            (f"Directory Member Role {suffix}", "Temporary role for revocation integration test"),
+        )
+        member_role_id = int(cursor.lastrowid)
+        cursor.execute(
             """INSERT INTO employee_role_assignments
                (employee_id,role_id,scope_type,scope_reference,is_active)
                VALUES (%s,%s,'DEPARTMENT',%s,TRUE)""",
@@ -86,7 +91,7 @@ def directory_admin_fixture():
     data = {
         "app": app, "department_id": department_id, "team_id": team_id,
         "actor_id": actor_id, "manager_id": manager_id, "member_id": member_id,
-        "role_id": role_id, "employee_ids": employees,
+        "role_id": role_id, "member_role_id": member_role_id, "employee_ids": employees,
     }
     yield data
 
@@ -98,8 +103,8 @@ def directory_admin_fixture():
         cursor.execute("DELETE FROM audit_events WHERE actor_employee_id=%s", (actor_id,))
         marks = ",".join(["%s"] * len(employees))
         cursor.execute(f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})", tuple(employees))
-        cursor.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
-        cursor.execute("DELETE FROM application_roles WHERE role_id=%s", (role_id,))
+        cursor.execute("DELETE FROM role_permissions WHERE role_id IN (%s,%s)", (role_id, member_role_id))
+        cursor.execute("DELETE FROM application_roles WHERE role_id IN (%s,%s)", (role_id, member_role_id))
         cursor.execute(f"DELETE FROM employees WHERE employee_id IN ({marks})", tuple(employees))
         cursor.execute("DELETE FROM teams WHERE team_id=%s", (team_id,))
         cursor.execute("DELETE FROM departments WHERE department_id=%s", (department_id,))
@@ -161,3 +166,19 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
     assert remove_team_membership(
         actor_employee_id=actor_id, employee_id=member_id, team_id=team_id,
     ) is None
+
+    from itoms.services.identity_admin import assign_role, revoke_role_assignment
+    assignment_id = assign_role(
+        actor_employee_id=actor_id, employee_id=member_id,
+        role_id=data["member_role_id"], scope_type="OWN",
+    )
+    assert revoke_role_assignment(
+        actor_employee_id=actor_id, assignment_id=assignment_id,
+    ) is True
+    assert revoke_role_assignment(
+        actor_employee_id=actor_id, assignment_id=assignment_id,
+    ) is False
+    assert not any(
+        row["assignment_id"] == assignment_id
+        for row in list_directory(actor_employee_id=actor_id)["role_assignments"]
+    )

@@ -12,7 +12,9 @@ from itoms.services.directory_admin import (
     create_directory_employee, list_directory, remove_team_manager,
     remove_team_membership,
 )
-from itoms.services.identity_admin import IdentityAdministrationError, assign_role
+from itoms.services.identity_admin import (
+    IdentityAdministrationError, assign_role, revoke_role_assignment,
+)
 
 directory_admin_bp = Blueprint(
     "directory_admin", __name__, url_prefix="/admin/directory"
@@ -136,6 +138,22 @@ def remove_manager():
         flash("Team manager assignment removed." if changed else "That manager assignment was already absent.", "success")
     except (DirectoryAdministrationError, ValueError, TypeError) as exc:
         flash(str(exc) or "Could not remove team manager.", "danger")
+    return _directory_redirect()
+
+
+@directory_admin_bp.post("/roles/revoke")
+@login_required
+def revoke_employee_role():
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        changed = revoke_role_assignment(
+            actor_employee_id=g.employee_id,
+            assignment_id=int(request.form.get("assignment_id", "")),
+        )
+        flash("Role assignment revoked." if changed else "Role assignment was already inactive.", "success")
+    except (IdentityAdministrationError, ValueError, TypeError) as exc:
+        flash(str(exc) or "Could not revoke role assignment.", "danger")
     return _directory_redirect()
 
 

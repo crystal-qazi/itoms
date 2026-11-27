@@ -86,7 +86,7 @@ def list_directory(*, actor_employee_id: int) -> dict:
                FROM employee_role_assignments a
                JOIN employees e ON e.employee_id=a.employee_id
                JOIN application_roles r ON r.role_id=a.role_id
-               WHERE e.department_id=%s
+               WHERE e.department_id=%s AND a.is_active=TRUE
                ORDER BY e.full_name,r.role_name,a.assignment_id""",
             (department_id,),
         )
