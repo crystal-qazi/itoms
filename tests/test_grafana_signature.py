@@ -197,14 +197,16 @@ def test_grafana_webhook_counts_only_confirmed_duplicate_events(monkeypatch):
         "startsAt": "2026-11-27T08:00:00Z",
         "labels": {"alertname": "DiskFull"}, "annotations": {},
     }
-    monkeypatch.setattr(grafana, "create_incident", lambda **kwargs: (_ for _ in ()).throw(IntegrityError("duplicate")))
+    def raise_duplicate(**kwargs):
+        raise IntegrityError("duplicate")
+
     monkeypatch.setattr(db_connection, "get_connection", lambda: Connection((123,)))
-    duplicate_response = _signed_client(monkeypatch, {"alerts": [alert]}, lambda **kwargs: None)
+    duplicate_response = _signed_client(monkeypatch, {"alerts": [alert]}, raise_duplicate)
     assert duplicate_response.status_code == 202
     assert duplicate_response.get_json()["duplicate_events"] == 1
 
     monkeypatch.setattr(db_connection, "get_connection", lambda: Connection(None))
-    failed_response = _signed_client(monkeypatch, {"alerts": [alert]}, lambda **kwargs: None)
+    failed_response = _signed_client(monkeypatch, {"alerts": [alert]}, raise_duplicate)
     assert failed_response.status_code == 500
     assert failed_response.get_json()["error"] == "Incident could not be created"
 
