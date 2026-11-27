@@ -1,0 +1,94 @@
+"""Audited role permission administration tests."""
+import pytest
+
+from itoms.services import identity_admin
+
+
+class Cursor:
+    def __init__(self, rows, rowcount=1):
+        self.rows = iter(rows)
+        self.rowcount = rowcount
+        self.statements = []
+
+    def execute(self, statement, params=None):
+        self.statements.append((statement, params))
+
+    def fetchone(self):
+        return next(self.rows)
+
+    def close(self):
+        pass
+
+
+class Connection:
+    def __init__(self, rows, rowcount=1):
+        self.fake_cursor = Cursor(rows, rowcount)
+        self.committed = False
+        self.rolled_back = False
+
+    def cursor(self):
+        return self.fake_cursor
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        pass
+
+
+def test_grant_role_permission_is_explicit_and_audited(monkeypatch):
+    connection = Connection([("Change Manager",), (23,)], rowcount=1)
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
+
+    assert identity_admin.grant_role_permission(
+        actor_employee_id=1, role_id=4, permission_key="approvals.create"
+    ) is True
+
+    sql = [statement for statement, _ in connection.fake_cursor.statements]
+    assert any("INSERT IGNORE INTO role_permissions" in statement for statement in sql)
+    assert any("IDENTITY_ROLE_PERMISSION_GRANTED" in statement for statement in sql)
+    assert connection.committed
+    assert not connection.rolled_back
+
+
+def test_grant_role_permission_requires_management_permission(monkeypatch):
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: False)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: pytest.fail("database must not be opened"))
+
+    with pytest.raises(identity_admin.IdentityAdministrationError, match="Not authorized"):
+        identity_admin.grant_role_permission(
+            actor_employee_id=1, role_id=4, permission_key="approvals.create"
+        )
+
+
+def test_revoke_role_permission_is_audited(monkeypatch):
+    connection = Connection([("Change Manager",), (23,)], rowcount=1)
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
+
+    assert identity_admin.revoke_role_permission(
+        actor_employee_id=1, role_id=4, permission_key="approvals.create"
+    ) is True
+
+    sql = [statement for statement, _ in connection.fake_cursor.statements]
+    assert any("DELETE FROM role_permissions" in statement for statement in sql)
+    assert any("IDENTITY_ROLE_PERMISSION_REVOKED" in statement for statement in sql)
+    assert connection.committed
+
+
+def test_role_permission_management_rejects_unknown_permission(monkeypatch):
+    connection = Connection([("Change Manager",), None])
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
+
+    with pytest.raises(identity_admin.IdentityAdministrationError, match="not registered"):
+        identity_admin.grant_role_permission(
+            actor_employee_id=1, role_id=4, permission_key="unknown.permission"
+        )
+
+    assert connection.rolled_back
+    assert not connection.committed

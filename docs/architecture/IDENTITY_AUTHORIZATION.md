@@ -9,3 +9,8 @@ Migration 002 establishes the organizational directory, team membership, dynamic
 - Audit records must not contain passwords, secrets, session tokens, or unnecessary personal data. Access and retention controls are forthcoming.
 
 The runner uses a MySQL advisory lock and SHA-256 migration checksums; it refuses modified applied migrations. SQL files are limited to straightforward statements separated by semicolons (no stored routines/delimiter directives). MySQL DDL may implicitly commit; migrations must be additive and recoverable.
+
+
+## Role permission administration
+
+Migration 025 registers `identity.roles.permissions.manage`. The identity administration service exposes audited, transactional `grant_role_permission` and `revoke_role_permission` operations. Both require this explicit action permission, an active role and a registered permission key. Grants are idempotent; revocations are safe when the grant is already absent. Role-to-permission changes are recorded in the central audit log. This permission is not automatically granted to any role; initial bootstrap and subsequent role assignment remain deliberate administrative actions.

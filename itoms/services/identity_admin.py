@@ -92,3 +92,77 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
     finally:
         cur.close()
         conn.close()
+
+
+def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_key: str) -> bool:
+    """Grant a catalogue permission to an active role; return whether a new grant was created."""
+    if not has_permission(actor_employee_id, "identity.roles.permissions.manage"):
+        raise IdentityAdministrationError("Not authorized to manage role permissions.")
+    key = (permission_key or "").strip()
+    if not key or len(key) > 160:
+        raise IdentityAdministrationError("A valid permission key is required.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT role_name FROM application_roles WHERE role_id=%s AND is_active=TRUE FOR UPDATE", (role_id,))
+        role = cur.fetchone()
+        if not role:
+            raise IdentityAdministrationError("Role does not exist or is inactive.")
+        cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
+        permission = cur.fetchone()
+        if not permission:
+            raise IdentityAdministrationError("Permission key is not registered.")
+        cur.execute("INSERT IGNORE INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+                    (role_id, permission[0]))
+        created = cur.rowcount > 0
+        if created:
+            cur.execute("""INSERT INTO audit_events
+                (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                VALUES (%s,'IDENTITY_ROLE_PERMISSION_GRANTED','application_role',%s,'SUCCESS',
+                    JSON_OBJECT('permission_key',%s))""",
+                (actor_employee_id, str(role_id), key))
+        conn.commit()
+        return created
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def revoke_role_permission(*, actor_employee_id: int, role_id: int, permission_key: str) -> bool:
+    """Revoke a catalogue permission from an active role; return whether a grant existed."""
+    if not has_permission(actor_employee_id, "identity.roles.permissions.manage"):
+        raise IdentityAdministrationError("Not authorized to manage role permissions.")
+    key = (permission_key or "").strip()
+    if not key or len(key) > 160:
+        raise IdentityAdministrationError("A valid permission key is required.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT role_name FROM application_roles WHERE role_id=%s AND is_active=TRUE FOR UPDATE", (role_id,))
+        role = cur.fetchone()
+        if not role:
+            raise IdentityAdministrationError("Role does not exist or is inactive.")
+        cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
+        permission = cur.fetchone()
+        if not permission:
+            raise IdentityAdministrationError("Permission key is not registered.")
+        cur.execute("DELETE FROM role_permissions WHERE role_id=%s AND permission_id=%s",
+                    (role_id, permission[0]))
+        removed = cur.rowcount > 0
+        if removed:
+            cur.execute("""INSERT INTO audit_events
+                (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                VALUES (%s,'IDENTITY_ROLE_PERMISSION_REVOKED','application_role',%s,'SUCCESS',
+                    JSON_OBJECT('permission_key',%s))""",
+                (actor_employee_id, str(role_id), key))
+        conn.commit()
+        return removed
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()

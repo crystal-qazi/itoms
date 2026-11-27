@@ -16,3 +16,5 @@ The authenticated Approval Inbox (`/approvals/`) lists only pending requests for
 ## Rejected change requests
 
 A rejected Change approval moves the linked change record to REJECTED in the same transaction as the approval decision, activity entry and audit event. An authorized change updater can submit the rejected request again with a new explicitly selected approver chain. Each attempt creates a new approval request; prior rejected requests and their decision history remain immutable. The change status enum is extended by migration 024.
+
+The identity administration service provides audited role-permission grant/revoke operations. An authorized administrator can grant `approvals.create` to the appropriate submitter role using `identity.roles.permissions.manage`; neither permission is automatically assigned to a role.
