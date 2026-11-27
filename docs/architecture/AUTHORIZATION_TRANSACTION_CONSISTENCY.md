@@ -99,7 +99,7 @@ Use two independent connections and deterministic barriers/events; do not rely o
 
 ## Repository audit — 2026-11-27 (refreshed after identity scope-lock change)
 
-The following inventory was verified from the current feature branch source and migrations. CI Run #46011804348 for commit `aae254e6add14e9683ff16f2459b87e771fb0d0d` passed both jobs: Python quality and MySQL 8.4 integration (42 passed); all 40 migrations applied successfully and a second run was a no-op.
+The following inventory was verified from the current feature branch source and migrations. CI Run #46011957441 for commit `911f61c17cfe0e3d19760607304d747bf89bd9c9` passed both jobs: Python quality and MySQL 8.4 integration (42 passed); all 40 migrations applied successfully and a second run was a no-op.
 
 ### Authorization schema and available indexes
 
@@ -122,7 +122,7 @@ Do not add indexes solely by intuition. Capture `EXPLAIN` plans for the proposed
 | `identity_admin.revoke_role_permission` | Uses the same transaction-bound authorization helper and lock order, then deletes the exact role-permission row and writes audit | The revoke-vs-grant race is tested in both orderings; this guarantee does not automatically extend to other service mutations |
 | `directory.assign_employee_to_team` | Actor-aware UI calls first check `identity.directory.manage` for the target employee/team context; write transaction locks employee → team → exact membership, changes membership and writes audit | Membership write and audit are atomic; the permission pre-check is on a separate connection, so revocation-atomic consistency remains a staged gap. MySQL concurrency covers primary-team reassignment racing with non-primary membership removal |
 | `directory.remove_employee_from_team` | Actor-aware UI calls use the same scoped pre-check; write transaction locks employee → team → exact membership, refuses primary or manager-mapped membership removal, then deletes and audits | Uses the same employee → team → membership order as assignment; the manager mapping is locked and must be removed first. Permission pre-check remains separate-connection |
-| `directory_admin.assign_team_manager` / `remove_team_manager` | Checks `identity.directory.manage` for the manager/team/department context; locks manager employee → team → membership → exact manager mapping, writes/removes mapping and audit in one transaction | Manager must be an active member of the same department/team; permission pre-check is separate-connection and is not globally revocation-atomic |
+| `directory_admin.assign_team_manager` / `remove_team_manager` | Checks `identity.directory.manage` for the manager/team/department context; both lock manager employee → team before the exact manager mapping. Assignment also locks the required membership row first; removal deletes the mapping and audit in one transaction | Manager must be an active member of the same department/team; permission pre-check is separate-connection and is not globally revocation-atomic |
 | `bootstrap.bootstrap_admin` | Creates initial role, role-permission rows, employee assignment and audit in a one-time bootstrap transaction | Bootstrap-only path; ensure it cannot run after initialization and document its exception to runtime locking |
 | `create_employee_account` | Creates employee/account and optional primary membership after an external permission check | The new employee is not yet a concurrent authorization subject, but actor/team/department validation should eventually share the transaction |
 
@@ -157,7 +157,7 @@ The source audit suggests the following candidate order, subject to proof with M
 **Important:** this is a candidate, not an approved protocol. It requires writer changes:
 - Make role assignment administration lock the target employee before role and assignment writes.
 - Preserve the now-aligned employee → team → membership order in both directory writers; keep the MySQL concurrency regression test as a required gate.
-- Define a single team/manager-assignment order before any manager assignment CRUD is introduced.
+- Keep manager mapping writers on the employee → team → membership (when needed) → manager-mapping order; membership removal uses employee → team → membership → manager-mapping, so all shared paths serialize on the employee row first.
 - Ensure role permission grant/revoke and role deactivation follow role-first locking and cannot acquire employee/assignment locks in a reverse order.
 - Ensure every protected service obtains authorization locks before resource locks, then validates the resource snapshot after acquiring its resource lock.
 - Avoid locking every role in a broad joined query; first discover candidate role IDs, then acquire exact rows in deterministic sorted order and revalidate assignments/current grants with locking reads. The implementation must handle a concurrently added assignment safely, likely by serializing authorization changes on the actor employee row and requiring assignment writers to lock that same employee row first.
@@ -167,8 +167,8 @@ If a service must lock a resource first for a proven domain invariant (for examp
 ### Implementation gate
 
 Before coding the transaction-bound evaluator:
-1. Add deterministic concurrency tests for the existing role-permission revoke path and directory membership removal/assignment.
-2. Refactor the authorization-state writers to the agreed order and test them independently.
+1. Existing deterministic MySQL coverage now exercises both role-permission revoke orderings, directory primary-team reassignment versus membership removal, and department-scoped manager/membership lifecycle.
+2. Inventory and align every remaining authorization-state writer to the agreed order; add missing deactivation, department-transfer and role-assignment-revocation writers only with corresponding tests.
 3. Confirm isolation level and query plans on MySQL 8.4.
 4. Implement the evaluator and migrate one simple mutation service first.
 5. Only then migrate the remaining services in small batches.
@@ -176,7 +176,7 @@ Before coding the transaction-bound evaluator:
 
 ## Targeted implementation — role-permission administration
 
-The following bounded slice is implemented in `identity_admin.py` and verified by CI Run #46008936383 (Python quality passed; MySQL 8.4: 41 passed; all 39 migrations applied and the second run was idempotent):
+The following bounded slice is implemented in `identity_admin.py` and verified by CI Run #46011957441 (Python quality passed; MySQL 8.4: 42 passed; all 40 migrations applied and the second run was idempotent):
 
 - `grant_role_permission` and `revoke_role_permission` no longer authorize through the independent-connection `has_permission` helper.
 - Both operations use their own mutation transaction for authorization and the role-permission write.

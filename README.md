@@ -6,8 +6,8 @@ Private, offline-first hospital intranet platform for IT operations across eight
 
 - Requirements and product planning: finalized.
 - Active implementation branch: `feature/itoms-foundation`.
-- The feature branch contains the shared platform foundation and implementations of identity/MFA, authorization, employee directory and team-manager administration, incidents/Grafana intake, service requests, engineering tasks, service inventory, approvals, change/release, SQA, problem management, projects, assets/maintenance, technical operations, training, vendor directory, notifications, SLA escalation, reporting and document management.
-- Database schema is delivered through 39 numbered SQL migrations.
+- The feature branch contains the shared platform foundation and implementations of identity/MFA, authorization, department-scoped employee directory and team-manager administration, incidents/Grafana intake, service requests, engineering tasks, service inventory, approvals, change/release, SQA, problem management, projects, assets/maintenance, technical operations, training, vendor directory, notifications, SLA escalation, reporting and document management. The installable PWA shell caches only approved static assets; operational and employee data remain server-backed and uncached.
+- Database schema is delivered through 40 numbered SQL migrations.
 - Automated Python and MySQL 8.4 CI is required for every code change.
 - This is an actively developed feature branch, not a production release. Deployment hardening, operational integration, end-to-end acceptance and controlled integration into `main` remain required.
 

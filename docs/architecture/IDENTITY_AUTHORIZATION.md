@@ -8,7 +8,7 @@ Migration 002 establishes the organizational directory, team membership, dynamic
 - Roles and permissions remain separate mappings. Action-only checks authorize an action; protected reads and mutations must pass trusted resource context and are constrained by the assigned scope.
 - Employee accounts are created with a first-login password-change requirement and mandatory TOTP enrollment.
 - The one-time bootstrap command creates the first department-scoped administrator and grants the current permission catalogue to that bootstrap role. It does not create a default username or password.
-- The Employee Directory UI at `/admin/directory` supports department-scoped employee account creation, team membership management, manager-to-team mappings and role assignment. Membership and manager mapping changes are audited.
+- The Employee Directory UI at `/admin/directory` supports department-scoped employee account creation, team membership management and manager-to-team mappings. Role assignment remains in the separate identity administration workflow. Membership and manager mapping changes are audited.
 - A manager must be an active member of the team they manage. A manager mapping must be removed before that employee's team membership can be removed.
 - Migration 040 registers `identity.directory.manage`; it is explicitly assigned through the role/permission model after bootstrap.
 
