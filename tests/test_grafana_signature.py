@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import time
+import pytest
 from flask import Flask
 from itoms.web.grafana import _valid_signature
 
@@ -107,4 +108,103 @@ def test_grafana_webhook_rejects_oversized_alert_batch_before_creating(monkeypat
 
     assert response.status_code == 413
     assert created == []
+
+def test_grafana_webhook_ignores_resolved_alerts_without_closing_incidents(monkeypatch):
+    created = []
+    response = _signed_client(monkeypatch, {
+        "alerts": [{"status": "resolved", "fingerprint": "fp", "startsAt": "2026-11-27T08:00:00Z"}]
+    }, lambda **kwargs: created.append(kwargs) or 101)
+
+    assert response.status_code == 202
+    assert response.get_json() == {
+        "created_ticket_ids": [], "ignored_non_firing": 1, "duplicate_events": 0
+    }
+    assert created == []
+
+
+def test_grafana_webhook_validates_entire_batch_before_creating(monkeypatch):
+    created = []
+    response = _signed_client(monkeypatch, {
+        "alerts": [
+            {
+                "status": "firing", "fingerprint": "valid", "startsAt": "2026-11-27T08:00:00Z",
+                "labels": {"alertname": "Valid"}, "annotations": {},
+            },
+            {
+                "status": "firing", "fingerprint": "", "startsAt": "2026-11-27T08:01:00Z",
+                "labels": {"alertname": "Invalid"}, "annotations": {},
+            },
+        ]
+    }, lambda **kwargs: created.append(kwargs) or 102)
+
+    assert response.status_code == 400
+    assert created == []
+
+
+def test_grafana_webhook_returns_503_without_service_identity(monkeypatch):
+    import json
+    from flask import Flask
+    from itoms.web import grafana
+
+    monkeypatch.setattr(grafana, "create_incident", lambda **kwargs: pytest.fail("must not create"))
+    app = Flask(__name__)
+    app.config.update(TESTING=True, GRAFANA_WEBHOOK_SECRET="test-secret")
+    app.register_blueprint(grafana.grafana_bp)
+    body = json.dumps({"alerts": []}).encode()
+    timestamp = str(int(time.time()))
+    signature = hmac.new(
+        b"test-secret", timestamp.encode("ascii") + b"." + body, hashlib.sha256
+    ).hexdigest()
+
+    response = app.test_client().post(
+        "/integrations/grafana/webhook", data=body,
+        headers={"X-ITOMS-Timestamp": timestamp, "X-ITOMS-Signature": signature},
+    )
+    assert response.status_code == 503
+
+
+def test_grafana_webhook_counts_only_confirmed_duplicate_events(monkeypatch):
+    from mysql.connector import IntegrityError
+    from itoms.web import grafana
+    import itoms.db.connection as db_connection
+
+    class Cursor:
+        def __init__(self, duplicate):
+            self.duplicate = duplicate
+            self.query = None
+
+        def execute(self, query, params):
+            self.query = (query, params)
+
+        def fetchone(self):
+            return self.duplicate
+
+        def close(self):
+            pass
+
+    class Connection:
+        def __init__(self, duplicate):
+            self.cur = Cursor(duplicate)
+
+        def cursor(self):
+            return self.cur
+
+        def close(self):
+            pass
+
+    alert = {
+        "status": "firing", "fingerprint": "known-fingerprint",
+        "startsAt": "2026-11-27T08:00:00Z",
+        "labels": {"alertname": "DiskFull"}, "annotations": {},
+    }
+    monkeypatch.setattr(grafana, "create_incident", lambda **kwargs: (_ for _ in ()).throw(IntegrityError("duplicate")))
+    monkeypatch.setattr(db_connection, "get_connection", lambda: Connection((123,)))
+    duplicate_response = _signed_client(monkeypatch, {"alerts": [alert]}, lambda **kwargs: None)
+    assert duplicate_response.status_code == 202
+    assert duplicate_response.get_json()["duplicate_events"] == 1
+
+    monkeypatch.setattr(db_connection, "get_connection", lambda: Connection(None))
+    failed_response = _signed_client(monkeypatch, {"alerts": [alert]}, lambda **kwargs: None)
+    assert failed_response.status_code == 500
+    assert failed_response.get_json()["error"] == "Incident could not be created"
 
