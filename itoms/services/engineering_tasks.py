@@ -19,15 +19,24 @@ TASK_TRANSITIONS={
 
 def create_task(*,actor_employee_id:int,team_id:int,title:str,description:str="",
                 assigned_to:int|None=None,priority:str="MEDIUM",due_at=None)->int:
-    if not has_permission(actor_employee_id,"engineering.tasks.create",ResourceContext(team_id=team_id)):
-        raise TaskError("Not authorized to create tasks for this team.")
+    if not isinstance(team_id, int) or team_id <= 0:
+        raise TaskError("Select a valid task team.")
     title=title.strip()
     if not title or len(title)>240: raise TaskError("Task title is required (maximum 240 characters).")
+    priority=priority.strip().upper()
+    description=description.strip()
     if priority not in {"LOW","MEDIUM","HIGH","CRITICAL"}: raise TaskError("Invalid priority.")
+    if len(description)>20000: raise TaskError("Task description must be 20,000 characters or fewer.")
     conn=get_connection();cur=conn.cursor()
     try:
-        cur.execute("SELECT 1 FROM teams WHERE team_id=%s AND is_active=TRUE",(team_id,))
-        if not cur.fetchone(): raise TaskError("Team is inactive or unavailable.")
+        cur.execute("""SELECT t.department_id FROM teams t
+            JOIN departments d ON d.department_id=t.department_id
+            WHERE t.team_id=%s AND t.is_active=TRUE AND d.is_active=TRUE""",(team_id,))
+        team=cur.fetchone()
+        if not team: raise TaskError("Team is inactive or unavailable.")
+        context=ResourceContext(team_id=team_id,department_id=team[0])
+        if not has_permission(actor_employee_id,"engineering.tasks.create",context):
+            raise TaskError("Not authorized to create tasks for this team.")
         if assigned_to is not None:
             cur.execute("""SELECT 1 FROM employee_team_memberships m
                 JOIN employees e ON e.employee_id=m.employee_id AND e.is_active=TRUE
@@ -57,19 +66,27 @@ def change_task_status(*,actor_employee_id:int,task_id:int,new_status:str)->None
     # the task row lock while the authorization service opens its own connection.
     conn=get_connection();cur=conn.cursor()
     try:
-        cur.execute("SELECT team_id FROM engineering_tasks WHERE task_id=%s",(task_id,))
+        cur.execute("""SELECT t.team_id,tm.department_id
+            FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id
+            WHERE t.task_id=%s""",(task_id,))
         snapshot=cur.fetchone()
     finally:
         cur.close();conn.close()
     if not snapshot: raise TaskError("Task not found.")
-    team_id=snapshot[0]
-    if not has_permission(actor_employee_id,"engineering.tasks.update",ResourceContext(team_id=team_id)):
+    team_id,department_id=snapshot
+    context=ResourceContext(team_id=team_id,department_id=department_id)
+    if not has_permission(actor_employee_id,"engineering.tasks.update",context):
         raise TaskError("Not authorized to update this task.")
     conn=get_connection();cur=conn.cursor()
     try:
-        cur.execute("SELECT status,team_id FROM engineering_tasks WHERE task_id=%s FOR UPDATE",(task_id,))
+        cur.execute("""SELECT t.status,t.team_id,tm.department_id
+            FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id
+            WHERE t.task_id=%s FOR UPDATE""",(task_id,))
         row=cur.fetchone()
-        if not row or row[1]!=team_id: raise TaskError("Task changed; reload and try again.")
+        if not row or row[1]!=team_id or row[2]!=department_id:
+            raise TaskError("Task changed; reload and try again.")
+        if not has_permission(actor_employee_id,"engineering.tasks.update",context):
+            raise TaskError("Not authorized to update this task.")
         old_status=row[0]
         if new_status not in TASK_TRANSITIONS.get(old_status,set()):
             raise TaskError(f"Transition from {old_status} to {new_status} is not allowed.")
@@ -93,12 +110,14 @@ def list_accessible_task_teams(*, actor_employee_id: int, permission_key: str = 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT team_id,team_name FROM teams WHERE is_active=TRUE ORDER BY team_name")
+        cur.execute("""SELECT t.team_id,t.team_name,t.department_id
+            FROM teams t JOIN departments d ON d.department_id=t.department_id
+            WHERE t.is_active=TRUE AND d.is_active=TRUE ORDER BY t.team_name""")
         teams = cur.fetchall()
     finally:
         cur.close()
         conn.close()
-    return [team for team in teams if has_permission(actor_employee_id, permission_key, ResourceContext(team_id=team["team_id"]))]
+    return [team for team in teams if has_permission(actor_employee_id, permission_key, ResourceContext(team_id=team["team_id"], department_id=team["department_id"]))]
 
 
 def list_tasks(*, actor_employee_id: int, team_id: int | None = None, status: str | None = None, priority: str | None = None, limit: int = 100) -> list[dict]:
@@ -116,14 +135,18 @@ def list_tasks(*, actor_employee_id: int, team_id: int | None = None, status: st
     try:
         cur.execute("SELECT task_id,task_number,title,team_id,assigned_to,priority,status,due_at,created_at FROM engineering_tasks" + where + " ORDER BY created_at DESC,task_id DESC LIMIT %s", tuple(params + [limit * 3]))
         candidates = cur.fetchall()
-        cur.execute("SELECT team_id,team_name FROM teams")
-        team_names = {row["team_id"]: row["team_name"] for row in cur.fetchall()}
+        cur.execute("""SELECT t.team_id,t.team_name,t.department_id
+            FROM teams t JOIN departments d ON d.department_id=t.department_id
+            WHERE t.is_active=TRUE AND d.is_active=TRUE""")
+        team_details = {row["team_id"]: row for row in cur.fetchall()}
     finally:
         cur.close(); conn.close()
     visible = []
     for item in candidates:
-        if has_permission(actor_employee_id, "engineering.tasks.read", ResourceContext(team_id=item["team_id"])):
-            item["team_name"] = team_names.get(item["team_id"], "Unknown team")
+        team=team_details.get(item["team_id"])
+        if team and has_permission(actor_employee_id, "engineering.tasks.read",
+            ResourceContext(team_id=item["team_id"],department_id=team["department_id"])):
+            item["team_name"] = team["team_name"]
             visible.append(item)
             if len(visible) >= limit: break
     return visible
@@ -133,9 +156,9 @@ def get_task_detail(*, actor_employee_id: int, task_id: int) -> dict:
     """Fetch task and activity after checking the trusted team scope."""
     conn = get_connection(); cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT t.task_id,t.task_number,t.title,t.description,t.team_id,t.assigned_to,t.priority,t.status,t.due_at,t.created_at,t.updated_at,tm.team_name,creator.full_name AS creator_name,assignee.full_name AS assignee_name FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id JOIN employees creator ON creator.employee_id=t.created_by LEFT JOIN employees assignee ON assignee.employee_id=t.assigned_to WHERE t.task_id=%s", (task_id,))
+        cur.execute("SELECT t.task_id,t.task_number,t.title,t.description,t.team_id,t.assigned_to,t.priority,t.status,t.due_at,t.created_at,t.updated_at,tm.team_name,tm.department_id,creator.full_name AS creator_name,assignee.full_name AS assignee_name FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id JOIN employees creator ON creator.employee_id=t.created_by LEFT JOIN employees assignee ON assignee.employee_id=t.assigned_to WHERE t.task_id=%s", (task_id,))
         task = cur.fetchone()
-        if not task or not has_permission(actor_employee_id, "engineering.tasks.read", ResourceContext(team_id=task["team_id"])):
+        if not task or not has_permission(actor_employee_id, "engineering.tasks.read", ResourceContext(team_id=task["team_id"],department_id=task["department_id"])):
             raise TaskError("Task not found.")
         cur.execute("SELECT a.action_key,a.old_value,a.new_value,a.created_at,e.full_name AS actor_name FROM engineering_task_activity a JOIN employees e ON e.employee_id=a.actor_employee_id WHERE a.task_id=%s ORDER BY a.created_at,a.activity_id", (task_id,))
         task["activity"] = cur.fetchall()
