@@ -132,7 +132,7 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
             actor_employee_id, "identity.roles.assign", context
         ):
             raise IdentityAdministrationError("Not authorized to assign roles within this employee scope.")
-        cur.execute("SELECT 1 FROM application_roles WHERE role_id=%s AND is_active=TRUE", (role_id,))
+        cur.execute("SELECT 1 FROM application_roles WHERE role_id=%s AND is_active=TRUE FOR UPDATE", (role_id,))
         if not cur.fetchone():
             raise IdentityAdministrationError("Role does not exist or is inactive.")
         cur.execute("""INSERT INTO employee_role_assignments
