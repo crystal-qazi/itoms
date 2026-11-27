@@ -74,7 +74,12 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE", (employee_id,))
+        # Serialize scope validation with directory membership writers. The shared
+        # parent-first order is employee -> team -> membership -> role.
+        cur.execute(
+            "SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE FOR UPDATE",
+            (employee_id,),
+        )
         employee = cur.fetchone()
         if not employee:
             raise IdentityAdministrationError("Employee does not exist or is inactive.")
@@ -84,11 +89,19 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
             if not scope_reference or not scope_reference.isdigit() or int(scope_reference) <= 0:
                 raise IdentityAdministrationError("TEAM scope requires a valid team ID reference.")
             team_id = int(scope_reference)
-            cur.execute("""SELECT t.department_id FROM teams t
-                JOIN employee_team_memberships m ON m.team_id=t.team_id AND m.employee_id=%s
-                WHERE t.team_id=%s AND t.is_active=TRUE""", (employee_id, team_id))
+            cur.execute(
+                "SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE FOR UPDATE",
+                (team_id,),
+            )
             team = cur.fetchone()
             if not team:
+                raise IdentityAdministrationError("The team does not exist or is inactive.")
+            cur.execute(
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
+                (employee_id, team_id),
+            )
+            if not cur.fetchone():
                 raise IdentityAdministrationError("The employee must belong to the active team in the assignment scope.")
             if employee_department_id is not None and team[0] != employee_department_id:
                 raise IdentityAdministrationError("The team must belong to the employee department.")
