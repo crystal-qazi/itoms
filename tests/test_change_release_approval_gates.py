@@ -154,7 +154,11 @@ def test_release_gate_treats_only_closed_or_rejected_defects_as_resolved(
             return next(self.rows)
 
     cursor = GateCursor()
-    release_management._assert_sqa_release_gate(cursor, "REL-REGRESSION")
+    if blocked:
+        with pytest.raises(release_management.ReleaseError, match="unresolved High/Critical defects"):
+            release_management._assert_sqa_release_gate(cursor, "REL-REGRESSION")
+    else:
+        release_management._assert_sqa_release_gate(cursor, "REL-REGRESSION")
 
     defect_query = next(
         statement for statement in cursor.statements
