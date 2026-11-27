@@ -99,7 +99,7 @@ Use two independent connections and deterministic barriers/events; do not rely o
 
 ## Repository audit — 2026-11-27 (refreshed after identity scope-lock change)
 
-The following inventory was verified from the current feature branch source and migrations. CI Run #46011957441 for commit `911f61c17cfe0e3d19760607304d747bf89bd9c9` passed both jobs: Python quality and MySQL 8.4 integration (42 passed); all 40 migrations applied successfully and a second run was a no-op.
+The following inventory was verified from the current feature branch source and migrations. CI Run #46014120127 for commit `5e82bfcde9791e09153630a6549d3ea25c61a186` passed both jobs: Python quality and MySQL 8.4 integration (42 passed); all 41 migrations applied successfully and a second run was a no-op.
 
 ### Authorization schema and available indexes
 
@@ -176,7 +176,7 @@ Before coding the transaction-bound evaluator:
 
 ## Targeted implementation — role-permission administration
 
-The following bounded slice is implemented in `identity_admin.py` and verified by CI Run #46011957441 (Python quality passed; MySQL 8.4: 42 passed; all 40 migrations applied and the second run was idempotent):
+The following bounded slice is implemented in `identity_admin.py` and verified by CI Run #46014120127 (Python quality passed; MySQL 8.4: 42 passed; all 41 migrations applied and the second run was idempotent):
 
 - `grant_role_permission` and `revoke_role_permission` no longer authorize through the independent-connection `has_permission` helper.
 - Both operations use their own mutation transaction for authorization and the role-permission write.
