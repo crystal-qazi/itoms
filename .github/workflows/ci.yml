@@ -95,3 +95,7 @@ jobs:
                   connection.close()
           print(f"Verified {applied} MySQL migrations and idempotent second run.")
           PY
+      - name: Run approval service integration tests on MySQL 8.4
+        env:
+          ITOMS_RUN_MYSQL_INTEGRATION: "1"
+        run: pytest -q tests/integration
