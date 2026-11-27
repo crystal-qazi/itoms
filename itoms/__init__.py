@@ -83,6 +83,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.releases import release_bp
     from itoms.web.sqa import sqa_bp
     from itoms.web.role_permissions import role_permissions_bp
+    from itoms.web.directory import directory_bp
     from itoms.web.directory_admin import directory_admin_bp
     from itoms.web.projects import projects_bp
     from itoms.web.assets import assets_bp
@@ -106,6 +107,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(release_bp)
     app.register_blueprint(sqa_bp)
     app.register_blueprint(role_permissions_bp)
+    app.register_blueprint(directory_bp)
     app.register_blueprint(directory_admin_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(assets_bp)
