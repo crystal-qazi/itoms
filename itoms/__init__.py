@@ -55,6 +55,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.engineering_tasks import engineering_tasks_bp
     from itoms.web.service_inventory import service_inventory_bp
     from itoms.web.notifications import notifications_bp
+    from itoms.web.approvals import approval_bp
     from itoms.web.changes import change_bp
     from itoms.web.releases import release_bp
     from itoms.web.sqa import sqa_bp
@@ -65,6 +66,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(engineering_tasks_bp)
     app.register_blueprint(service_inventory_bp)
     app.register_blueprint(notifications_bp)
+    app.register_blueprint(approval_bp)
     app.register_blueprint(change_bp)
     app.register_blueprint(release_bp)
     app.register_blueprint(sqa_bp)
