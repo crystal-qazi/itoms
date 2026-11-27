@@ -168,14 +168,18 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
         conn.close()
 
 
-def _assert_role_permission_scope(cur, *, actor_employee_id: int, role_id: int) -> None:
+def _assert_role_permission_scope(
+    cur, *, actor_employee_id: int, role_id: int, actor_department_id: int | None = None
+) -> None:
     """Allow editing only roles assigned exclusively to active employees in actor's department."""
-    cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",
-                (actor_employee_id,))
-    actor = cur.fetchone()
-    if not actor or actor[0] is None:
+    department_id = actor_department_id
+    if department_id is None:
+        cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",
+                    (actor_employee_id,))
+        actor = cur.fetchone()
+        department_id = actor[0] if actor else None
+    if department_id is None:
         raise IdentityAdministrationError("A department-scoped administrator is required.")
-    department_id = actor[0]
     cur.execute("""SELECT
         COUNT(*) AS assignment_count,
         SUM(CASE WHEN e.department_id=%s THEN 0 ELSE 1 END) AS outside_department_count
@@ -195,27 +199,103 @@ def _assert_role_permission_scope(cur, *, actor_employee_id: int, role_id: int) 
         )
 
 
+def _lock_actor_permission_for_role_change(
+    cur, *, actor_employee_id: int, permission_key: str, target_role_id: int
+) -> tuple[bool, int | None, set[int], dict[int, str]]:
+    """Lock current actor authorization and target role in one transaction.
+
+    Lock order: actor employee -> role rows (ascending ID) -> actor assignment
+    rows -> exact role-permission rows. All runtime role-assignment writers must
+    lock the affected employee before the role row; role-permission writers
+    must use this same helper/order.
+    """
+    cur.execute(
+        "SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE FOR UPDATE",
+        (actor_employee_id,),
+    )
+    actor = cur.fetchone()
+    if not actor:
+        raise IdentityAdministrationError("An active employee account is required.")
+
+    # The employee row serializes role-assignment writers for this actor.
+    cur.execute(
+        """SELECT role_id FROM employee_role_assignments
+           WHERE employee_id=%s AND is_active=TRUE
+             AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())
+           ORDER BY role_id""",
+        (actor_employee_id,),
+    )
+    candidate_role_ids = {int(row[0]) for row in cur.fetchall()}
+    role_ids = sorted(candidate_role_ids | {int(target_role_id)})
+    role_names: dict[int, str] = {}
+    active_role_ids: set[int] = set()
+    for current_role_id in role_ids:
+        cur.execute(
+            "SELECT role_name,is_active FROM application_roles WHERE role_id=%s FOR UPDATE",
+            (current_role_id,),
+        )
+        role = cur.fetchone()
+        if role and role[1]:
+            active_role_ids.add(current_role_id)
+            role_names[current_role_id] = role[0]
+
+    # Lock and revalidate the actor's assignments after role locks are held.
+    cur.execute(
+        """SELECT assignment_id,role_id FROM employee_role_assignments
+           WHERE employee_id=%s AND is_active=TRUE
+             AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())
+           ORDER BY role_id,assignment_id FOR UPDATE""",
+        (actor_employee_id,),
+    )
+    locked_assignments = cur.fetchall()
+    actor_role_ids = {int(row[1]) for row in locked_assignments}
+    if actor_role_ids != candidate_role_ids:
+        # Fail closed if an unexpected writer did not honor the employee lock.
+        raise IdentityAdministrationError("Authorization assignments changed; retry the operation.")
+
+    cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (permission_key,))
+    permission = cur.fetchone()
+    if not permission:
+        return False, int(actor[0]) if actor[0] is not None else None, actor_role_ids, role_names
+
+    permission_id = int(permission[0])
+    authorized = False
+    for current_role_id in sorted(actor_role_ids & active_role_ids):
+        cur.execute(
+            """SELECT permission_id FROM role_permissions
+               WHERE role_id=%s AND permission_id=%s FOR UPDATE""",
+            (current_role_id, permission_id),
+        )
+        if cur.fetchone():
+            authorized = True
+
+    return authorized, int(actor[0]) if actor[0] is not None else None, actor_role_ids, role_names
+
+
 def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_key: str) -> bool:
     """Grant a catalogue permission to an active role; return whether a new grant was created."""
-    if not has_permission(actor_employee_id, "identity.roles.permissions.manage"):
-        raise IdentityAdministrationError("Not authorized to manage role permissions.")
     key = (permission_key or "").strip()
     if not key or len(key) > 160:
         raise IdentityAdministrationError("A valid permission key is required.")
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT role_name FROM application_roles WHERE role_id=%s AND is_active=TRUE FOR UPDATE", (role_id,))
-        role = cur.fetchone()
-        if not role:
+        authorized, actor_department_id, actor_role_ids, role_names = (
+            _lock_actor_permission_for_role_change(
+                cur, actor_employee_id=actor_employee_id,
+                permission_key="identity.roles.permissions.manage", target_role_id=role_id,
+            )
+        )
+        if not authorized:
+            raise IdentityAdministrationError("Not authorized to manage role permissions.")
+        if role_id not in role_names:
             raise IdentityAdministrationError("Role does not exist or is inactive.")
-        _assert_role_permission_scope(cur, actor_employee_id=actor_employee_id, role_id=role_id)
-        cur.execute("""SELECT 1 FROM employee_role_assignments
-            WHERE employee_id=%s AND role_id=%s AND is_active=TRUE
-              AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) LIMIT 1""",
-            (actor_employee_id, role_id))
-        if cur.fetchone():
+        if role_id in actor_role_ids:
             raise IdentityAdministrationError("You cannot modify permissions on a role assigned to your own account.")
+        _assert_role_permission_scope(
+            cur, actor_employee_id=actor_employee_id, role_id=role_id,
+            actor_department_id=actor_department_id,
+        )
         cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
         permission = cur.fetchone()
         if not permission:
@@ -241,25 +321,28 @@ def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_ke
 
 def revoke_role_permission(*, actor_employee_id: int, role_id: int, permission_key: str) -> bool:
     """Revoke a catalogue permission from an active role; return whether a grant existed."""
-    if not has_permission(actor_employee_id, "identity.roles.permissions.manage"):
-        raise IdentityAdministrationError("Not authorized to manage role permissions.")
     key = (permission_key or "").strip()
     if not key or len(key) > 160:
         raise IdentityAdministrationError("A valid permission key is required.")
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT role_name FROM application_roles WHERE role_id=%s AND is_active=TRUE FOR UPDATE", (role_id,))
-        role = cur.fetchone()
-        if not role:
+        authorized, actor_department_id, actor_role_ids, role_names = (
+            _lock_actor_permission_for_role_change(
+                cur, actor_employee_id=actor_employee_id,
+                permission_key="identity.roles.permissions.manage", target_role_id=role_id,
+            )
+        )
+        if not authorized:
+            raise IdentityAdministrationError("Not authorized to manage role permissions.")
+        if role_id not in role_names:
             raise IdentityAdministrationError("Role does not exist or is inactive.")
-        _assert_role_permission_scope(cur, actor_employee_id=actor_employee_id, role_id=role_id)
-        cur.execute("""SELECT 1 FROM employee_role_assignments
-            WHERE employee_id=%s AND role_id=%s AND is_active=TRUE
-              AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) LIMIT 1""",
-            (actor_employee_id, role_id))
-        if cur.fetchone():
+        if role_id in actor_role_ids:
             raise IdentityAdministrationError("You cannot modify permissions on a role assigned to your own account.")
+        _assert_role_permission_scope(
+            cur, actor_employee_id=actor_employee_id, role_id=role_id,
+            actor_department_id=actor_department_id,
+        )
         cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
         permission = cur.fetchone()
         if not permission:
