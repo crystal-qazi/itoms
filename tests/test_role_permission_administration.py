@@ -116,3 +116,55 @@ def test_role_admin_cannot_assign_role_to_self(monkeypatch):
         identity_admin.assign_role(
             actor_employee_id=1, employee_id=1, role_id=4, scope_type="OWN"
         )
+
+
+
+class MatrixCursor:
+    def __init__(self):
+        self.results = iter([
+            [{"role_id": 4, "role_name": "Change Manager"}],
+            [{"permission_key": "approvals.create", "description": "Submit approvals", "is_granted": 1}],
+        ])
+        self.statements = []
+
+    def execute(self, statement, params=None):
+        self.statements.append((statement, params))
+
+    def fetchall(self):
+        return next(self.results)
+
+    def close(self):
+        pass
+
+
+class MatrixConnection:
+    def __init__(self):
+        self.fake_cursor = MatrixCursor()
+
+    def cursor(self, dictionary=False):
+        assert dictionary is True
+        return self.fake_cursor
+
+    def close(self):
+        pass
+
+
+def test_list_role_permission_options_returns_role_grants(monkeypatch):
+    connection = MatrixConnection()
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
+
+    result = identity_admin.list_role_permission_options(actor_employee_id=1, role_id=4)
+
+    assert result["selected_role_id"] == 4
+    assert result["roles"][0]["role_name"] == "Change Manager"
+    assert result["permissions"][0]["permission_key"] == "approvals.create"
+    assert result["permissions"][0]["is_granted"] == 1
+
+
+def test_list_role_permission_options_requires_management_permission(monkeypatch):
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: False)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: pytest.fail("database must not be opened"))
+
+    with pytest.raises(identity_admin.IdentityAdministrationError, match="Not authorized"):
+        identity_admin.list_role_permission_options(actor_employee_id=1)
