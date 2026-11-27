@@ -21,7 +21,7 @@ Private, offline-first hospital intranet platform for IT operations across eight
 
 ## Development
 
-See [Local Development Setup](docs/development/SETUP.md), [Production Deployment](docs/development/PRODUCTION_DEPLOYMENT.md), [Frontend Asset Policy](docs/development/FRONTEND_ASSETS.md), and the module architecture notes under [docs/architecture](docs/architecture/).
+See [Local Development Setup](docs/development/SETUP.md), [Production Deployment](docs/development/PRODUCTION_DEPLOYMENT.md), [Frontend Asset Policy](docs/development/FRONTEND_ASSETS.md), [PWA Shell Cache Policy](docs/development/PWA_SHELL_CACHE.md), and the module architecture notes under [docs/architecture](docs/architecture/).
 
 Typical local checks:
 

@@ -65,4 +65,4 @@ flask --app itoms run
 
 MySQL integration tests are run by CI against a disposable MySQL 8.4 database. Never point test fixtures at production data.
 
-The Flask development server is for local development only. See [Production Deployment](PRODUCTION_DEPLOYMENT.md) for the WSGI serving baseline and production safety gates.
+The installable PWA caches only the approved static shell; it does not provide offline access to employee or operational records. See [PWA Shell Cache Policy](PWA_SHELL_CACHE.md). The Flask development server is for local development only. See [Production Deployment](PRODUCTION_DEPLOYMENT.md) for the WSGI serving baseline and production safety gates.
