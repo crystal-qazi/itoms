@@ -983,6 +983,69 @@ def test_incident_department_scope_covers_queue_detail_comments_and_assignment(w
                     body="Unauthorized comment")
 
 
+def test_sqa_high_defect_blocks_completion_until_closed(workflow_fixture):
+    from itoms.services.sqa import (
+        SQAError, add_test_case, complete_test_plan, create_defect,
+        create_test_plan, record_execution, update_defect_status,
+    )
+
+    data = workflow_fixture
+    plan_id = create_test_plan(
+        actor_employee_id=data["requester"],
+        title="High defect readiness gate",
+        scope_description="Verify fixed defects remain unresolved until retest closure.",
+        release_key=None,
+    )
+    case_id = add_test_case(
+        actor_employee_id=data["requester"],
+        plan_id=plan_id,
+        case_key=f"CASE-{data['suffix']}",
+        title="Critical path verification",
+        preconditions="Test environment is available",
+        steps="Run the critical path",
+        expected_result="The operation succeeds",
+    )
+    failed_execution = record_execution(
+        actor_employee_id=data["requester"], plan_id=plan_id, case_id=case_id,
+        result="FAIL", actual_result="The operation failed before the fix.",
+    )
+    defect_id = create_defect(
+        actor_employee_id=data["requester"], plan_id=plan_id,
+        execution_id=failed_execution, title="High severity regression",
+        description="The failed execution identified a high severity issue.",
+        severity="HIGH",
+    )
+    record_execution(
+        actor_employee_id=data["requester"], plan_id=plan_id, case_id=case_id,
+        result="PASS", actual_result="The fix appears to pass; retest defect lifecycle.",
+    )
+    update_defect_status(actor_employee_id=data["requester"], plan_id=plan_id,
+                         defect_id=defect_id, new_status="TRIAGED")
+    update_defect_status(actor_employee_id=data["requester"], plan_id=plan_id,
+                         defect_id=defect_id, new_status="FIXED")
+
+    with pytest.raises(SQAError, match="Unresolved High/Critical defects"):
+        complete_test_plan(actor_employee_id=data["requester"], plan_id=plan_id)
+
+    update_defect_status(actor_employee_id=data["requester"], plan_id=plan_id,
+                         defect_id=defect_id, new_status="RETEST")
+    with pytest.raises(SQAError, match="Unresolved High/Critical defects"):
+        complete_test_plan(actor_employee_id=data["requester"], plan_id=plan_id)
+
+    update_defect_status(actor_employee_id=data["requester"], plan_id=plan_id,
+                         defect_id=defect_id, new_status="CLOSED")
+    complete_test_plan(actor_employee_id=data["requester"], plan_id=plan_id)
+
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM sqa_test_plans WHERE test_plan_id=%s", (plan_id,))
+        assert cur.fetchone() == ("COMPLETED",)
+    finally:
+        cur.close()
+        conn.close()
+
+
 def test_incident_first_response_sla_records_first_public_staff_reply(workflow_fixture):
     from itoms.services.incidents import add_comment, create_incident
 
