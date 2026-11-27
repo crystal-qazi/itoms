@@ -41,5 +41,5 @@ def status(change_id:int):
         approvers=[int(value) for value in request.form.getlist("approver_employee_ids") if value.strip()]
         transition_change(actor_employee_id=g.employee_id,change_id=change_id,new_status=request.form.get("status","").strip().upper(),details=request.form.get("details","").strip() or None,approver_employee_ids=approvers)
         flash("Change status updated.","success")
-    except ChangeError as exc: flash(str(exc),"danger")
+    except (ChangeError,ValueError,TypeError) as exc: flash(str(exc) or "Invalid change update.","danger")
     return redirect(url_for("changes.detail",change_id=change_id))

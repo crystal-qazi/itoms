@@ -72,6 +72,8 @@ def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,detai
             raise ChangeError("Select 1–10 distinct approvers other than yourself before submitting.")
         if not has_permission(actor_employee_id,"approvals.create"):
             raise ChangeError("You are not authorized to submit an approval workflow.")
+        if details is not None and len(details)>4000:
+            raise ChangeError("Approval reason is too long (maximum 4000 characters).")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try: cur.execute("SELECT change_id,requested_by,status FROM change_records WHERE change_id=%s",(change_id,)); snapshot=cur.fetchone()
     finally: cur.close(); conn.close()
@@ -110,6 +112,23 @@ def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,detai
             approval=cur.fetchone()
             if not approval or approval[0]!="APPROVED":
                 raise ChangeError("Scheduling is blocked until the linked change approval is fully approved.")
+        if new_status=="CANCELLED":
+            cur.execute("""SELECT approval_request_id,status FROM approval_requests
+                WHERE resource_type='change' AND resource_id=%s
+                ORDER BY created_at DESC,approval_request_id DESC LIMIT 1 FOR UPDATE""",(str(change_id),))
+            linked_approval=cur.fetchone()
+            if linked_approval and linked_approval[1]=="PENDING":
+                approval_id=linked_approval[0]
+                cur.execute("UPDATE approval_requests SET status='CANCELLED',completed_at=UTC_TIMESTAMP() WHERE approval_request_id=%s",(approval_id,))
+                cur.execute("""UPDATE approval_steps SET decision='SKIPPED'
+                    WHERE approval_request_id=%s AND decision='PENDING'""",(approval_id,))
+                cur.execute("""INSERT INTO approval_history
+                    (approval_request_id,actor_employee_id,action_key,comment)
+                    VALUES (%s,%s,'CANCELLED',%s)""",(approval_id,actor_employee_id,details))
+                cur.execute("""INSERT INTO audit_events
+                    (actor_employee_id,event_key,target_type,target_id,outcome)
+                    VALUES (%s,'APPROVAL_CANCELLED','approval',%s,'SUCCESS')""",
+                    (actor_employee_id,str(approval_id)))
         cur.execute("UPDATE change_records SET status=%s,implementation_result=CASE WHEN %s IN ('IMPLEMENTED','FAILED') THEN %s ELSE implementation_result END WHERE change_id=%s",(new_status,new_status,details,change_id))
         cur.execute("INSERT INTO change_activity (change_id,actor_employee_id,action_key,details) VALUES (%s,%s,%s,%s)",(change_id,actor_employee_id,"STATUS_"+new_status,details))
         cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'CHANGE_STATUS_CHANGED','change',%s,'SUCCESS')",(actor_employee_id,str(change_id)))
