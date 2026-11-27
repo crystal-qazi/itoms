@@ -95,3 +95,79 @@ Use two independent connections and deterministic barriers/events; do not rely o
 ## Current decision
 
 **No broad authorization refactor is included in this change.** The existing independent-connection behavior remains until the lock-order protocol and MySQL race tests prove the replacement. This avoids claiming revocation consistency that the current code does not guarantee and avoids introducing an untested deadlock or privilege regression.
+
+
+## Repository audit — 2026-11-27
+
+The following inventory was verified from the current feature branch source and migrations.
+
+### Authorization schema and available indexes
+
+- `employee_role_assignments`: surrogate primary key `assignment_id`; foreign keys to employee, role and assigner. MySQL creates supporting FK indexes where required, but there is no explicit composite index for the common active-assignment lookup (`employee_id, is_active, expires_at, role_id`).
+- `role_permissions`: composite primary key `(role_id, permission_id)`, suitable for role-first grant lookup and deletion.
+- `employee_team_memberships`: composite primary key `(employee_id, team_id)`, suitable for exact employee/team membership lookup and locking.
+- `team_management_assignments`: composite primary key `(manager_employee_id, team_id)`, suitable for exact manager/team lookup and locking.
+- `application_roles`, `employees`, and `teams`: primary keys support exact-row locking.
+- `permissions.permission_key` is unique.
+- The migrations do not declare an explicit transaction isolation override. The connection factory sets `autocommit=False`; effective isolation should be confirmed from the live MySQL 8.4 session before relying on any isolation-specific behavior.
+
+Do not add indexes solely by intuition. Capture `EXPLAIN` plans for the proposed locking queries against representative data first; then add a migration only if the query plan warrants it.
+
+### Existing authorization-state writers
+
+| Writer | Current behavior | Consistency gap / required treatment |
+|---|---|---|
+| `identity_admin.assign_role` | Reads target employee/team scope, checks actor permission on a separate connection, locks the role row, inserts assignment and audit | Target employee and team/membership reads are not locked as one protocol; actor authorization is outside the write transaction |
+| `identity_admin.grant_role_permission` | Checks actor permission separately, locks role row, validates role's department assignments, inserts role-permission row and audit | Actor authorization is outside transaction; role-first lock must be part of documented order |
+| `identity_admin.revoke_role_permission` | Same pattern; deletes role-permission row while role row is locked | This is the currently implemented permission-revocation writer |
+| `directory.assign_employee_to_team` | Locks employee, then team; updates/inserts membership and commits | Existing order is employee → team → membership; preserve or deliberately migrate it |
+| `directory.remove_employee_from_team` | Locks membership row, refuses removal of primary membership, deletes non-primary membership | Does not currently lock employee/team first; align before introducing a competing order |
+| `bootstrap.bootstrap_admin` | Creates initial role, role-permission rows, employee assignment and audit in a one-time bootstrap transaction | Bootstrap-only path; ensure it cannot run after initialization and document its exception to runtime locking |
+| `create_employee_account` | Creates employee/account and optional primary membership after an external permission check | The new employee is not yet a concurrent authorization subject, but actor/team/department validation should eventually share the transaction |
+
+No runtime writer for role deactivation, employee deactivation/department transfer, team deactivation/department transfer, role-assignment revocation, or manager-team assignment changes was found in the current service/web modules. `team_management_assignments` is created by migration and read by authorization/role-scope code, but no management-assignment administration service exists yet. Treat these as future writer requirements, not as currently implemented endpoints.
+
+The directory service currently has no authorization check in the service functions themselves. Its caller boundary must be reviewed before it is exposed through an administrative UI or API; transaction consistency does not replace authorization.
+
+### Mutating service call-site observations
+
+- SQA plan/case/execution/defect operations often lock the plan or defect row and then call the connection-owning `has_permission`. Release sign-off locks the release and then performs separate-connection permission checks.
+- Engineering task status changes and service lifecycle updates load a snapshot, perform an external permission check, lock the resource, then repeat the external permission check.
+- Incident status and assignment changes use snapshot/check/lock/recheck patterns, but both checks use independent authorization connections.
+- Change and release transitions similarly perform authorization outside the resource transaction before and after row locking.
+- Identity account creation and role assignment perform authorization checks outside their mutation transaction.
+- Read/list paths also make many separate permission calls. These should remain separate from the first mutation-focused rollout unless their consistency requirements are explicitly elevated.
+
+The current source therefore has a broad call-site migration surface. A helper alone will not close the race; each protected mutation must adopt the same transaction and lock order.
+
+### Candidate lock-order protocol for validation
+
+The source audit suggests the following candidate order, subject to proof with MySQL concurrency tests and review of all future writers:
+
+1. Lock the acting employee row (current active state and department).
+2. Lock applicable application-role rows in ascending `role_id`.
+3. Lock the actor's active employee-role assignment rows in ascending `assignment_id`.
+4. Lock the applicable role-permission rows in ascending `(role_id, permission_id)`.
+5. For TEAM scope, lock the exact active team row, then exact employee-team membership row.
+6. For MANAGED_TEAMS scope, lock the exact active team row and exact manager-team assignment row (the final order between team and manager-assignment rows must be made identical in every writer).
+7. Lock the protected resource row(s), then verify its trusted ownership/team/department snapshot has not changed.
+8. Apply the mutation and write its audit event in the same transaction.
+
+**Important:** this is a candidate, not an approved protocol. It requires writer changes:
+- Make role assignment administration lock the target employee before role and assignment writes.
+- Make membership writers use the same employee → team → membership order; removal currently starts at membership and must be changed before rollout.
+- Define a single team/manager-assignment order before any manager assignment CRUD is introduced.
+- Ensure role permission grant/revoke and role deactivation follow role-first locking and cannot acquire employee/assignment locks in a reverse order.
+- Ensure every protected service obtains authorization locks before resource locks, then validates the resource snapshot after acquiring its resource lock.
+- Avoid locking every role in a broad joined query; first discover candidate role IDs, then acquire exact rows in deterministic sorted order and revalidate assignments/current grants with locking reads. The implementation must handle a concurrently added assignment safely, likely by serializing authorization changes on the actor employee row and requiring assignment writers to lock that same employee row first.
+
+If a service must lock a resource first for a proven domain invariant (for example, an existing linked-record lock protocol), do not force it into this order in isolation. Reconcile the entire multi-resource workflow's lock graph before changing it.
+
+### Implementation gate
+
+Before coding the transaction-bound evaluator:
+1. Add deterministic concurrency tests for the existing role-permission revoke path and directory membership removal/assignment.
+2. Refactor the authorization-state writers to the agreed order and test them independently.
+3. Confirm isolation level and query plans on MySQL 8.4.
+4. Implement the evaluator and migrate one simple mutation service first.
+5. Only then migrate the remaining services in small batches.
