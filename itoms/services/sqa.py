@@ -48,18 +48,32 @@ def _require_plan_permission(actor_employee_id: int, permission: str, plan):
 
 
 def list_test_plans(*, actor_employee_id: int):
-    conn=get_connection(); cur=conn.cursor(dictionary=True)
-    try:
-        cur.execute("""SELECT p.test_plan_id,p.plan_key,p.release_key,p.title,p.status,p.created_by,
-            p.created_at,e.department_id,m.team_id
-            FROM sqa_test_plans p JOIN employees e ON e.employee_id=p.created_by
-            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
-            ORDER BY p.created_at DESC LIMIT 200""")
-        rows=cur.fetchall()
-    finally:
-        cur.close(); conn.close()
-    return [row for row in rows if has_permission(actor_employee_id,"sqa.plan.read",_plan_context(row))]
-
+    """Return every plan visible to the actor, filtering in bounded batches."""
+    visible = []
+    batch_size = 200
+    offset = 0
+    while True:
+        conn = get_connection()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute("""SELECT p.test_plan_id,p.plan_key,p.release_key,p.title,p.status,p.created_by,
+                p.created_at,e.department_id,m.team_id
+                FROM sqa_test_plans p JOIN employees e ON e.employee_id=p.created_by
+                LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+                ORDER BY p.created_at DESC,p.test_plan_id DESC LIMIT %s OFFSET %s""",
+                (batch_size, offset))
+            rows = cur.fetchall()
+        finally:
+            cur.close()
+            conn.close()
+        if not rows:
+            break
+        visible.extend(row for row in rows
+            if has_permission(actor_employee_id,"sqa.plan.read",_plan_context(row)))
+        offset += len(rows)
+        if len(rows) < batch_size:
+            break
+    return visible
 
 def get_test_plan(*, actor_employee_id: int, plan_id: int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
@@ -263,13 +277,18 @@ def record_release_signoff(*, actor_employee_id: int, release_key: str, decision
         raise SQAError("A release and valid sign-off decision are required.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
+        # Lock release first, matching the release lifecycle's locking order.
         cur.execute("""SELECT r.release_id,r.created_by,r.status,e.department_id,s.owner_team_id
             FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
             LEFT JOIN service_records s ON s.service_id=r.service_id
-            WHERE r.release_key=%s""",(release_key,))
+            WHERE r.release_key=%s FOR UPDATE""",(release_key,))
         release=cur.fetchone()
         if not release:
             raise SQAError("Release record not found.")
+        cur.execute("SELECT is_active FROM employees WHERE employee_id=%s",(actor_employee_id,))
+        actor=cur.fetchone()
+        if not actor or not actor["is_active"]:
+            raise SQAError("An active employee account is required for SQA sign-off.")
         if release["status"] not in {"IN_TEST", "READY", "APPROVED"}:
             raise SQAError("SQA sign-off is closed for this release lifecycle stage.")
         release_context=ResourceContext(owner_employee_id=release["created_by"],
@@ -298,7 +317,6 @@ def record_release_signoff(*, actor_employee_id: int, release_key: str, decision
         conn.rollback(); raise
     finally:
         cur.close(); conn.close()
-
 
 def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
