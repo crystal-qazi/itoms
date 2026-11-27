@@ -51,7 +51,7 @@ def get_change(*,actor_employee_id:int,change_id:int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT c.*,e.full_name AS requester_name,o.full_name AS owner_name,
-            e.department_id,COALESCE(ot.team_id,rt.team_id) AS team_id
+            e.department_id,COALESCE(ot_team.team_id,rt_team.team_id) AS team_id
             FROM change_records c JOIN employees e ON e.employee_id=c.requested_by
             LEFT JOIN employees o ON o.employee_id=c.owner_employee_id
             LEFT JOIN employee_team_memberships rt
