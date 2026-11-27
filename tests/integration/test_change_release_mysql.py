@@ -76,6 +76,7 @@ def workflow_fixture():
             "release.create", "release.read", "release.update",
             "approvals.create", "sqa.signoff.create",
             "service.inventory.read", "service.inventory.create", "service.inventory.update",
+            "engineering.tasks.read", "engineering.tasks.create", "engineering.tasks.update",
         )
         for permission_key in permissions:
             cur.execute(
@@ -226,6 +227,13 @@ def workflow_fixture():
             cur.execute(f"DELETE FROM change_activity WHERE change_id IN ({marks})", change_ids)
             cur.execute(f"DELETE FROM change_records WHERE change_id IN ({marks})", change_ids)
 
+        cur.execute("SELECT task_id FROM engineering_tasks WHERE created_by=%s", (requester,))
+        task_ids = [int(row[0]) for row in cur.fetchall()]
+        if task_ids:
+            task_marks = ",".join(["%s"] * len(task_ids))
+            cur.execute(f"DELETE FROM engineering_task_activity WHERE task_id IN ({task_marks})", task_ids)
+            cur.execute(f"DELETE FROM engineering_tasks WHERE task_id IN ({task_marks})", task_ids)
+
         ids = (requester, approver_one, approver_two, outsider)
         marks = ",".join(["%s"] * len(ids))
         cur.execute(
@@ -239,8 +247,8 @@ def workflow_fixture():
         cur.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
         cur.execute("DELETE FROM teams WHERE team_id IN (%s,%s)", (team_a, team_b))
         cur.execute(
-            "DELETE FROM teams WHERE department_id=%s AND team_name=%s",
-            (other_department_id, f"Other Service Team {suffix}"),
+            "DELETE FROM teams WHERE department_id=%s AND team_name LIKE %s",
+            (other_department_id, f"Other % {suffix}"),
         )
         cur.execute("DELETE FROM application_roles WHERE role_id=%s", (role_id,))
         cur.execute(f"DELETE FROM employees WHERE employee_id IN ({marks})", ids)
@@ -906,3 +914,47 @@ def test_service_inventory_lifecycle_update_rechecks_scope(workflow_fixture):
     finally:
         cur.close()
         conn.close()
+
+
+
+def test_engineering_tasks_enforce_department_and_team_scope(workflow_fixture):
+    from itoms.services.engineering_tasks import (
+        TaskError, change_task_status, create_task, get_task_detail,
+        list_accessible_task_teams, list_task_assignees, list_tasks,
+    )
+
+    data = workflow_fixture
+    task_id = create_task(
+        actor_employee_id=data["requester"],
+        team_id=data["team_a"],
+        title="Scoped engineering integration task",
+        description="Verify department and team access controls.",
+        assigned_to=data["approver_one"],
+    )
+
+    requester_tasks = {row["task_id"] for row in list_tasks(actor_employee_id=data["requester"])}
+    assert task_id in requester_tasks
+    assert get_task_detail(actor_employee_id=data["requester"], task_id=task_id)["task_id"] == task_id
+
+    team_reader_tasks = {row["task_id"] for row in list_tasks(actor_employee_id=data["approver_one"])}
+    assert task_id in team_reader_tasks
+    assert [row["team_id"] for row in list_accessible_task_teams(
+        actor_employee_id=data["approver_one"])] == [data["team_a"]]
+    assert any(row["employee_id"] == data["approver_one"]
+               for row in list_task_assignees(actor_employee_id=data["approver_one"]))
+
+    with pytest.raises(TaskError, match="not found"):
+        get_task_detail(actor_employee_id=data["outsider"], task_id=task_id)
+    with pytest.raises(TaskError, match="Not authorized"):
+        create_task(
+            actor_employee_id=data["outsider"],
+            team_id=data["team_a"],
+            title="Unauthorized cross-department task",
+        )
+
+    change_task_status(
+        actor_employee_id=data["approver_one"],
+        task_id=task_id,
+        new_status="READY",
+    )
+    assert get_task_detail(actor_employee_id=data["approver_one"], task_id=task_id)["status"] == "READY"
