@@ -62,7 +62,7 @@ def _assert_sqa_release_gate(cur, release_key: str):
         JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
         JOIN sqa_test_plans p ON p.test_plan_id=c.test_plan_id
         WHERE p.release_key=%s AND d.severity IN ('HIGH','CRITICAL')
-          AND d.status NOT IN ('FIXED','CLOSED','REJECTED')""",(release_key,))
+          AND d.status NOT IN ('CLOSED','REJECTED')""",(release_key,))
     if cur.fetchone()[0]:
         raise ReleaseError("SQA gate: unresolved High/Critical defects block release approval.")
 
