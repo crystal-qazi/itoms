@@ -8,7 +8,7 @@ ITOMS SQA is a manual evidence workflow. It provides test plans, test cases, exe
 2. Add test cases with preconditions, steps and expected results.
 3. Record PASS, FAIL, BLOCKED or RETEST executions. Each execution is retained as evidence; the latest execution determines the case's current result.
 4. Record defects against failed executions with LOW, MEDIUM, HIGH or CRITICAL severity. Defect lifecycle transitions are OPEN → TRIAGED → FIXED → RETEST → CLOSED; defects may be rejected at the OPEN or TRIAGED stage, and a failed retest may reopen a defect.
-5. Complete a plan only when it contains at least one case, every case's latest result is PASS, and no unresolved HIGH/CRITICAL defect remains.
+5. Complete a plan only when it contains at least one case, every case's latest result is PASS, and no unresolved HIGH/CRITICAL defect remains. For readiness, only CLOSED and REJECTED defects are resolved; FIXED remains open until retest is completed and the defect is closed.
 6. Record a release SQA sign-off. APPROVED sign-off requires at least one linked completed plan meeting the readiness checks.
 
 ## Enforced release gate
