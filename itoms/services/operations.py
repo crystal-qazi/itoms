@@ -273,8 +273,10 @@ def create_oracle_database(
         raise OperationsError("Environment name is required (maximum 80 characters).")
     if not database or len(database) > 128:
         raise OperationsError("Database name is required (maximum 128 characters).")
-    if not host or len(host) > 255 or re.search(r"(?i)(password|passwd|token|secret|://[^/\s]+:[^/@\s]+@)", host):
-        raise OperationsError("Host reference is invalid; credentials and secrets must never be stored here.")
+    secret_pattern = re.compile(r"(?i)(password\s*=|passwd\s*=|token\s*=|secret\s*=|://[^/\s]+:[^/@\s]+@)")
+    if (not host or len(host) > 255
+            or any(secret_pattern.search(value) for value in (host, detail, environment, database, version))):
+        raise OperationsError("Oracle inventory fields cannot contain credentials, tokens or secrets.")
     if len(version) > 80 or len(detail) > 10000:
         raise OperationsError("Version or notes exceed the allowed length.")
     if criticality not in PRIORITIES:

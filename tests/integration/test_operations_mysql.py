@@ -93,7 +93,7 @@ def operations_fixture():
     try:
         cursor.execute("DELETE FROM oracle_database_inventory WHERE service_id=%s", (service_id,))
         cursor.execute("DELETE FROM service_records WHERE service_id=%s", (service_id,))
-        cursor.execute("DELETE FROM operational_work_items WHERE work_number LIKE %s", (f"OPS-%-{suffix[:0]}%",))
+        cursor.execute("DELETE FROM operational_work_items WHERE created_by=%s", (employee_id,))
         cursor.execute("DELETE FROM audit_events WHERE actor_employee_id=%s", (employee_id,))
         cursor.execute("DELETE FROM employee_role_assignments WHERE employee_id=%s", (employee_id,))
         cursor.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
