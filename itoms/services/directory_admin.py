@@ -293,6 +293,7 @@ def deactivate_employee(*, actor_employee_id: int, employee_id: int) -> bool:
             (employee_id,),
         )
         account = cur.fetchone()
+        sessions_revoked = 0
         if account:
             account_id = int(account[0])
             cur.execute(
@@ -308,6 +309,7 @@ def deactivate_employee(*, actor_employee_id: int, employee_id: int) -> bool:
                    WHERE account_id=%s AND revoked_at IS NULL""",
                 (account_id,),
             )
+            sessions_revoked = int(cur.rowcount)
             cur.execute("DELETE FROM account_recovery_codes WHERE account_id=%s", (account_id,))
         cur.execute(
             "UPDATE employees SET is_active=FALSE WHERE employee_id=%s",
@@ -319,8 +321,7 @@ def deactivate_employee(*, actor_employee_id: int, employee_id: int) -> bool:
                VALUES (%s,'IDENTITY_EMPLOYEE_DEACTIVATED','employee',%s,'SUCCESS',
                        JSON_OBJECT('account_disabled',%s,'sessions_revoked',%s))""",
             (
-                actor_employee_id, str(employee_id), bool(account),
-                int(cur.rowcount) if account else 0,
+                actor_employee_id, str(employee_id), bool(account), sessions_revoked,
             ),
         )
         conn.commit()

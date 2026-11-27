@@ -145,6 +145,8 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
     assign_team_membership(
         actor_employee_id=actor_id, employee_id=member_id, team_id=team_id,
     )
+    with pytest.raises(DirectoryAdministrationError, match="Remove team memberships"):
+        deactivate_employee(actor_employee_id=actor_id, employee_id=member_id)
     assert assign_team_manager(
         actor_employee_id=actor_id, manager_employee_id=manager_id, team_id=team_id,
     ) is True
