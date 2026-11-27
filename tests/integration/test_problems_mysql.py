@@ -90,8 +90,7 @@ def problem_fixture():
     cleanup = get_connection()
     cursor = cleanup.cursor()
     try:
-        cursor.execute("SELECT problem_id FROM problem_records WHERE problem_key LIKE %s", ("PRB-%",))
-        # Scope cleanup by the test employee, not a broad problem-key pattern.
+        # Scope cleanup by the test employee only.
         cursor.execute("SELECT problem_id FROM problem_records WHERE created_by=%s", (employee_id,))
         problem_ids = [int(row[0]) for row in cursor.fetchall()]
         for problem_id in problem_ids:
