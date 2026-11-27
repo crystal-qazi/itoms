@@ -658,7 +658,8 @@ def list_document_shares(*, employee_id: int) -> list[dict]:
         cur.execute(
             """SELECT s.share_id,s.file_id,f.original_filename,
                       s.shared_with_employee_id,e.full_name AS recipient_name,
-                      s.permission,s.expires_at,s.revoked_at
+                      s.permission,s.expires_at,s.revoked_at,
+                      (s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP()) AS is_active
                FROM managed_file_shares s
                JOIN managed_files f ON f.file_id=s.file_id
                JOIN employees e ON e.employee_id=s.shared_with_employee_id

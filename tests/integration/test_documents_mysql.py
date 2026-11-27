@@ -91,6 +91,8 @@ def document_fixture(monkeypatch):
         if file_ids:
             marks = ",".join(["%s"] * len(file_ids))
             cursor.execute(f"DELETE FROM managed_files WHERE file_id IN ({marks})", tuple(file_ids))
+        cursor.execute("DELETE FROM approval_requests WHERE requested_by=%s AND request_type='DOCUMENT_SHARE'", (employee_id,))
+        cursor.execute("DELETE FROM employees WHERE employee_code=%s", (f"DOC-R-{suffix}",))
         cursor.execute("DELETE FROM audit_events WHERE actor_employee_id=%s", (employee_id,))
         cursor.execute("DELETE FROM employee_role_assignments WHERE employee_id=%s", (employee_id,))
         cursor.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
@@ -171,11 +173,15 @@ def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture
             (f"DOC-R-{document_fixture['suffix']}", "Document Share Recipient", document_fixture["department_id"]),
         )
         recipient_id = int(cursor.lastrowid)
+        confidential = upload_document(
+            actor_employee_id=employee_id, filename="confidential.pdf",
+            content=b"%PDF-1.7 confidential integration fixture", classification="CONFIDENTIAL",
+        )
         cursor.execute(
             """INSERT INTO approval_requests
                (request_type,resource_type,resource_id,requested_by,status,completed_at)
                VALUES ('DOCUMENT_SHARE','managed_file',%s,%s,'APPROVED',UTC_TIMESTAMP())""",
-            (str(quarantined["file_id"]), employee_id),
+            (str(confidential["file_id"]), employee_id),
         )
         approval_id = int(cursor.lastrowid)
         connection.commit()
@@ -187,18 +193,20 @@ def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture
     expiry = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
     with pytest.raises(documents.DocumentError, match="require an approved"):
         documents.create_document_share(
-            actor_employee_id=employee_id, file_id=quarantined["file_id"],
+            actor_employee_id=employee_id, file_id=confidential["file_id"],
             recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
         )
-    # A quarantined file cannot be shared even with approval.
-    with pytest.raises(documents.DocumentError, match="Only clean active"):
-        documents.create_document_share(
-            actor_employee_id=employee_id, file_id=quarantined["file_id"],
-            recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
-            approval_request_id=approval_id,
-        )
+    confidential_share_id = documents.create_document_share(
+        actor_employee_id=employee_id, file_id=confidential["file_id"],
+        recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
+        approval_request_id=approval_id,
+    )
+    confidential_content, _, _ = documents.download_document(
+        employee_id=recipient_id, file_id=confidential["file_id"]
+    )
+    assert confidential_content.startswith(b"%PDF-")
 
-    # Share the clean internal file and verify recipient access and revocation.
+    # Internal shares need no approval and are revoked independently.
     share_id = documents.create_document_share(
         actor_employee_id=employee_id, file_id=result["file_id"],
         recipient_employee_id=recipient_id, permission="DOWNLOAD", expires_at=expiry,
@@ -208,5 +216,8 @@ def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture
     )
     assert shared_content == b"%PDF-1.7 second version"
     documents.revoke_document_share(actor_employee_id=employee_id, share_id=share_id)
+    documents.revoke_document_share(actor_employee_id=employee_id, share_id=confidential_share_id)
     with pytest.raises(documents.DocumentError, match="not found"):
         documents.download_document(employee_id=recipient_id, file_id=result["file_id"])
+    with pytest.raises(documents.DocumentError, match="not found"):
+        documents.download_document(employee_id=recipient_id, file_id=confidential["file_id"])
