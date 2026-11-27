@@ -92,8 +92,9 @@ class CancelConn:
 
 def test_cancelling_change_approval_returns_change_to_draft(monkeypatch):
     first = CancelConn([(10, "PENDING", "CHANGE", "change", "25")])
+    active_check = CancelConn([(1,)])
     second = CancelConn([("SUBMITTED",), (10, "PENDING", "CHANGE", "change", "25")])
-    connections = iter([first, second])
+    connections = iter([first, active_check, second])
     monkeypatch.setattr(approvals, "get_connection", lambda: next(connections))
     monkeypatch.setattr(approvals, "has_permission", lambda *_: True)
 

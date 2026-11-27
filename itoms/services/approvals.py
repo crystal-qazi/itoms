@@ -8,14 +8,7 @@ class ApprovalError(ValueError):
 
 def create_approval(*, actor_employee_id: int, request_type: str, resource_type: str,
                     resource_id: str, approver_employee_ids: list[int], reason: str | None=None) -> int:
-    actor_conn=get_connection(); actor_cur=actor_conn.cursor()
-    try:
-        actor_cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
-            (actor_employee_id,))
-        actor_active=actor_cur.fetchone()
-    finally:
-        actor_cur.close(); actor_conn.close()
-    if not actor_active or not has_permission(actor_employee_id,"approvals.create"):
+    if not has_permission(actor_employee_id,"approvals.create"):
         raise ApprovalError("Not authorized to create approvals.")
     approvers=list(dict.fromkeys(int(x) for x in approver_employee_ids))
     if not approvers or len(approvers)>10 or actor_employee_id in approvers:
@@ -24,8 +17,14 @@ def create_approval(*, actor_employee_id: int, request_type: str, resource_type:
         raise ApprovalError("Request and resource identifiers are required and must fit their limits.")
     if reason is not None and len(reason)>4000:
         raise ApprovalError("Approval reason is too long (maximum 4000 characters).")
+    if not has_permission(actor_employee_id,"approvals.create"):
+        raise ApprovalError("Not authorized to create approvals.")
     conn=get_connection(); cur=conn.cursor()
     try:
+        cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
+            (actor_employee_id,))
+        if not cur.fetchone():
+            raise ApprovalError("Not authorized to create approvals.")
         for approver in approvers:
             cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(approver,))
             if not cur.fetchone(): raise ApprovalError("An approver is inactive or unavailable.")
@@ -134,6 +133,8 @@ def cancel_approval(*, actor_employee_id: int, request_id: int) -> None:
         cur.close(); conn.close()
     if not snapshot or snapshot[1]!="PENDING":
         raise ApprovalError("Approval is not pending.")
+    if snapshot[0]!=actor_employee_id and not has_permission(actor_employee_id,"approvals.cancel"):
+        raise ApprovalError("Not authorized to cancel this approval.")
     actor_conn=get_connection(); actor_cur=actor_conn.cursor()
     try:
         actor_cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
@@ -142,8 +143,6 @@ def cancel_approval(*, actor_employee_id: int, request_id: int) -> None:
     finally:
         actor_cur.close(); actor_conn.close()
     if not actor_active:
-        raise ApprovalError("Not authorized to cancel this approval.")
-    if snapshot[0]!=actor_employee_id and not has_permission(actor_employee_id,"approvals.cancel"):
         raise ApprovalError("Not authorized to cancel this approval.")
     conn=get_connection(); cur=conn.cursor()
     try:

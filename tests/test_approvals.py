@@ -8,7 +8,7 @@ class FakeCursor:
     def __init__(self):
         self.lastrowid = 42
         self.statements = []
-        self.rows = iter([(1,), (1,)])
+        self.rows = iter([(1,), (1,), (1,)])
 
     def execute(self, statement, params=None):
         self.statements.append((statement, params))
