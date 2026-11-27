@@ -199,6 +199,32 @@ def update_work_status(*, actor_employee_id: int, work_item_id: int, new_status:
         conn.close()
 
 
+def list_manageable_services(*, actor_employee_id: int) -> list[dict]:
+    """Return services for which the actor has explicit Oracle inventory management scope."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT s.service_id,s.service_key,s.service_name,s.owner_team_id,t.department_id
+               FROM service_records s
+               JOIN teams t ON t.team_id=s.owner_team_id
+               JOIN departments d ON d.department_id=t.department_id
+               WHERE t.is_active=TRUE AND d.is_active=TRUE
+               ORDER BY s.service_name"""
+        )
+        rows = cur.fetchall()
+        return [row for row in rows if has_permission(
+            actor_employee_id, "oracle.inventory.manage",
+            ResourceContext(
+                team_id=row["owner_team_id"], department_id=row["department_id"],
+                resource_type="service", resource_id=str(row["service_id"]),
+            )
+        )]
+    finally:
+        cur.close()
+        conn.close()
+
+
 def list_oracle_databases(*, actor_employee_id: int) -> list[dict]:
     conn = get_connection()
     cur = conn.cursor(dictionary=True)

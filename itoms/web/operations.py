@@ -7,7 +7,7 @@ from flask import Blueprint, flash, g, redirect, render_template, request, sessi
 from itoms.security.decorators import login_required
 from itoms.services.operations import (
     DOMAINS, ORACLE_LIFECYCLE, PRIORITIES, WORK_STATUSES, OperationsError,
-    create_operational_work_item, create_oracle_database, list_operation_teams,
+    create_operational_work_item, create_oracle_database, list_manageable_services, list_operation_teams,
     list_operational_work_items, list_oracle_databases, update_oracle_lifecycle,
     update_work_status,
 )
@@ -34,9 +34,11 @@ def index():
         return "Invalid operations filter.", 400
     teams = list_operation_teams(actor_employee_id=g.employee_id)
     oracle_rows = list_oracle_databases(actor_employee_id=g.employee_id)
+    oracle_services = list_manageable_services(actor_employee_id=g.employee_id)
     return render_template(
         "operations/index.html", work_items=work_items, teams=teams,
-        oracle_rows=oracle_rows, domains=sorted(DOMAINS), priorities=sorted(PRIORITIES),
+        oracle_rows=oracle_rows, oracle_services=oracle_services,
+        domains=sorted(DOMAINS), priorities=sorted(PRIORITIES),
         work_statuses=sorted(WORK_STATUSES), oracle_lifecycle=sorted(ORACLE_LIFECYCLE),
         selected_domain=domain or "", selected_status=status or "",
         csrf_token_value=session.get("csrf_token", ""),

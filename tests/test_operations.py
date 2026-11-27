@@ -36,3 +36,12 @@ def test_work_status_validation_precedes_database(monkeypatch):
     monkeypatch.setattr(operations, "get_connection", lambda: pytest.fail("database should not be opened"))
     with pytest.raises(operations.OperationsError, match="Invalid operations work status"):
         operations.update_work_status(actor_employee_id=1, work_item_id=1, new_status="APPROVED")
+
+def test_oracle_notes_also_reject_secret_assignments(monkeypatch):
+    monkeypatch.setattr(operations, "get_connection", lambda: pytest.fail("database should not be opened"))
+    with pytest.raises(operations.OperationsError, match="cannot contain credentials"):
+        operations.create_oracle_database(
+            actor_employee_id=1, service_id=1, environment_name="PROD",
+            database_name="HIS", host_reference="db01.internal",
+            notes="password=supersecret",
+        )
