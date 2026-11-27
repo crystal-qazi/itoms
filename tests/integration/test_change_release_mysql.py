@@ -91,6 +91,36 @@ def workflow_fixture():
                VALUES (%s,%s,'DEPARTMENT',TRUE)""",
             (requester, role_id),
         )
+        cur.execute(
+            "INSERT INTO teams (department_id,team_name,is_active) VALUES (%s,%s,TRUE)",
+            (department_id, f"Workflow Team A {suffix}"),
+        )
+        team_a = int(cur.lastrowid)
+        cur.execute(
+            "INSERT INTO teams (department_id,team_name,is_active) VALUES (%s,%s,TRUE)",
+            (department_id, f"Workflow Team B {suffix}"),
+        )
+        team_b = int(cur.lastrowid)
+        cur.execute(
+            "INSERT INTO employee_team_memberships (employee_id,team_id,is_primary) VALUES (%s,%s,TRUE)",
+            (approver_one, team_a),
+        )
+        cur.execute(
+            """INSERT INTO employee_role_assignments
+               (employee_id,role_id,scope_type,is_active)
+               VALUES (%s,%s,'TEAM',TRUE)""",
+            (approver_one, role_id),
+        )
+        cur.execute(
+            "INSERT INTO team_management_assignments (manager_employee_id,team_id) VALUES (%s,%s)",
+            (approver_two, team_a),
+        )
+        cur.execute(
+            """INSERT INTO employee_role_assignments
+               (employee_id,role_id,scope_type,is_active)
+               VALUES (%s,%s,'MANAGED_TEAMS',TRUE)""",
+            (approver_two, role_id),
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -109,6 +139,8 @@ def workflow_fixture():
         "approver_two": approver_two,
         "outsider": outsider,
         "role_id": role_id,
+        "team_a": team_a,
+        "team_b": team_b,
     }
     yield data
 
@@ -197,8 +229,11 @@ def workflow_fixture():
             f"DELETE FROM audit_events WHERE actor_employee_id IN ({marks})",
             ids,
         )
-        cur.execute("DELETE FROM employee_role_assignments WHERE employee_id=%s", (requester,))
+        cur.execute(f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})", ids)
+        cur.execute(f"DELETE FROM employee_team_memberships WHERE employee_id IN ({marks})", ids)
+        cur.execute(f"DELETE FROM team_management_assignments WHERE manager_employee_id IN ({marks})", ids)
         cur.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
+        cur.execute("DELETE FROM teams WHERE team_id IN (%s,%s)", (team_a, team_b))
         cur.execute("DELETE FROM application_roles WHERE role_id=%s", (role_id,))
         cur.execute(f"DELETE FROM employees WHERE employee_id IN ({marks})", ids)
         cur.execute(
@@ -465,3 +500,36 @@ def test_release_requires_approval_and_sqa_and_rechecks_before_deployment(workfl
 
     with pytest.raises(ReleaseError, match="latest PASS"):
         transition_release(actor_employee_id=data["requester"], release_id=release_id, new_status="DEPLOYING")
+
+
+def test_team_scope_requires_active_membership_in_target_team(workflow_fixture):
+    from itoms.services.authorization import ResourceContext, has_permission
+
+    data = workflow_fixture
+    assert has_permission(
+        data["approver_one"], "change.read",
+        ResourceContext(team_id=data["team_a"], department_id=data["department_id"]),
+    ) is True
+    assert has_permission(
+        data["approver_one"], "change.read",
+        ResourceContext(team_id=data["team_b"], department_id=data["department_id"]),
+    ) is False
+
+
+def test_managed_team_scope_requires_active_managed_team(workflow_fixture):
+    from itoms.services.authorization import ResourceContext, has_permission
+
+    data = workflow_fixture
+    context = ResourceContext(team_id=data["team_a"], department_id=data["department_id"])
+    assert has_permission(data["approver_two"], "change.read", context) is True
+
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE teams SET is_active=FALSE WHERE team_id=%s", (data["team_a"],))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    assert has_permission(data["approver_two"], "change.read", context) is False

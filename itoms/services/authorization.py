@@ -50,8 +50,10 @@ def has_permission(employee_id: int, permission_key: str,
                 if cur.fetchone():
                     return True
             if scope_type == "MANAGED_TEAMS" and resource.team_id is not None:
-                cur.execute("""SELECT 1 FROM team_management_assignments
-                    WHERE manager_employee_id=%s AND team_id=%s LIMIT 1""", (employee_id, resource.team_id))
+                cur.execute("""SELECT 1 FROM team_management_assignments tm
+                    JOIN teams t ON t.team_id=tm.team_id AND t.is_active=TRUE
+                    WHERE tm.manager_employee_id=%s AND tm.team_id=%s LIMIT 1""",
+                    (employee_id, resource.team_id))
                 if cur.fetchone():
                     return True
             if scope_type == "DEPARTMENT" and resource.department_id is not None:
