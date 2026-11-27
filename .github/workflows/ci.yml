@@ -89,7 +89,10 @@ jobs:
                       raise AssertionError(f"Expected {expected} migrations, found {applied}")
                   cursor.execute("SELECT migration_name FROM schema_migrations WHERE migration_name='025_role_permission_administration.sql'")
                   if not cursor.fetchone():
-                      raise AssertionError("Latest role-permission migration was not applied")
+                      raise AssertionError("Role-permission administration migration was not applied")
+                  cursor.execute("SELECT migration_name FROM schema_migrations WHERE migration_name='041_identity_role_assignment_permissions.sql'")
+                  if not cursor.fetchone():
+                      raise AssertionError("Role assignment permissions migration was not applied")
               finally:
                   cursor.close()
                   connection.close()
