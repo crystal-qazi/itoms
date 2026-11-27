@@ -249,6 +249,19 @@ def workflow_fixture():
             cur.execute(f"DELETE FROM incident_comments WHERE ticket_id IN ({incident_marks})", incident_ids)
             cur.execute(f"DELETE FROM incident_activity WHERE ticket_id IN ({incident_marks})", incident_ids)
             cur.execute(f"DELETE FROM incident_tickets WHERE ticket_id IN ({incident_marks})", incident_ids)
+        cur.execute("SELECT test_plan_id FROM sqa_test_plans WHERE created_by=%s", (requester,))
+        sqa_plan_ids = [int(row[0]) for row in cur.fetchall()]
+        if sqa_plan_ids:
+            sqa_marks = ",".join(["%s"] * len(sqa_plan_ids))
+            cur.execute(f"""DELETE d FROM sqa_defects d
+                JOIN sqa_test_executions x ON x.execution_id=d.execution_id
+                JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
+                WHERE c.test_plan_id IN ({sqa_marks})""", sqa_plan_ids)
+            cur.execute(f"""DELETE x FROM sqa_test_executions x
+                JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
+                WHERE c.test_plan_id IN ({sqa_marks})""", sqa_plan_ids)
+            cur.execute(f"DELETE FROM sqa_test_cases WHERE test_plan_id IN ({sqa_marks})", sqa_plan_ids)
+            cur.execute(f"DELETE FROM sqa_test_plans WHERE test_plan_id IN ({sqa_marks})", sqa_plan_ids)
         cur.execute("DELETE FROM service_records WHERE service_key LIKE %s", (f"SVC-IT-{suffix}-%",))
         cur.execute(f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})", ids)
         cur.execute(f"DELETE FROM employee_team_memberships WHERE employee_id IN ({marks})", ids)
