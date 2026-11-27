@@ -2,9 +2,9 @@
 
 ## Project management
 
-The Project Management module provides a team-scoped project portfolio, project metadata, one or more participating owner teams, a project manager, start/target dates, a controlled project lifecycle, and delivery milestones. Every create, status and milestone mutation is audited in the same database transaction as the change.
+The Project Management module provides a team-scoped project portfolio, project metadata, one or more participating owner teams, a project manager, start/target dates, a controlled project lifecycle, and delivery milestones. Project creation, status transitions and milestone mutations are audited in the same database transaction as the change.
 
-Project permissions are explicit: `project.read`, `project.create` and `project.update`. Team scope is checked against active team membership or another configured authorization scope. Permission grants are not implied by job title. A project is visible only when the actor can read it through at least one active assigned team. Milestones and project lifecycle updates require update permission through an assigned team.
+Permissions are explicit: `project.read`, `project.create` and `project.update`. A project is visible only when the actor can read it through at least one active assigned team. Milestones and project lifecycle updates require update permission through an assigned team. Job title does not imply permission.
 
 Project lifecycle:
 - PROPOSED → ACTIVE or CANCELLED
@@ -16,6 +16,8 @@ Milestones use NOT_STARTED, IN_PROGRESS, DELAYED, COMPLETED and CANCELLED with v
 
 ## Asset register and basic maintenance
 
-The asset register covers identification, type, serial/manufacturer/model, assignment, team ownership, location and lifecycle status. Maintenance is limited to basic repair tickets. There are no purchase orders, procurement workflows, vendor contracts or asset financial-cost modules.
+The asset register provides asset tag, name/type, serial/manufacturer/model, owner team, optional active team-member assignment, location, acquired date and lifecycle status. Basic repair tickets support OPEN, IN_PROGRESS, ON_HOLD, COMPLETED and CANCELLED transitions. Asset and maintenance mutations are permission-checked and audited.
 
-Asset and maintenance tables exist in migration 013, but their user-facing service and workflow implementation remains pending.
+Permissions: `asset.read`, `asset.create`, `asset.update`, `asset.maintenance.create` and `asset.maintenance.update`. Asset visibility and maintenance queue rows are filtered by active owner-team scope. The repair module is deliberately basic: purchase orders, procurement, vendor contracts, depreciation, financial valuation and preventive maintenance schedules are excluded.
+
+Maintenance completion currently returns an UNDER_REPAIR asset to IN_USE. Review this policy before production use if assets may have been IN_STOCK before repair; a future refinement should persist and restore the prior lifecycle state.
