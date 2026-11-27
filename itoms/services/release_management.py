@@ -124,9 +124,19 @@ def create_release(*,actor_employee_id:int,release_key:str,version_label:str,rel
         cur.close(); conn.close()
 
 
-def transition_release(*,actor_employee_id:int,release_id:int,new_status:str):
-    if new_status not in RELEASE_STATES:
+def transition_release(*,actor_employee_id:int,release_id:int,new_status:str,
+                       approver_employee_ids:list[int]|None=None,approval_reason:str|None=None):
+    request_approval = new_status=="REQUEST_APPROVAL"
+    if new_status not in RELEASE_STATES and not request_approval:
         raise ReleaseError("Invalid release status.")
+    approvers=list(dict.fromkeys(int(x) for x in (approver_employee_ids or [])))
+    if request_approval:
+        if not approvers or len(approvers)>10 or actor_employee_id in approvers:
+            raise ReleaseError("Select 1–10 distinct approvers other than yourself.")
+        if approval_reason is not None and len(approval_reason)>4000:
+            raise ReleaseError("Approval reason is too long (maximum 4000 characters).")
+        if not has_permission(actor_employee_id,"approvals.create"):
+            raise ReleaseError("You are not authorized to submit a release approval workflow.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
         cur.execute("SELECT release_id,release_key,created_by,status FROM software_releases WHERE release_id=%s",(release_id,))
@@ -135,7 +145,10 @@ def transition_release(*,actor_employee_id:int,release_id:int,new_status:str):
         cur.close(); conn.close()
     if not row or not has_permission(actor_employee_id,"release.update",_ctx(row)):
         raise ReleaseError("Release record not found or not authorized.")
-    if new_status not in RELEASE_TRANSITIONS.get(row["status"],set()):
+    if request_approval:
+        if row["status"]!="READY":
+            raise ReleaseError("Release approval can only be requested when the release is READY.")
+    elif new_status not in RELEASE_TRANSITIONS.get(row["status"],set()):
         raise ReleaseError("This release transition is not allowed.")
 
     conn=get_connection(); cur=conn.cursor()
@@ -145,9 +158,67 @@ def transition_release(*,actor_employee_id:int,release_id:int,new_status:str):
         current=cur.fetchone()
         if not current or current[0]!=row["status"] or current[1]!=row["created_by"] or current[2]!=row["release_key"]:
             raise ReleaseError("Release changed; reload and try again.")
-        # Recheck the gate at both approval and deployment boundaries.
+        if request_approval:
+            cur.execute("""SELECT approval_request_id,status FROM approval_requests
+                WHERE resource_type='release' AND resource_id=%s
+                ORDER BY created_at DESC,approval_request_id DESC LIMIT 1 FOR UPDATE""",(str(release_id),))
+            previous=cur.fetchone()
+            if previous and previous[1]=="PENDING":
+                raise ReleaseError("A release approval request is already pending.")
+            if previous and previous[1]=="APPROVED":
+                raise ReleaseError("This release already has an approved approval request.")
+            for approver in approvers:
+                cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(approver,))
+                if not cur.fetchone():
+                    raise ReleaseError("An approver is inactive or unavailable.")
+            cur.execute("""INSERT INTO approval_requests
+                (request_type,resource_type,resource_id,requested_by,request_reason)
+                VALUES ('RELEASE','release',%s,%s,%s)""",(str(release_id),actor_employee_id,approval_reason))
+            approval_id=int(cur.lastrowid)
+            for step,approver in enumerate(approvers,1):
+                cur.execute("""INSERT INTO approval_steps
+                    (approval_request_id,step_number,approver_employee_id)
+                    VALUES (%s,%s,%s)""",(approval_id,step,approver))
+            cur.execute("""INSERT INTO approval_history
+                (approval_request_id,actor_employee_id,action_key,comment)
+                VALUES (%s,%s,'SUBMITTED',%s)""",(approval_id,actor_employee_id,approval_reason))
+            cur.execute("""INSERT INTO audit_events
+                (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                VALUES (%s,'APPROVAL_SUBMITTED','approval',%s,'SUCCESS',
+                    JSON_OBJECT('request_type','RELEASE','resource_type','release','approver_count',%s))""",
+                (actor_employee_id,str(approval_id),len(approvers)))
+            cur.execute("""INSERT INTO audit_events
+                (actor_employee_id,event_key,target_type,target_id,outcome)
+                VALUES (%s,'RELEASE_APPROVAL_REQUESTED','release',%s,'SUCCESS')""",
+                (actor_employee_id,str(release_id)))
+            conn.commit()
+            return
+        # Approval and deployment boundaries require both independent gates.
         if new_status in {"APPROVED","DEPLOYING"}:
+            cur.execute("""SELECT status FROM approval_requests
+                WHERE resource_type='release' AND resource_id=%s
+                ORDER BY created_at DESC,approval_request_id DESC LIMIT 1 FOR UPDATE""",(str(release_id),))
+            approval=cur.fetchone()
+            if not approval or approval[0]!="APPROVED":
+                raise ReleaseError("Release approval is blocked until the linked approval workflow is fully approved.")
             _assert_sqa_release_gate(cur,current[2])
+        if new_status=="CANCELLED":
+            cur.execute("""SELECT approval_request_id,status FROM approval_requests
+                WHERE resource_type='release' AND resource_id=%s
+                ORDER BY created_at DESC,approval_request_id DESC LIMIT 1 FOR UPDATE""",(str(release_id),))
+            pending=cur.fetchone()
+            if pending and pending[1]=="PENDING":
+                approval_id=pending[0]
+                cur.execute("UPDATE approval_requests SET status='CANCELLED',completed_at=UTC_TIMESTAMP() WHERE approval_request_id=%s",(approval_id,))
+                cur.execute("""UPDATE approval_steps SET decision='SKIPPED'
+                    WHERE approval_request_id=%s AND decision='PENDING'""",(approval_id,))
+                cur.execute("""INSERT INTO approval_history
+                    (approval_request_id,actor_employee_id,action_key)
+                    VALUES (%s,%s,'CANCELLED')""",(approval_id,actor_employee_id))
+                cur.execute("""INSERT INTO audit_events
+                    (actor_employee_id,event_key,target_type,target_id,outcome)
+                    VALUES (%s,'APPROVAL_CANCELLED','approval',%s,'SUCCESS')""",
+                    (actor_employee_id,str(approval_id)))
         cur.execute("""UPDATE software_releases SET status=%s,
             released_at=CASE WHEN %s='RELEASED' THEN UTC_TIMESTAMP() ELSE released_at END
             WHERE release_id=%s""",(new_status,new_status,release_id))

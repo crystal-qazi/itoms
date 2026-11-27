@@ -14,12 +14,18 @@ def _choices():
         cur.execute("SELECT change_id,change_number,title FROM change_records WHERE status NOT IN ('CANCELLED','CLOSED') ORDER BY created_at DESC LIMIT 200"); changes=cur.fetchall()
         return services,changes
     finally: cur.close(); conn.close()
+def _approvers():
+    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT employee_id,full_name FROM employees WHERE is_active=TRUE ORDER BY full_name")
+        return cur.fetchall()
+    finally: cur.close(); conn.close()
 @release_bp.get("/")
 @login_required
 def index():
     can_create=has_permission(g.employee_id,"release.create")
     services,changes=_choices() if can_create else ([],[])
-    return render_template("releases/index.html",releases=list_releases(actor_employee_id=g.employee_id),can_create=can_create,services=services,changes=changes,states=sorted(RELEASE_STATES),csrf_token_value=session.get("csrf_token",""))
+    return render_template("releases/index.html",releases=list_releases(actor_employee_id=g.employee_id),can_create=can_create,services=services,changes=changes,approvers=_approvers() if has_permission(g.employee_id,"release.update") else [],states=sorted(RELEASE_STATES),csrf_token_value=session.get("csrf_token",""))
 @release_bp.post("/")
 @login_required
 def create():
@@ -37,6 +43,9 @@ def create():
 def status(release_id:int):
     csrf=session.get("csrf_token","")
     if not csrf or not hmac.compare_digest(str(csrf),str(request.form.get("csrf_token",""))): return "Invalid request token",400
-    try: transition_release(actor_employee_id=g.employee_id,release_id=release_id,new_status=request.form.get("status","").strip().upper()); flash("Release status updated.","success")
-    except ReleaseError as exc: flash(str(exc),"danger")
+    try:
+        approvers=[int(value) for value in request.form.getlist("approver_employee_ids") if value.strip()]
+        transition_release(actor_employee_id=g.employee_id,release_id=release_id,new_status=request.form.get("status","").strip().upper(),approver_employee_ids=approvers,approval_reason=request.form.get("approval_reason","").strip() or None)
+        flash("Release approval workflow requested." if request.form.get("status","").strip().upper()=="REQUEST_APPROVAL" else "Release status updated.","success")
+    except (ReleaseError,ValueError,TypeError) as exc: flash(str(exc) or "Invalid release update.","danger")
     return redirect(url_for("releases.index"))
