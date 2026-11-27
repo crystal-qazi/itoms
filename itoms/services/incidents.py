@@ -298,6 +298,13 @@ def add_comment(*, actor_employee_id: int, ticket_id: int, body: str, internal: 
             (ticket_id,author_employee_id,comment_body,is_internal)
             VALUES (%s,%s,%s,%s)""", (ticket_id,actor_employee_id,body,internal))
         comment_id = int(cur.lastrowid)
+        # Only a public response from someone other than the requester satisfies
+        # first-response SLA; requester comments and internal notes do not.
+        if not internal:
+            cur.execute("""UPDATE incident_tickets
+                SET first_responded_at=UTC_TIMESTAMP()
+                WHERE ticket_id=%s AND requester_employee_id<>%s
+                  AND first_responded_at IS NULL""", (ticket_id, actor_employee_id))
         cur.execute("""INSERT INTO incident_activity
             (ticket_id,actor_employee_id,activity_key,new_value)
             VALUES (%s,%s,'COMMENT_ADDED',%s)""", (ticket_id,actor_employee_id,"INTERNAL" if internal else "PUBLIC"))

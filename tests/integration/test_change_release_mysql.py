@@ -983,6 +983,71 @@ def test_incident_department_scope_covers_queue_detail_comments_and_assignment(w
                     body="Unauthorized comment")
 
 
+def test_incident_first_response_sla_records_first_public_staff_reply(workflow_fixture):
+    from itoms.services.incidents import add_comment, create_incident
+
+    data = workflow_fixture
+    ticket_id = create_incident(
+        actor_employee_id=data["requester"],
+        requester_employee_id=data["requester"],
+        assigned_team_id=data["team_a"],
+        title="First response SLA test",
+        description="Only a public staff response should satisfy first response SLA.",
+    )
+
+    add_comment(actor_employee_id=data["approver_one"], ticket_id=ticket_id,
+                body="Internal triage note", internal=True)
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT first_responded_at FROM incident_tickets WHERE ticket_id=%s", (ticket_id,))
+        assert cur.fetchone()[0] is None
+    finally:
+        cur.close()
+        conn.close()
+
+    add_comment(actor_employee_id=data["requester"], ticket_id=ticket_id,
+                body="Any update?", internal=False)
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT first_responded_at FROM incident_tickets WHERE ticket_id=%s", (ticket_id,))
+        assert cur.fetchone()[0] is None
+    finally:
+        cur.close()
+        conn.close()
+
+    add_comment(actor_employee_id=data["approver_one"], ticket_id=ticket_id,
+                body="We are investigating the issue.", internal=False)
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT first_responded_at FROM incident_tickets WHERE ticket_id=%s", (ticket_id,))
+        first_response = cur.fetchone()[0]
+        assert first_response is not None
+        cur.execute(
+            "UPDATE incident_tickets SET first_responded_at=DATE_SUB(UTC_TIMESTAMP(), INTERVAL 5 MINUTE) WHERE ticket_id=%s",
+            (ticket_id,),
+        )
+        conn.commit()
+        cur.execute("SELECT first_responded_at FROM incident_tickets WHERE ticket_id=%s", (ticket_id,))
+        original = cur.fetchone()[0]
+    finally:
+        cur.close()
+        conn.close()
+
+    add_comment(actor_employee_id=data["approver_one"], ticket_id=ticket_id,
+                body="A later update.", internal=False)
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT first_responded_at FROM incident_tickets WHERE ticket_id=%s", (ticket_id,))
+        assert cur.fetchone()[0] == original
+    finally:
+        cur.close()
+        conn.close()
+
+
 def test_engineering_task_pagination_filters_scope_before_limit(workflow_fixture):
     from itoms.services.engineering_tasks import create_task, list_task_assignees, list_tasks
 

@@ -11,7 +11,7 @@
       <div class="d-flex flex-wrap gap-2 mb-3"><span class="badge text-bg-secondary">{{ ticket.priority }}</span><span class="badge text-bg-light">{{ ticket.source }}</span></div>
       <h2 class="h6">Description</h2><p class="mb-0 preserve-lines">{{ ticket.description }}</p>
       <hr>
-      <dl class="row mb-0"><dt class="col-sm-4">Created</dt><dd class="col-sm-8">{{ ticket.created_at }}</dd><dt class="col-sm-4">First response due</dt><dd class="col-sm-8">{{ ticket.first_response_due_at or 'Not configured' }}</dd><dt class="col-sm-4">Resolution due</dt><dd class="col-sm-8">{{ ticket.resolution_due_at or 'Not configured' }}</dd></dl>
+      <dl class="row mb-0"><dt class="col-sm-4">Created</dt><dd class="col-sm-8">{{ ticket.created_at }}</dd><dt class="col-sm-4">First response due</dt><dd class="col-sm-8">{{ ticket.first_response_due_at or 'Not configured' }}</dd><dt class="col-sm-4">First response</dt><dd class="col-sm-8">{{ ticket.first_responded_at or 'Awaiting response' }}</dd><dt class="col-sm-4">Resolution due</dt><dd class="col-sm-8">{{ ticket.resolution_due_at or 'Not configured' }}</dd></dl>
     </section>
     <section class="panel-card mt-3">
       <div class="panel-heading"><div><h2>Comments &amp; updates</h2><p>Internal notes are visible only to authorized staff.</p></div></div>
