@@ -154,7 +154,7 @@ def _create_request(data, approvers=None, *, resource_type="test", resource_id=N
 
     return create_approval(
         actor_employee_id=data["requester"],
-        request_type="TEST",
+        request_type="CHANGE" if resource_type == "change" else "TEST",
         resource_type=resource_type,
         resource_id=resource_id or data["suffix"],
         approver_employee_ids=approvers or [data["approver_one"], data["approver_two"]],
