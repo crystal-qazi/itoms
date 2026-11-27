@@ -92,3 +92,27 @@ def test_role_permission_management_rejects_unknown_permission(monkeypatch):
 
     assert connection.rolled_back
     assert not connection.committed
+
+
+def test_role_permission_admin_cannot_modify_own_role(monkeypatch):
+    connection = Connection([("Change Manager",), (1,)])
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
+
+    with pytest.raises(identity_admin.IdentityAdministrationError, match="own account"):
+        identity_admin.grant_role_permission(
+            actor_employee_id=1, role_id=4, permission_key="approvals.create"
+        )
+
+    assert connection.rolled_back
+    assert not connection.committed
+
+
+def test_role_admin_cannot_assign_role_to_self(monkeypatch):
+    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: pytest.fail("database must not be opened"))
+
+    with pytest.raises(identity_admin.IdentityAdministrationError, match="Self-assignment"):
+        identity_admin.assign_role(
+            actor_employee_id=1, employee_id=1, role_id=4, scope_type="OWN"
+        )

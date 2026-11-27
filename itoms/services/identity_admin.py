@@ -63,6 +63,8 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
     """Assign a role only when the actor has the dedicated administration permission."""
     if not has_permission(actor_employee_id, "identity.roles.assign"):
         raise IdentityAdministrationError("Not authorized to assign roles.")
+    if employee_id == actor_employee_id:
+        raise IdentityAdministrationError("Self-assignment of roles is not permitted.")
     if scope_type not in {"OWN","TEAM","MANAGED_TEAMS","DEPARTMENT","RESOURCE"}:
         raise IdentityAdministrationError("Invalid authorization scope.")
     conn = get_connection()
@@ -108,6 +110,12 @@ def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_ke
         role = cur.fetchone()
         if not role:
             raise IdentityAdministrationError("Role does not exist or is inactive.")
+        cur.execute("""SELECT 1 FROM employee_role_assignments
+            WHERE employee_id=%s AND role_id=%s AND is_active=TRUE
+              AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) LIMIT 1""",
+            (actor_employee_id, role_id))
+        if cur.fetchone():
+            raise IdentityAdministrationError("You cannot modify permissions on a role assigned to your own account.")
         cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
         permission = cur.fetchone()
         if not permission:
@@ -145,6 +153,12 @@ def revoke_role_permission(*, actor_employee_id: int, role_id: int, permission_k
         role = cur.fetchone()
         if not role:
             raise IdentityAdministrationError("Role does not exist or is inactive.")
+        cur.execute("""SELECT 1 FROM employee_role_assignments
+            WHERE employee_id=%s AND role_id=%s AND is_active=TRUE
+              AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) LIMIT 1""",
+            (actor_employee_id, role_id))
+        if cur.fetchone():
+            raise IdentityAdministrationError("You cannot modify permissions on a role assigned to your own account.")
         cur.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
         permission = cur.fetchone()
         if not permission:
