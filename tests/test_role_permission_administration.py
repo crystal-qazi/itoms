@@ -16,6 +16,9 @@ class Cursor:
     def fetchone(self):
         return next(self.rows)
 
+    def fetchall(self):
+        return next(self.rows)
+
     def close(self):
         pass
 
@@ -40,7 +43,7 @@ class Connection:
 
 
 def test_grant_role_permission_is_explicit_and_audited(monkeypatch):
-    connection = Connection([("Change Manager",), (10,), (1, 0), None, (23,)], rowcount=1)
+    connection = Connection([(10,), [(2,)], ("Administrator", 1), ("Change Manager", 1), [(11, 2)], (7,), (7,), (1, 0), (23,)], rowcount=1)
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
@@ -56,17 +59,20 @@ def test_grant_role_permission_is_explicit_and_audited(monkeypatch):
 
 
 def test_grant_role_permission_requires_management_permission(monkeypatch):
-    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: False)
-    monkeypatch.setattr(identity_admin, "get_connection", lambda: pytest.fail("database must not be opened"))
+    connection = Connection([(10,), [(2,)], ("Administrator", 1), ("Change Manager", 1),
+                             [(11, 2)], (7,), None])
+    monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
     with pytest.raises(identity_admin.IdentityAdministrationError, match="Not authorized"):
         identity_admin.grant_role_permission(
             actor_employee_id=1, role_id=4, permission_key="approvals.create"
         )
 
+    assert connection.rolled_back and not connection.committed
+
 
 def test_revoke_role_permission_is_audited(monkeypatch):
-    connection = Connection([("Change Manager",), (10,), (1, 0), None, (23,)], rowcount=1)
+    connection = Connection([(10,), [(2,)], ("Administrator", 1), ("Change Manager", 1), [(11, 2)], (7,), (7,), (1, 0), (23,)], rowcount=1)
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
@@ -95,7 +101,7 @@ def test_role_permission_management_rejects_unknown_permission(monkeypatch):
 
 
 def test_role_permission_admin_cannot_modify_own_role(monkeypatch):
-    connection = Connection([("Change Manager",), (10,), (1, 0), (1,)])
+    connection = Connection([(10,), [(4,)], ("Change Manager", 1), [(11, 4)], (7,), (7,)])
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
@@ -110,7 +116,7 @@ def test_role_permission_admin_cannot_modify_own_role(monkeypatch):
 
 
 def test_grant_role_permission_rejects_role_shared_across_departments(monkeypatch):
-    connection = Connection([("Change Manager",), (10,), (2, 1)])
+    connection = Connection([(10,), [(2,)], ("Administrator", 1), ("Change Manager", 1), [(11, 2)], (7,), (7,), (2, 1)])
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
@@ -124,7 +130,7 @@ def test_grant_role_permission_rejects_role_shared_across_departments(monkeypatc
 
 
 def test_grant_role_permission_reserves_unassigned_roles(monkeypatch):
-    connection = Connection([("Change Manager",), (10,), (0, None)])
+    connection = Connection([(10,), [(2,)], ("Administrator", 1), ("Change Manager", 1), [(11, 2)], (7,), (7,), (0, None)])
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
@@ -138,7 +144,7 @@ def test_grant_role_permission_reserves_unassigned_roles(monkeypatch):
 
 
 def test_role_permission_scope_requires_actor_department(monkeypatch):
-    connection = Connection([("Change Manager",), (None,)])
+    connection = Connection([(None,), [(2,)], ("Administrator", 1), ("Change Manager", 1), [(11, 2)], (7,), (7,)])
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
