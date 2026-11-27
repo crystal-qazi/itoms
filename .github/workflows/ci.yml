@@ -60,6 +60,7 @@ jobs:
           from itoms import create_app
           from itoms.config import Config
           from itoms.db.connection import get_connection
+          from itoms.db.migrations.runner import apply_migrations
 
           class CIConfig(Config):
               TESTING = True
@@ -71,14 +72,14 @@ jobs:
               DB_PASSWORD = "itoms-ci-root"
 
           app = create_app(CIConfig)
-          runner = app.test_cli_runner()
-          for attempt in range(2):
-              result = runner.invoke(args=["db-migrate"])
-              if result.exit_code:
-                  raise RuntimeError(f"Migration attempt {attempt + 1} failed: {result.output}")
-
-          expected = len(list((Path("itoms/db/migrations/versions")).glob("*.sql")))
+          expected = len(list(Path("itoms/db/migrations/versions").glob("*.sql")))
           with app.app_context():
+              first = apply_migrations()
+              second = apply_migrations()
+              if len(first) != expected:
+                  raise AssertionError(f"Expected to apply {expected} migrations, applied {len(first)}")
+              if second:
+                  raise AssertionError(f"Second migration run was not idempotent: {second}")
               connection = get_connection()
               cursor = connection.cursor()
               try:
