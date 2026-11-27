@@ -88,11 +88,14 @@ def get_change(*,actor_employee_id:int,change_id:int):
 def create_change(*,actor_employee_id:int,title:str,description:str,change_type:str,risk_level:str,planned_start:str|None,planned_end:str|None,implementation_plan:str,rollback_plan:str,verification_plan:str,owner_employee_id:int|None=None):
     scope_conn=get_connection(); scope_cur=scope_conn.cursor()
     try:
-        scope_cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",(actor_employee_id,))
+        scope_cur.execute("""SELECT e.department_id,
+            (SELECT m.team_id FROM employee_team_memberships m
+             WHERE m.employee_id=e.employee_id AND m.is_primary=TRUE LIMIT 1)
+            FROM employees e WHERE e.employee_id=%s AND e.is_active=TRUE""",(actor_employee_id,))
         actor_row=scope_cur.fetchone()
     finally: scope_cur.close(); scope_conn.close()
     if not actor_row or actor_row[0] is None or not has_permission(
-        actor_employee_id,"change.create",ResourceContext(department_id=actor_row[0])
+        actor_employee_id,"change.create",ResourceContext(department_id=actor_row[0],team_id=actor_row[1])
     ): raise ChangeError("Not authorized to create changes in this department.")
     title=title.strip(); description=description.strip()
     if not title or len(title)>240: raise ChangeError("Title is required (maximum 240 characters).")

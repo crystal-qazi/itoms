@@ -100,11 +100,14 @@ def create_release(*,actor_employee_id:int,release_key:str,version_label:str,rel
                    service_id:int|None,target_at:str|None,change_id:int|None):
     actor_conn=get_connection(); actor_cur=actor_conn.cursor()
     try:
-        actor_cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",(actor_employee_id,))
+        actor_cur.execute("""SELECT e.department_id,
+            (SELECT m.team_id FROM employee_team_memberships m
+             WHERE m.employee_id=e.employee_id AND m.is_primary=TRUE LIMIT 1)
+            FROM employees e WHERE e.employee_id=%s AND e.is_active=TRUE""",(actor_employee_id,))
         actor_row=actor_cur.fetchone()
     finally: actor_cur.close(); actor_conn.close()
     if not actor_row or actor_row[0] is None or not has_permission(
-        actor_employee_id,"release.create",ResourceContext(department_id=actor_row[0])
+        actor_employee_id,"release.create",ResourceContext(department_id=actor_row[0],team_id=actor_row[1])
     ):
         raise ReleaseError("Not authorized to create releases in this department.")
     release_key=release_key.strip().upper(); version_label=version_label.strip()
@@ -123,13 +126,17 @@ def create_release(*,actor_employee_id:int,release_key:str,version_label:str,rel
                     resource_type="service",resource_id=str(service[0]))):
                 raise ReleaseError("Not authorized to link this service.")
         if change_id is not None:
-            cur.execute("""SELECT c.change_id,c.requested_by,e.department_id
+            cur.execute("""SELECT c.change_id,c.requested_by,e.department_id,
+                    (SELECT m.team_id FROM employee_team_memberships m
+                     JOIN teams t ON t.team_id=m.team_id AND t.department_id=e.department_id
+                     WHERE m.employee_id=COALESCE(c.owner_employee_id,c.requested_by)
+                       AND m.is_primary=TRUE LIMIT 1) AS team_id
                 FROM change_records c JOIN employees e ON e.employee_id=c.requested_by
                 WHERE c.change_id=%s""",(change_id,))
             change=cur.fetchone()
             if not change: raise ReleaseError("Change record not found.")
             if not has_permission(actor_employee_id,"change.read",
-                ResourceContext(owner_employee_id=change[1],department_id=change[2],
+                ResourceContext(owner_employee_id=change[1],department_id=change[2],team_id=change[3],
                     resource_type="change",resource_id=str(change[0]))):
                 raise ReleaseError("Not authorized to link this change.")
         cur.execute("""INSERT INTO software_releases
