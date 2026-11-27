@@ -77,6 +77,8 @@ def workflow_fixture():
             "approvals.create", "sqa.signoff.create",
             "service.inventory.read", "service.inventory.create", "service.inventory.update",
             "engineering.tasks.read", "engineering.tasks.create", "engineering.tasks.update",
+            "incident.create", "incident.read", "incident.update", "incident.assign",
+            "incident.comment", "incident.comment.internal",
         )
         for permission_key in permissions:
             cur.execute(
@@ -915,6 +917,50 @@ def test_service_inventory_lifecycle_update_rechecks_scope(workflow_fixture):
         cur.close()
         conn.close()
 
+
+
+def test_incident_department_scope_covers_queue_detail_comments_and_assignment(workflow_fixture):
+    from itoms.services.incidents import (
+        IncidentError, add_comment, assign_incident, create_incident,
+        get_incident_detail, list_accessible_incident_teams,
+        list_assignable_teams, list_incidents, transition_incident,
+    )
+
+    data = workflow_fixture
+    ticket_id = create_incident(
+        actor_employee_id=data["requester"],
+        requester_employee_id=data["requester"],
+        assigned_team_id=data["team_a"],
+        title="Department-scoped incident",
+        description="Validate department authorization through all incident operations.",
+    )
+
+    assert any(row["ticket_id"] == ticket_id
+               for row in list_incidents(actor_employee_id=data["requester"]))
+    assert get_incident_detail(actor_employee_id=data["requester"], ticket_id=ticket_id)["ticket_id"] == ticket_id
+    visible_team_ids = {row["team_id"] for row in list_accessible_incident_teams(
+        actor_employee_id=data["requester"])}
+    assert data["team_a"] in visible_team_ids
+    assert data["team_b"] in visible_team_ids
+    assert all(row["team_id"] != data["team_a"] for row in list_assignable_teams(
+        actor_employee_id=data["outsider"], ticket_id=ticket_id))
+
+    add_comment(actor_employee_id=data["requester"], ticket_id=ticket_id,
+                body="Internal department note", internal=True)
+    detail = get_incident_detail(actor_employee_id=data["requester"], ticket_id=ticket_id)
+    assert any(item["is_internal"] for item in detail["comments"])
+
+    transition_incident(actor_employee_id=data["requester"], ticket_id=ticket_id,
+                        new_status="OPEN")
+    assign_incident(actor_employee_id=data["requester"], ticket_id=ticket_id,
+                    assigned_team_id=data["team_b"])
+    assert get_incident_detail(actor_employee_id=data["requester"], ticket_id=ticket_id)["assigned_team_id"] == data["team_b"]
+
+    with pytest.raises(IncidentError, match="not found"):
+        get_incident_detail(actor_employee_id=data["outsider"], ticket_id=ticket_id)
+    with pytest.raises(IncidentError, match="Not authorized"):
+        add_comment(actor_employee_id=data["outsider"], ticket_id=ticket_id,
+                    body="Unauthorized comment")
 
 
 def test_engineering_task_pagination_filters_scope_before_limit(workflow_fixture):

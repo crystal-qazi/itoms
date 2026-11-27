@@ -42,14 +42,16 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
     if not has_permission(actor_employee_id, "incident.create"):
         raise IncidentError("Not authorized to create incidents.")
     title, description = title.strip(), description.strip()
-    if not title or not description or len(title) > 240:
-        raise IncidentError("A title (maximum 240 characters) and description are required.")
+    if not title or not description or len(title) > 240 or len(description) > 20000:
+        raise IncidentError("A title (maximum 240 characters) and description (maximum 20,000 characters) are required.")
     if priority not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
         raise IncidentError("Invalid incident priority.")
     if source not in {"PORTAL", "EMAIL", "PHONE", "GRAFANA", "ADMIN"}:
         raise IncidentError("Invalid incident source.")
     if bool(external_source) != bool(external_event_id):
         raise IncidentError("External source and event ID must be supplied together.")
+    if external_source and (len(external_source) > 80 or len(external_event_id or "") > 190):
+        raise IncidentError("External event identifiers exceed their supported lengths.")
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -116,18 +118,51 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
 
 
 def list_incidents(*, actor_employee_id: int, limit: int = 50, team_id: int | None = None, status: str | None = None, priority: str | None = None) -> list[dict]:
-    """Return only incidents readable under the caller's OWN/TEAM scopes."""
+    """Return only incidents readable under the caller's OWN/TEAM/DEPARTMENT scopes."""
     limit = max(1, min(int(limit), 100))
-    clauses, params = [], []
+    scope_clauses, scope_params = [], []
+    if has_permission(actor_employee_id, "incident.read",
+                      ResourceContext(owner_employee_id=actor_employee_id)):
+        scope_clauses.append("i.requester_employee_id=%s")
+        scope_params.append(actor_employee_id)
+
+    accessible_teams = list_accessible_incident_teams(actor_employee_id=actor_employee_id)
+    team_ids = [item["team_id"] for item in accessible_teams]
+    if team_ids:
+        scope_clauses.append("i.assigned_team_id IN (" + ",".join(["%s"] * len(team_ids)) + ")")
+        scope_params.extend(team_ids)
+
+    conn = get_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",
+                    (actor_employee_id,))
+        actor_row = cur.fetchone()
+        actor_department_id = actor_row[0] if actor_row else None
+    finally:
+        cur.close(); conn.close()
+    if actor_department_id is not None and has_permission(
+        actor_employee_id, "incident.read",
+        ResourceContext(department_id=actor_department_id),
+    ):
+        scope_clauses.append("COALESCE(t.department_id,e.department_id)=%s")
+        scope_params.append(actor_department_id)
+    if not scope_clauses:
+        return []
+
+    filters, filter_params = [], []
     if team_id is not None:
-        clauses.append("assigned_team_id=%s"); params.append(team_id)
+        if team_id not in team_ids:
+            return []
+        filters.append("i.assigned_team_id=%s"); filter_params.append(team_id)
     if status in {"NEW", "OPEN", "IN_PROGRESS", "PENDING", "RESOLVED", "CLOSED", "CANCELLED"}:
-        clauses.append("status=%s"); params.append(status)
+        filters.append("i.status=%s"); filter_params.append(status)
     if priority in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
-        clauses.append("priority=%s"); params.append(priority)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    conn = get_connection()
-    cur = conn.cursor(dictionary=True)
+        filters.append("i.priority=%s"); filter_params.append(priority)
+    where = " WHERE (" + " OR ".join(scope_clauses) + ")"
+    if filters:
+        where += " AND " + " AND ".join(filters)
+
+    conn = get_connection(); cur = conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT i.ticket_id,i.ticket_number,i.title,i.status,i.priority,
             i.requester_employee_id,i.assigned_team_id,
@@ -135,22 +170,22 @@ def list_incidents(*, actor_employee_id: int, limit: int = 50, team_id: int | No
             i.created_at,i.updated_at
             FROM incident_tickets i
             LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
-            LEFT JOIN teams t ON t.team_id=i.assigned_team_id""" +
-            where.replace("assigned_team_id", "i.assigned_team_id").replace("status=", "i.status=").replace("priority=", "i.priority=") +
-            " ORDER BY i.created_at DESC,i.ticket_id DESC LIMIT %s", tuple(params + [limit * 3]))
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id""" + where +
+            " ORDER BY i.created_at DESC,i.ticket_id DESC LIMIT %s",
+            tuple(scope_params + filter_params + [limit]))
         candidates = cur.fetchall()
     finally:
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
+
     visible = []
     for item in candidates:
-        context = ResourceContext(owner_employee_id=item["requester_employee_id"],
-                                  team_id=item["assigned_team_id"],
-                                  department_id=item["department_id"])
+        context = ResourceContext(
+            owner_employee_id=item["requester_employee_id"],
+            team_id=item["assigned_team_id"],
+            department_id=item["department_id"],
+        )
         if has_permission(actor_employee_id, "incident.read", context):
             visible.append(item)
-            if len(visible) >= limit:
-                break
     return visible
 
 def transition_incident(*, actor_employee_id: int, ticket_id: int, new_status: str) -> None:
@@ -225,8 +260,9 @@ def get_incident_detail(*, actor_employee_id: int, ticket_id: int) -> dict:
         if not has_permission(actor_employee_id, "incident.read", context):
             raise IncidentError("Incident not found.")
         cur.execute("""SELECT c.comment_id,c.author_employee_id,c.comment_body,c.is_internal,c.created_at,
-            e.full_name AS author_name FROM incident_comments c
-            JOIN employees e ON e.employee_id=c.author_employee_id
+            COALESCE(e.full_name,'Former or inactive user') AS author_name
+            FROM incident_comments c
+            LEFT JOIN employees e ON e.employee_id=c.author_employee_id AND e.is_active=TRUE
             WHERE c.ticket_id=%s ORDER BY c.created_at,c.comment_id""", (ticket_id,))
         comments = cur.fetchall()
         if not has_permission(actor_employee_id, "incident.comment.internal", context):
@@ -240,8 +276,8 @@ def get_incident_detail(*, actor_employee_id: int, ticket_id: int) -> dict:
 def add_comment(*, actor_employee_id: int, ticket_id: int, body: str, internal: bool = False) -> int:
     """Add an authorized comment; internal visibility is explicit."""
     body = body.strip()
-    if not body:
-        raise IncidentError("Comment cannot be empty.")
+    if not body or len(body) > 20000:
+        raise IncidentError("Comment is required and must be 20,000 characters or fewer.")
     conn = get_connection()
     cur = conn.cursor()
     try:
