@@ -9,6 +9,7 @@ from itoms.services.authorization import has_permission
 from itoms.services.projects import (
     PROJECT_STATUSES, MILESTONE_STATUSES, ProjectError, create_project,
     create_milestone, get_project_detail, list_projects, update_milestone_status,
+    update_project_status,
 )
 
 projects_bp = Blueprint("projects", __name__, url_prefix="/projects")
@@ -93,6 +94,22 @@ def detail(project_id: int):
         milestone_statuses=sorted(MILESTONE_STATUSES),
         csrf_token_value=session.get("csrf_token", ""),
     )
+
+
+@projects_bp.post("/<int:project_id>/status")
+@login_required
+def project_status(project_id: int):
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        update_project_status(
+            actor_employee_id=g.employee_id, project_id=project_id,
+            new_status=request.form.get("status", "").strip().upper(),
+        )
+        flash("Project status updated.", "success")
+    except ProjectError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("projects.detail", project_id=project_id))
 
 
 @projects_bp.post("/<int:project_id>/milestones")

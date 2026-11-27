@@ -15,6 +15,13 @@ class ProjectError(ValueError):
 
 
 PROJECT_STATUSES = {"PROPOSED", "ACTIVE", "ON_HOLD", "COMPLETED", "CANCELLED"}
+PROJECT_TRANSITIONS = {
+    "PROPOSED": {"ACTIVE", "CANCELLED"},
+    "ACTIVE": {"ON_HOLD", "COMPLETED", "CANCELLED"},
+    "ON_HOLD": {"ACTIVE", "CANCELLED"},
+    "COMPLETED": set(),
+    "CANCELLED": set(),
+}
 MILESTONE_STATUSES = {"NOT_STARTED", "IN_PROGRESS", "COMPLETED", "DELAYED", "CANCELLED"}
 MILESTONE_TRANSITIONS = {
     "NOT_STARTED": {"IN_PROGRESS", "COMPLETED", "CANCELLED"},
@@ -183,6 +190,46 @@ def create_project(
         if getattr(exc, "errno", None) == 1062:
             raise ProjectError("A project with this key already exists.") from None
         raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def update_project_status(
+    *, actor_employee_id: int, project_id: int, new_status: str,
+) -> None:
+    """Apply an approved project lifecycle transition within the actor's team scope."""
+    if new_status not in PROJECT_STATUSES:
+        raise ProjectError("Invalid project status.")
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT status FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
+        project = cur.fetchone()
+        if not project:
+            raise ProjectError("Project was not found.")
+        teams = _project_teams(cur, project_id)
+        if not any(has_permission(
+            actor_employee_id, "project.update",
+            ResourceContext(team_id=t["team_id"], department_id=t["department_id"],
+                            resource_type="project", resource_id=str(project_id)),
+        ) for t in teams):
+            raise ProjectError("Not authorized to update this project.")
+        old_status = project["status"]
+        if new_status not in PROJECT_TRANSITIONS[old_status]:
+            raise ProjectError(f"Cannot move a project from {old_status} to {new_status}.")
+        cur.execute("UPDATE projects SET status=%s WHERE project_id=%s", (new_status, project_id))
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'PROJECT_STATUS_CHANGED','project',%s,'SUCCESS',
+                       JSON_OBJECT('old_status',%s,'new_status',%s))""",
+            (actor_employee_id, str(project_id), old_status, new_status),
+        )
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
