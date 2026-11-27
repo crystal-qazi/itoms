@@ -155,6 +155,33 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
         conn.close()
 
 
+def _assert_role_permission_scope(cur, *, actor_employee_id: int, role_id: int) -> None:
+    """Allow editing only roles assigned exclusively to active employees in actor's department."""
+    cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",
+                (actor_employee_id,))
+    actor = cur.fetchone()
+    if not actor or actor[0] is None:
+        raise IdentityAdministrationError("A department-scoped administrator is required.")
+    department_id = actor[0]
+    cur.execute("""SELECT
+        COUNT(*) AS assignment_count,
+        SUM(CASE WHEN e.department_id=%s THEN 0 ELSE 1 END) AS outside_department_count
+        FROM employee_role_assignments a
+        JOIN employees e ON e.employee_id=a.employee_id AND e.is_active=TRUE
+        WHERE a.role_id=%s AND a.is_active=TRUE
+          AND (a.expires_at IS NULL OR a.expires_at>UTC_TIMESTAMP())""",
+        (department_id, role_id))
+    counts = cur.fetchone()
+    if not counts or not counts[0]:
+        raise IdentityAdministrationError(
+            "Unassigned roles are reserved for higher-trust administration."
+        )
+    if counts[1]:
+        raise IdentityAdministrationError(
+            "Role permissions can be managed only when all active assignments belong to your department."
+        )
+
+
 def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_key: str) -> bool:
     """Grant a catalogue permission to an active role; return whether a new grant was created."""
     if not has_permission(actor_employee_id, "identity.roles.permissions.manage"):
@@ -169,6 +196,7 @@ def grant_role_permission(*, actor_employee_id: int, role_id: int, permission_ke
         role = cur.fetchone()
         if not role:
             raise IdentityAdministrationError("Role does not exist or is inactive.")
+        _assert_role_permission_scope(cur, actor_employee_id=actor_employee_id, role_id=role_id)
         cur.execute("""SELECT 1 FROM employee_role_assignments
             WHERE employee_id=%s AND role_id=%s AND is_active=TRUE
               AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) LIMIT 1""",
@@ -212,6 +240,7 @@ def revoke_role_permission(*, actor_employee_id: int, role_id: int, permission_k
         role = cur.fetchone()
         if not role:
             raise IdentityAdministrationError("Role does not exist or is inactive.")
+        _assert_role_permission_scope(cur, actor_employee_id=actor_employee_id, role_id=role_id)
         cur.execute("""SELECT 1 FROM employee_role_assignments
             WHERE employee_id=%s AND role_id=%s AND is_active=TRUE
               AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) LIMIT 1""",
@@ -248,7 +277,36 @@ def list_role_permission_options(*, actor_employee_id: int, role_id: int | None 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT role_id,role_name FROM application_roles WHERE is_active=TRUE ORDER BY role_name")
+        cur.execute("""SELECT r.role_id,r.role_name
+            FROM application_roles r
+            WHERE r.is_active=TRUE
+              AND EXISTS (
+                SELECT 1 FROM employee_role_assignments a
+                JOIN employees e ON e.employee_id=a.employee_id AND e.is_active=TRUE
+                WHERE a.role_id=r.role_id AND a.is_active=TRUE
+                  AND (a.expires_at IS NULL OR a.expires_at>UTC_TIMESTAMP())
+                  AND e.department_id=(
+                    SELECT actor.department_id FROM employees actor
+                    WHERE actor.employee_id=%s AND actor.is_active=TRUE
+                  )
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM employee_role_assignments a
+                JOIN employees e ON e.employee_id=a.employee_id AND e.is_active=TRUE
+                WHERE a.role_id=r.role_id AND a.is_active=TRUE
+                  AND (a.expires_at IS NULL OR a.expires_at>UTC_TIMESTAMP())
+                  AND (e.department_id IS NULL OR e.department_id<>(
+                    SELECT actor.department_id FROM employees actor
+                    WHERE actor.employee_id=%s AND actor.is_active=TRUE
+                  ))
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM employee_role_assignments own
+                WHERE own.role_id=r.role_id AND own.employee_id=%s
+                  AND own.is_active=TRUE
+                  AND (own.expires_at IS NULL OR own.expires_at>UTC_TIMESTAMP())
+              )
+            ORDER BY r.role_name""", (actor_employee_id, actor_employee_id, actor_employee_id))
         roles = cur.fetchall()
         if not roles:
             return {"roles": [], "permissions": [], "selected_role_id": None}
