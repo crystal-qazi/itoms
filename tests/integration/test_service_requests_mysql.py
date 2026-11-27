@@ -200,8 +200,8 @@ def _db():
 def test_request_category_submission_assignment_and_closure_are_audited(service_request_fixture):
     from itoms.services.service_requests import (
         assign_request, create_category, create_request, get_request_detail,
-        list_category_admin, list_categories, list_requests, set_category_active,
-        transition_request,
+        list_assignable_members, list_assignable_teams, list_category_admin,
+        list_categories, list_requests, set_category_active, transition_request,
     )
 
     data = service_request_fixture
@@ -225,6 +225,15 @@ def test_request_category_submission_assignment_and_closure_are_audited(service_
     assert any(row["request_id"] == request_id for row in list_requests(
         actor_employee_id=data["requester_id"]
     ))
+
+    assignable_teams = list_assignable_teams(
+        actor_employee_id=data["requester_id"], request_id=request_id
+    )
+    assert [team["team_id"] for team in assignable_teams] == [data["team_id"]]
+    assignable_members = list_assignable_members(
+        actor_employee_id=data["requester_id"], request_id=request_id
+    )
+    assert any(member["employee_id"] == data["assignee_id"] for member in assignable_members)
 
     assign_request(
         actor_employee_id=data["requester_id"],
@@ -260,7 +269,7 @@ def test_request_category_submission_assignment_and_closure_are_audited(service_
         cursor.execute(
             """SELECT event_key FROM audit_events
                WHERE target_type='service_request' AND target_id=%s
-               ORDER BY audit_event_id""",
+               ORDER BY audit_id""",
             (str(request_id),),
         )
         events = [row[0] for row in cursor.fetchall()]

@@ -24,8 +24,9 @@ TRANSITIONS = {
 def _context(cur, request_id: int, *, lock: bool = False):
     """Load trusted requester, team and department context."""
     cur.execute(
-        """SELECT r.requester_employee_id,r.assigned_team_id,
-                  COALESCE(t.department_id,e.department_id)
+        """SELECT r.requester_employee_id AS requester_employee_id,
+                  r.assigned_team_id AS assigned_team_id,
+                  COALESCE(t.department_id,e.department_id) AS department_id
            FROM service_requests r
            JOIN employees e ON e.employee_id=r.requester_employee_id
            LEFT JOIN teams t ON t.team_id=r.assigned_team_id
@@ -35,7 +36,15 @@ def _context(cur, request_id: int, *, lock: bool = False):
     row = cur.fetchone()
     if not row:
         return None
-    return ResourceContext(owner_employee_id=row[0], team_id=row[1], department_id=row[2])
+    if isinstance(row, dict):
+        owner_employee_id = row["requester_employee_id"]
+        team_id = row["assigned_team_id"]
+        department_id = row["department_id"]
+    else:
+        owner_employee_id, team_id, department_id = row
+    return ResourceContext(
+        owner_employee_id=owner_employee_id, team_id=team_id, department_id=department_id
+    )
 
 
 def list_categories(*, include_inactive: bool = False) -> list[dict]:
@@ -259,12 +268,13 @@ def get_request_detail(*, actor_employee_id: int, request_id: int) -> dict:
     try:
         cur.execute(
             """SELECT r.*,e.full_name AS requester_name,
-                      a.full_name AS assignee_name,t.team_name,
+                      a.full_name AS assignee_name,t.team_name,c.category_name,
                       COALESCE(t.department_id,e.department_id) AS department_id
                FROM service_requests r
                JOIN employees e ON e.employee_id=r.requester_employee_id
                LEFT JOIN employees a ON a.employee_id=r.assigned_employee_id
                LEFT JOIN teams t ON t.team_id=r.assigned_team_id
+               LEFT JOIN service_request_categories c ON c.category_id=r.category_id
                WHERE r.request_id=%s""",
             (request_id,),
         )
