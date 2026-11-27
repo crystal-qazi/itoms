@@ -75,6 +75,7 @@ def workflow_fixture():
             "change.create", "change.read", "change.update",
             "release.create", "release.read", "release.update",
             "approvals.create", "sqa.signoff.create",
+            "service.inventory.read", "service.inventory.create", "service.inventory.update",
         )
         for permission_key in permissions:
             cur.execute(
@@ -231,6 +232,7 @@ def workflow_fixture():
             f"DELETE FROM audit_events WHERE actor_employee_id IN ({marks})",
             ids,
         )
+        cur.execute("DELETE FROM service_records WHERE service_key LIKE %s", (f"SVC-IT-{suffix}-%",))
         cur.execute(f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})", ids)
         cur.execute(f"DELETE FROM employee_team_memberships WHERE employee_id IN ({marks})", ids)
         cur.execute(f"DELETE FROM team_management_assignments WHERE manager_employee_id IN ({marks})", ids)
@@ -817,6 +819,86 @@ def test_release_approval_rejects_cross_department_approver(workflow_fixture):
             (str(release_id),),
         )
         assert cur.fetchone()[0] == 0
+    finally:
+        cur.close()
+        conn.close()
+
+
+
+def test_service_inventory_department_scope_uses_trusted_team_department(workflow_fixture):
+    from itoms.services.service_inventory import (
+        ServiceInventoryError, create_service_record, list_service_records,
+        list_service_teams,
+    )
+
+    data = workflow_fixture
+    own_id = create_service_record(
+        actor_employee_id=data["requester"],
+        service_key=f"SVC-IT-{data['suffix']}-OWN",
+        service_name="Department-owned service",
+        service_type="APPLICATION",
+        owner_team_id=data["team_a"],
+    )
+
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """INSERT INTO teams (department_id,team_name,is_active)
+               VALUES (%s,%s,TRUE)""",
+            (data["other_department_id"], f"Other Service Team {data['suffix']}"),
+        )
+        other_team = int(cur.lastrowid)
+        cur.execute(
+            """INSERT INTO service_records
+               (service_key,service_name,service_type,owner_team_id,criticality)
+               VALUES (%s,%s,'APPLICATION',%s,'HIGH')""",
+            (f"SVC-IT-{data['suffix']}-OTHER", "Other department confidential service", other_team),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    visible_ids = {row["service_id"] for row in list_service_records(actor_employee_id=data["requester"])}
+    assert own_id in visible_ids
+    assert all(row["service_name"] != "Other department confidential service"
+               for row in list_service_records(actor_employee_id=data["requester"]))
+    visible_team_ids = {row["team_id"] for row in list_service_teams(actor_employee_id=data["requester"])}
+    assert data["team_a"] in visible_team_ids
+    assert other_team not in visible_team_ids
+
+    with pytest.raises(ServiceInventoryError, match="Not authorized"):
+        create_service_record(
+            actor_employee_id=data["requester"],
+            service_key=f"SVC-IT-{data['suffix']}-DENIED",
+            service_name="Must not be created",
+            service_type="APPLICATION",
+            owner_team_id=other_team,
+        )
+
+
+def test_service_inventory_lifecycle_update_rechecks_scope(workflow_fixture):
+    from itoms.services.service_inventory import create_service_record, update_service_lifecycle
+
+    data = workflow_fixture
+    service_id = create_service_record(
+        actor_employee_id=data["requester"],
+        service_key=f"SVC-IT-{data['suffix']}-LIFE",
+        service_name="Lifecycle test service",
+        service_type="DATABASE",
+        owner_team_id=data["team_a"],
+    )
+    update_service_lifecycle(
+        actor_employee_id=data["requester"],
+        service_id=service_id,
+        lifecycle_status="ACTIVE",
+    )
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT lifecycle_status FROM service_records WHERE service_id=%s", (service_id,))
+        assert cur.fetchone() == ("ACTIVE",)
     finally:
         cur.close()
         conn.close()
