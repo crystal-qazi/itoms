@@ -11,7 +11,10 @@ def list_current_approvals(employee_id: int, limit: int = 100):
             FROM approval_requests r JOIN approval_steps s
               ON s.approval_request_id=r.approval_request_id AND s.step_number=r.current_step
             JOIN employees e ON e.employee_id=r.requested_by
-            WHERE r.status='PENDING' AND s.approver_employee_id=%s AND s.decision='PENDING'
-            ORDER BY r.created_at ASC LIMIT %s""",(employee_id,limit))
+            JOIN employees approver ON approver.employee_id=s.approver_employee_id
+              AND approver.is_active=TRUE
+            WHERE r.status='PENDING' AND s.approver_employee_id=%s
+              AND approver.employee_id=%s AND s.decision='PENDING'
+            ORDER BY r.created_at ASC LIMIT %s""",(employee_id,employee_id,limit))
         return cur.fetchall()
     finally: cur.close(); conn.close()

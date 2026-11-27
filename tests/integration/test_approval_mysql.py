@@ -61,6 +61,18 @@ def approval_fixture(mysql_app):
             )
             employee_ids.append(int(cursor.lastrowid))
         requester, approver_one, approver_two = employee_ids
+        cursor.execute(
+            "INSERT INTO departments (department_name) VALUES (%s)",
+            (f"Approval Outsider {suffix}",),
+        )
+        outsider_department_id = int(cursor.lastrowid)
+        cursor.execute(
+            """INSERT INTO employees
+               (employee_code,full_name,department_id,is_active)
+               VALUES (%s,%s,%s,TRUE)""",
+            (f"IT-{suffix}-outsider", "Integration outsider", outsider_department_id),
+        )
+        outsider = int(cursor.lastrowid)
 
         cursor.execute(
             "INSERT INTO application_roles (role_name,description) VALUES (%s,%s)",
@@ -96,6 +108,8 @@ def approval_fixture(mysql_app):
         "requester": requester,
         "approver_one": approver_one,
         "approver_two": approver_two,
+        "outsider": outsider,
+        "outsider_department_id": outsider_department_id,
         "role_id": role_id,
     }
     yield fixture
@@ -103,7 +117,7 @@ def approval_fixture(mysql_app):
     cleanup = get_connection()
     cur = cleanup.cursor()
     try:
-        ids = (requester, approver_one, approver_two)
+        ids = (requester, approver_one, approver_two, outsider)
         placeholders = ",".join(["%s"] * len(ids))
         cur.execute(
             f"SELECT approval_request_id FROM approval_requests WHERE requested_by IN ({placeholders})",
@@ -134,7 +148,8 @@ def approval_fixture(mysql_app):
         cur.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
         cur.execute("DELETE FROM application_roles WHERE role_id=%s", (role_id,))
         cur.execute(f"DELETE FROM employees WHERE employee_id IN ({placeholders})", ids)
-        cur.execute("DELETE FROM departments WHERE department_id=%s", (department_id,))
+        cur.execute("DELETE FROM departments WHERE department_id IN (%s,%s)",
+            (department_id, outsider_department_id))
         cleanup.commit()
     except Exception:
         cleanup.rollback()
@@ -377,6 +392,97 @@ def test_concurrent_duplicate_decision_commits_only_once(approval_fixture, mysql
             (request_id,),
         )
         assert cursor.fetchone()[0] == 1
+    finally:
+        cursor.close()
+        connection.close()
+
+
+
+def test_only_active_current_approver_can_decide_and_inbox_is_assignment_scoped(
+    approval_fixture,
+):
+    from itoms.services.approval_inbox import list_current_approvals
+    from itoms.services.approvals import ApprovalError, decide_approval
+
+    data = approval_fixture
+    request_id = _create_request(data)
+    assert [row["approval_request_id"] for row in list_current_approvals(data["approver_one"])] == [request_id]
+    assert list_current_approvals(data["approver_two"]) == []
+    assert list_current_approvals(data["outsider"]) == []
+
+    with pytest.raises(ApprovalError, match="current approver"):
+        decide_approval(
+            actor_employee_id=data["approver_two"],
+            request_id=request_id,
+            decision="APPROVED",
+        )
+    with pytest.raises(ApprovalError, match="current approver"):
+        decide_approval(
+            actor_employee_id=data["outsider"],
+            request_id=request_id,
+            decision="APPROVED",
+        )
+
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "UPDATE employees SET is_active=FALSE WHERE employee_id=%s",
+            (data["approver_one"],),
+        )
+        connection.commit()
+    finally:
+        cursor.close()
+        connection.close()
+
+    assert list_current_approvals(data["approver_one"]) == []
+    with pytest.raises(ApprovalError, match="current approver"):
+        decide_approval(
+            actor_employee_id=data["approver_one"],
+            request_id=request_id,
+            decision="APPROVED",
+        )
+
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT status FROM approval_requests WHERE approval_request_id=%s",
+            (request_id,),
+        )
+        assert cursor.fetchone() == ("PENDING",)
+        cursor.execute(
+            """SELECT COUNT(*) FROM approval_history
+               WHERE approval_request_id=%s AND action_key='APPROVED'""",
+            (request_id,),
+        )
+        assert cursor.fetchone()[0] == 0
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def test_non_requester_cannot_cancel_without_cancel_permission(approval_fixture):
+    from itoms.services.approvals import ApprovalError, cancel_approval
+
+    data = approval_fixture
+    request_id = _create_request(data)
+    with pytest.raises(ApprovalError, match="Not authorized"):
+        cancel_approval(actor_employee_id=data["outsider"], request_id=request_id)
+
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT status FROM approval_requests WHERE approval_request_id=%s",
+            (request_id,),
+        )
+        assert cursor.fetchone() == ("PENDING",)
+        cursor.execute(
+            "SELECT COUNT(*) FROM approval_history WHERE approval_request_id=%s AND action_key='CANCELLED'",
+            (request_id,),
+        )
+        assert cursor.fetchone()[0] == 0
     finally:
         cursor.close()
         connection.close()
