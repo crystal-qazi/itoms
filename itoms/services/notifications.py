@@ -16,11 +16,14 @@ class NotificationError(ValueError):
 
 def _valid_email_address(value: str | None) -> bool:
     """Accept a single mailbox address without header injection or display-name ambiguity."""
-    if not value or any(char in value for char in "\\r\\n"):
+    if not value or any(char in value for char in "\r\n"):
         return False
-    parsed = parseaddr(value.strip())[1]
-    return bool(parsed and parsed == value.strip() and "@" in parsed and len(parsed) <= 254)
-
+    address = parseaddr(value.strip())[1]
+    if (not address or address != value.strip() or address.count("@") != 1
+            or any(char.isspace() for char in address) or len(address) > 254):
+        return False
+    local_part, domain = address.rsplit("@", 1)
+    return bool(local_part and domain)
 
 def create_notification(*, actor_employee_id: int, recipient_employee_id: int,
                         notification_type: str, title: str, body: str,

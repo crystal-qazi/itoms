@@ -71,3 +71,10 @@ def test_notification_rejects_unsupported_channel_before_database(monkeypatch):
             actor_employee_id=1, recipient_employee_id=2,
             notification_type="TEST", title="Title", body="Body", channels=("SMS",),
         )
+
+
+def test_email_address_validation_rejects_header_injection_and_malformed_values():
+    assert notifications._valid_email_address("itoms@example.invalid")
+    assert not notifications._valid_email_address("itoms@example.invalid\r\nBcc: attacker@example.invalid")
+    assert not notifications._valid_email_address("missing-domain@")
+    assert not notifications._valid_email_address("two@@example.invalid")
