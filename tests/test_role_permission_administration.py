@@ -66,7 +66,7 @@ def test_grant_role_permission_requires_management_permission(monkeypatch):
 
 
 def test_revoke_role_permission_is_audited(monkeypatch):
-    connection = Connection([("Change Manager",), (23,)], rowcount=1)
+    connection = Connection([("Change Manager",), None, (23,)], rowcount=1)
     monkeypatch.setattr(identity_admin, "has_permission", lambda *_: True)
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
 
