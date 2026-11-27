@@ -26,8 +26,8 @@ SELECT 'it''s; valid', "double;quoted";
 
 
 def test_splitter_handles_escaped_quotes_and_trailing_statement():
-    sql = r"""INSERT INTO sample(value) VALUES ('a\\';b'); SELECT 1"""
+    sql = "INSERT INTO sample(value) VALUES ('a\\\\';b'); SELECT 1"
     assert split_sql_statements(sql) == [
-        r"""INSERT INTO sample(value) VALUES ('a\\';b')""",
+        "INSERT INTO sample(value) VALUES ('a\\\\';b')",
         "SELECT 1",
     ]
