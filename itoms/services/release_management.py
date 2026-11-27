@@ -111,11 +111,14 @@ def create_release(*,actor_employee_id:int,release_key:str,version_label:str,rel
     conn=get_connection(); cur=conn.cursor()
     try:
         if service_id is not None:
-            cur.execute("SELECT service_id,owner_team_id FROM service_records WHERE service_id=%s",(service_id,))
+            cur.execute("""SELECT s.service_id,s.owner_team_id,t.department_id
+                FROM service_records s LEFT JOIN teams t ON t.team_id=s.owner_team_id
+                WHERE s.service_id=%s""",(service_id,))
             service=cur.fetchone()
             if not service: raise ReleaseError("Service record not found.")
             if not has_permission(actor_employee_id,"service.inventory.read",
-                ResourceContext(team_id=service[1],resource_type="service",resource_id=str(service[0]))):
+                ResourceContext(team_id=service[1],department_id=service[2],
+                    resource_type="service",resource_id=str(service[0]))):
                 raise ReleaseError("Not authorized to link this service.")
         if change_id is not None:
             cur.execute("""SELECT c.change_id,c.requested_by,e.department_id
