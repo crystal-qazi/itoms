@@ -81,6 +81,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from itoms.web.reports import reports_bp
     from itoms.web.problems import problems_bp
     from itoms.web.sla_admin import sla_admin_bp
+    from itoms.web.documents import documents_bp
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(grafana_bp)
@@ -102,5 +103,6 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(reports_bp)
     app.register_blueprint(problems_bp)
     app.register_blueprint(sla_admin_bp)
+    app.register_blueprint(documents_bp)
     register_cli(app)
     return app
