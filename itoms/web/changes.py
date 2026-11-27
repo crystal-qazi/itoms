@@ -7,15 +7,30 @@ from itoms.services.authorization import has_permission
 from itoms.services.change_management import ChangeError,CHANGE_TYPES,RISKS,create_change,get_change,list_changes,transition_change
 from itoms.db.connection import get_connection
 change_bp=Blueprint("changes",__name__,url_prefix="/changes")
-def _owners():
+def _owners(department_id):
+    """Return active employees only from the trusted record department."""
+    if department_id is None:
+        return []
     conn=get_connection(); cur=conn.cursor(dictionary=True)
-    try: cur.execute("SELECT employee_id,full_name FROM employees WHERE is_active=TRUE ORDER BY full_name"); return cur.fetchall()
-    finally: cur.close(); conn.close()
+    try:
+        cur.execute("""SELECT employee_id,full_name FROM employees
+            WHERE is_active=TRUE AND department_id=%s ORDER BY full_name,employee_id""",
+            (department_id,))
+        return cur.fetchall()
+    finally:
+        cur.close(); conn.close()
 @change_bp.get("/")
 @login_required
 def index():
     can_create=has_permission(g.employee_id,"change.create")
-    return render_template("changes/index.html",changes=list_changes(actor_employee_id=g.employee_id),can_create=can_create,owners=_owners() if can_create else [],change_types=sorted(CHANGE_TYPES),risks=sorted(RISKS),csrf_token_value=session.get("csrf_token",""))
+    actor_conn=get_connection(); actor_cur=actor_conn.cursor()
+    try:
+        actor_cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",(g.employee_id,))
+        actor=actor_cur.fetchone()
+    finally:
+        actor_cur.close(); actor_conn.close()
+    department_id=actor[0] if actor else None
+    return render_template("changes/index.html",changes=list_changes(actor_employee_id=g.employee_id),can_create=can_create,owners=_owners(department_id) if can_create else [],change_types=sorted(CHANGE_TYPES),risks=sorted(RISKS),csrf_token_value=session.get("csrf_token",""))
 @change_bp.post("/")
 @login_required
 def create():
@@ -31,7 +46,7 @@ def create():
 def detail(change_id:int):
     try: item=get_change(actor_employee_id=g.employee_id,change_id=change_id)
     except ChangeError: return "Change record not found",404
-    return render_template("changes/detail.html",item=item,transitions=["SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"],approvers=_owners() if item["can_update"] and item["status"] in {"DRAFT","REJECTED"} else [],csrf_token_value=session.get("csrf_token",""))
+    return render_template("changes/detail.html",item=item,transitions=["SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"],approvers=_owners(item.get("department_id")) if item["can_update"] and item["status"] in {"DRAFT","REJECTED"} else [],csrf_token_value=session.get("csrf_token",""))
 @change_bp.post("/<int:change_id>/status")
 @login_required
 def status(change_id:int):

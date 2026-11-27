@@ -742,3 +742,20 @@ def test_release_transition_rolls_back_when_audit_insert_fails(workflow_fixture)
     finally:
         cur.close()
         conn.close()
+
+
+
+def test_change_and_release_employee_choices_are_department_scoped(workflow_fixture):
+    from itoms.web.changes import _owners
+    from itoms.web.releases import _approvers
+
+    data = workflow_fixture
+    owner_ids = {row["employee_id"] for row in _owners(data["department_id"])}
+    approver_ids = {row["employee_id"] for row in _approvers(data["department_id"])}
+
+    assert data["requester"] in owner_ids
+    assert data["approver_one"] in owner_ids
+    assert data["outsider"] not in owner_ids
+    assert data["requester"] in approver_ids
+    assert data["approver_two"] in approver_ids
+    assert data["outsider"] not in approver_ids
