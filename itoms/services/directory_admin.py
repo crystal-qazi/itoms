@@ -43,8 +43,10 @@ def list_directory(*, actor_employee_id: int) -> dict:
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """SELECT employee_id,employee_code,full_name,email,job_title,is_active
-               FROM employees WHERE department_id=%s
+            """SELECT e.employee_id,e.employee_code,e.full_name,e.email,e.job_title,e.is_active,
+                      a.account_status
+               FROM employees e LEFT JOIN user_accounts a ON a.employee_id=e.employee_id
+               WHERE e.department_id=%s
                ORDER BY is_active DESC,full_name""",
             (department_id,),
         )
@@ -216,6 +218,119 @@ def set_team_active(
         cur.close()
         conn.close()
 
+
+
+
+def deactivate_employee(*, actor_employee_id: int, employee_id: int) -> bool:
+    """Disable an employee only after team/role access is explicitly removed; revoke all sessions."""
+    if (not isinstance(actor_employee_id, int) or isinstance(actor_employee_id, bool)
+            or actor_employee_id <= 0 or not isinstance(employee_id, int)
+            or isinstance(employee_id, bool) or employee_id <= 0):
+        raise DirectoryAdministrationError("Actor and employee IDs must be positive integers.")
+    if actor_employee_id == employee_id:
+        raise DirectoryAdministrationError("Administrators cannot deactivate their own employee account.")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT department_id FROM employees WHERE employee_id=%s",
+            (employee_id,),
+        )
+        target = cur.fetchone()
+        if not target or target[0] is None:
+            raise DirectoryAdministrationError("Employee is unavailable for deactivation.")
+        department_id = int(target[0])
+        context = ResourceContext(
+            owner_employee_id=employee_id, department_id=department_id,
+        )
+        if not has_permission(actor_employee_id, "identity.directory.manage", context):
+            raise DirectoryAdministrationError("Not authorized to deactivate this employee.")
+
+        # Lock actor and target in deterministic employee-ID order.
+        lock_ids = sorted({actor_employee_id, employee_id})
+        marks = ",".join(["%s"] * len(lock_ids))
+        cur.execute(
+            f"""SELECT employee_id,department_id,is_active FROM employees
+                WHERE employee_id IN ({marks}) ORDER BY employee_id FOR UPDATE""",
+            tuple(lock_ids),
+        )
+        locked = {int(row[0]): row for row in cur.fetchall()}
+        actor = locked.get(actor_employee_id)
+        employee = locked.get(employee_id)
+        if not actor or not actor[2] or actor[1] != department_id:
+            raise DirectoryAdministrationError("Actor department changed; retry the operation.")
+        if not employee or employee[1] != department_id:
+            raise DirectoryAdministrationError("Employee department changed; retry the operation.")
+        if not employee[2]:
+            conn.commit()
+            return False
+
+        cur.execute(
+            "SELECT COUNT(*) FROM employee_team_memberships WHERE employee_id=%s",
+            (employee_id,),
+        )
+        membership_count = int(cur.fetchone()[0])
+        cur.execute(
+            "SELECT COUNT(*) FROM team_management_assignments WHERE manager_employee_id=%s",
+            (employee_id,),
+        )
+        manager_count = int(cur.fetchone()[0])
+        cur.execute(
+            """SELECT COUNT(*) FROM employee_role_assignments
+               WHERE employee_id=%s AND is_active=TRUE""",
+            (employee_id,),
+        )
+        active_role_count = int(cur.fetchone()[0])
+        if membership_count or manager_count or active_role_count:
+            raise DirectoryAdministrationError(
+                "Remove team memberships and manager mappings, and revoke active roles before deactivating this employee."
+            )
+
+        cur.execute(
+            """SELECT account_id FROM user_accounts
+               WHERE employee_id=%s FOR UPDATE""",
+            (employee_id,),
+        )
+        account = cur.fetchone()
+        if account:
+            account_id = int(account[0])
+            cur.execute(
+                """UPDATE user_accounts SET account_status='DISABLED',
+                   session_version=session_version+1,mfa_enabled=FALSE,
+                   totp_secret_encrypted=NULL,failed_login_count=0,locked_until=NULL
+                   WHERE account_id=%s""",
+                (account_id,),
+            )
+            cur.execute(
+                """UPDATE user_sessions SET revoked_at=UTC_TIMESTAMP(),
+                   revoke_reason='ACCOUNT_DISABLED'
+                   WHERE account_id=%s AND revoked_at IS NULL""",
+                (account_id,),
+            )
+            cur.execute("DELETE FROM account_recovery_codes WHERE account_id=%s", (account_id,))
+        cur.execute(
+            "UPDATE employees SET is_active=FALSE WHERE employee_id=%s",
+            (employee_id,),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'IDENTITY_EMPLOYEE_DEACTIVATED','employee',%s,'SUCCESS',
+                       JSON_OBJECT('account_disabled',%s,'sessions_revoked',%s))""",
+            (
+                actor_employee_id, str(employee_id), bool(account),
+                int(cur.rowcount) if account else 0,
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 def create_directory_employee(
     *, actor_employee_id: int, employee_code: str, full_name: str,

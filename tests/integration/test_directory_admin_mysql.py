@@ -1,6 +1,7 @@
 """MySQL integration coverage for department-scoped directory administration."""
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 
@@ -125,8 +126,8 @@ def directory_admin_fixture():
 
 def test_department_scoped_directory_membership_and_manager_workflow(directory_admin_fixture):
     from itoms.services.directory_admin import (
-        assign_team_manager, assign_team_membership, create_team, list_directory,
-        remove_team_manager, remove_team_membership, set_team_active,
+        assign_team_manager, assign_team_membership, create_team, deactivate_employee,
+        list_directory, remove_team_manager, remove_team_membership, set_team_active,
     )
     from itoms.services.directory_admin import DirectoryAdministrationError
 
@@ -212,3 +213,65 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
         row["assignment_id"] == assignment_id
         for row in list_directory(actor_employee_id=actor_id)["role_assignments"]
     )
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO user_accounts
+               (employee_id,username,password_hash,account_status,session_version)
+               VALUES (%s,%s,'test-hash','ACTIVE',1)""",
+            (member_id, f"directory-member-{member_id}"),
+        )
+        account_id = int(cursor.lastrowid)
+        token_hash = hashlib.sha256(f"directory-session-{member_id}".encode()).hexdigest()
+        cursor.execute(
+            """INSERT INTO user_sessions
+               (account_id,token_hash,session_version,last_activity_at,expires_at)
+               VALUES (%s,%s,1,UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 60 MINUTE))""",
+            (account_id, token_hash),
+        )
+        cursor.execute(
+            "INSERT INTO account_recovery_codes (account_id,code_hash) VALUES (%s,'test-recovery-hash')",
+            (account_id,),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+        connection.close()
+
+    assert deactivate_employee(actor_employee_id=actor_id, employee_id=member_id) is True
+    assert deactivate_employee(actor_employee_id=actor_id, employee_id=member_id) is False
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT is_active FROM employees WHERE employee_id=%s", (member_id,))
+        assert cursor.fetchone()[0] == 0
+        cursor.execute(
+            "SELECT account_status,session_version,mfa_enabled,totp_secret_encrypted FROM user_accounts WHERE account_id=%s",
+            (account_id,),
+        )
+        account_status, session_version, mfa_enabled, totp_secret = cursor.fetchone()
+        assert (account_status, session_version, mfa_enabled, totp_secret) == ("DISABLED", 2, 0, None)
+        cursor.execute(
+            "SELECT revoked_at,revoke_reason FROM user_sessions WHERE account_id=%s",
+            (account_id,),
+        )
+        revoked_at, revoke_reason = cursor.fetchone()
+        assert revoked_at is not None and revoke_reason == "ACCOUNT_DISABLED"
+        cursor.execute("SELECT COUNT(*) FROM account_recovery_codes WHERE account_id=%s", (account_id,))
+        assert cursor.fetchone()[0] == 0
+        cursor.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE actor_employee_id=%s AND event_key='IDENTITY_EMPLOYEE_DEACTIVATED'
+                 AND target_id=%s""",
+            (actor_id, str(member_id)),
+        )
+        assert cursor.fetchone()[0] == 1
+    finally:
+        cursor.close()
+        connection.close()

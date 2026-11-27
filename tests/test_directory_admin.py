@@ -83,3 +83,22 @@ def test_set_team_active_rejects_invalid_values_before_database(monkeypatch):
     )
     with pytest.raises(DirectoryAdministrationError, match="boolean"):
         directory_admin.set_team_active(actor_employee_id=1, team_id=2, is_active="false")
+
+
+
+def test_deactivate_employee_rejects_self_deactivation_before_database(monkeypatch):
+    monkeypatch.setattr(
+        directory_admin, "get_connection",
+        lambda: pytest.fail("database must not be opened for self-deactivation"),
+    )
+    with pytest.raises(DirectoryAdministrationError, match="own employee account"):
+        directory_admin.deactivate_employee(actor_employee_id=7, employee_id=7)
+
+
+def test_deactivate_employee_rejects_invalid_ids_before_database(monkeypatch):
+    monkeypatch.setattr(
+        directory_admin, "get_connection",
+        lambda: pytest.fail("database must not be opened for invalid IDs"),
+    )
+    with pytest.raises(DirectoryAdministrationError, match="positive integers"):
+        directory_admin.deactivate_employee(actor_employee_id=1, employee_id=0)

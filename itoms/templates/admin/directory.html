@@ -37,7 +37,9 @@
   {% for employee in employees %}<tr>
     <td><strong>{{ employee.full_name }}</strong><div class="small text-secondary">{{ employee.employee_code }} · {{ employee.email or 'No email' }}</div></td>
     <td>{{ employee.job_title or '—' }}</td>
-    <td>{% if employee.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+    <td>{% if employee.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}<div class="small text-secondary">Account: {{ employee.account_status or 'No login' }}</div>
+      {% if employee.is_active and employee.employee_id != actor_employee_id %}<form method="post" action="{{ url_for('directory_admin.deactivate_employee_route') }}" class="mt-2"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="employee_id" value="{{ employee.employee_id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Deactivate employee</button></form>{% endif %}
+    </td>
     <td><form method="post" action="{{ url_for('directory_admin.assign_membership') }}" class="d-flex flex-wrap gap-2 align-items-end">
       <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="employee_id" value="{{ employee.employee_id }}">
       <div><label class="form-label small" for="team-{{ employee.employee_id }}">Team</label><select class="form-select form-select-sm" id="team-{{ employee.employee_id }}" name="team_id" required><option value="">Select team</option>{% for team in teams if team.is_active %}<option value="{{ team.team_id }}">{{ team.team_name }}</option>{% endfor %}</select></div>

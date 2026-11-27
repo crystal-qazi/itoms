@@ -9,8 +9,8 @@ from itoms.security.decorators import login_required
 from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.directory_admin import (
     DirectoryAdministrationError, assign_team_manager, assign_team_membership,
-    create_directory_employee, create_team, list_directory, remove_team_manager,
-    remove_team_membership, set_team_active,
+    create_directory_employee, create_team, deactivate_employee, list_directory,
+    remove_team_manager, remove_team_membership, set_team_active,
 )
 from itoms.services.identity_admin import (
     IdentityAdministrationError, assign_role, revoke_role_assignment,
@@ -45,6 +45,7 @@ def index():
         **data,
         can_create=has_permission(g.employee_id, "identity.accounts.create", department_context),
         can_assign_roles=has_permission(g.employee_id, "identity.roles.assign", department_context),
+        actor_employee_id=g.employee_id,
         csrf_token_value=session.get("csrf_token", ""),
     )
 
@@ -102,6 +103,22 @@ def create_employee():
         flash(f"Employee account created (employee ID {employee_id}). First-login password change is required.", "success")
     except (DirectoryAdministrationError, ValueError, TypeError) as exc:
         flash(str(exc) or "Could not create employee account.", "danger")
+    return _directory_redirect()
+
+
+@directory_admin_bp.post("/employees/deactivate")
+@login_required
+def deactivate_employee_route():
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        changed = deactivate_employee(
+            actor_employee_id=g.employee_id,
+            employee_id=int(request.form.get("employee_id", "")),
+        )
+        flash("Employee account and all sessions disabled." if changed else "Employee was already inactive.", "success")
+    except (DirectoryAdministrationError, ValueError, TypeError) as exc:
+        flash(str(exc) or "Could not deactivate employee.", "danger")
     return _directory_redirect()
 
 
