@@ -108,14 +108,7 @@ def assign_employee_to_team(
                    (actor_employee_id,event_key,target_type,target_id,outcome,details)
                    VALUES (%s,'DIRECTORY_TEAM_MEMBERSHIP_ASSIGNED','employee_team_membership',%s,
                            'SUCCESS',JSON_OBJECT('team_id',%s,'primary',%s))""",
-                (actor_employee_id, str(employee_id), team_id, bool(primary)),
-            )
-        if actor_employee_id is not None:
-            cur.execute(
-                """INSERT INTO audit_events
-                   (actor_employee_id,event_key,target_type,target_id,outcome)
-                   VALUES (%s,'DIRECTORY_TEAM_MEMBERSHIP_REMOVED','employee_team_membership',%s,'SUCCESS')""",
-                (actor_employee_id, str(employee_id)),
+                (actor_employee_id, f"{employee_id}:{team_id}", team_id, bool(primary)),
             )
         conn.commit()
     except Exception:
@@ -132,10 +125,11 @@ def remove_employee_from_team(
     """Remove membership using the same employee -> team -> membership lock order."""
     if employee_id <= 0 or team_id <= 0:
         raise DirectoryError("Employee and team IDs must be positive.")
+    authorized_department_id = None
     if actor_employee_id is not None:
         if actor_employee_id <= 0:
             raise DirectoryError("Actor employee ID must be positive.")
-        _authorize_membership_change(
+        authorized_department_id = _authorize_membership_change(
             actor_employee_id=actor_employee_id, employee_id=employee_id, team_id=team_id
         )
     conn = get_connection()
@@ -144,17 +138,25 @@ def remove_employee_from_team(
         # Do not start by locking the membership: assignment locks the employee first.
         # A shared parent-first order prevents the assign/remove deadlock cycle.
         cur.execute(
-            "SELECT employee_id FROM employees WHERE employee_id=%s FOR UPDATE",
+            "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
             (employee_id,),
         )
-        if not cur.fetchone():
+        employee = cur.fetchone()
+        if not employee:
             raise DirectoryError("Employee does not exist.")
+        if authorized_department_id is not None and (
+            not employee[1] or employee[0] != authorized_department_id
+        ):
+            raise DirectoryError("Employee department changed; retry the directory operation.")
         cur.execute(
-            "SELECT team_id FROM teams WHERE team_id=%s FOR UPDATE",
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
             (team_id,),
         )
-        if not cur.fetchone():
+        team = cur.fetchone()
+        if not team:
             raise DirectoryError("Team does not exist.")
+        if authorized_department_id is not None and team[0] != authorized_department_id:
+            raise DirectoryError("Team department changed; retry the directory operation.")
         cur.execute(
             """SELECT is_primary FROM employee_team_memberships
                WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
@@ -177,6 +179,13 @@ def remove_employee_from_team(
             "DELETE FROM employee_team_memberships WHERE employee_id=%s AND team_id=%s",
             (employee_id, team_id),
         )
+        if actor_employee_id is not None:
+            cur.execute(
+                """INSERT INTO audit_events
+                   (actor_employee_id,event_key,target_type,target_id,outcome)
+                   VALUES (%s,'DIRECTORY_TEAM_MEMBERSHIP_REMOVED','employee_team_membership',%s,'SUCCESS')""",
+                (actor_employee_id, f"{employee_id}:{team_id}"),
+            )
         conn.commit()
     except Exception:
         conn.rollback()
