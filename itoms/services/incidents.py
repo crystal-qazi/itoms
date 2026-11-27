@@ -39,13 +39,30 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
     cur = conn.cursor()
     try:
         requester = requester_employee_id or actor_employee_id
-        cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE", (requester,))
-        if not cur.fetchone():
+        cur.execute("SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE", (requester,))
+        requester_row = cur.fetchone()
+        if not requester_row:
             raise IncidentError("Requester does not exist or is inactive.")
+        requester_department_id = requester_row[0]
+        team_department_id = None
         if assigned_team_id is not None:
-            cur.execute("SELECT 1 FROM teams WHERE team_id=%s AND is_active=TRUE", (assigned_team_id,))
-            if not cur.fetchone():
+            cur.execute("SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE", (assigned_team_id,))
+            team_row = cur.fetchone()
+            if not team_row:
                 raise IncidentError("Assigned team does not exist or is inactive.")
+            team_department_id = team_row[0]
+        create_context = ResourceContext(
+            owner_employee_id=requester,
+            team_id=assigned_team_id,
+            department_id=team_department_id if assigned_team_id is not None else requester_department_id,
+        )
+        if not has_permission(actor_employee_id, "incident.create", create_context):
+            raise IncidentError("Not authorized to create incidents for this requester or team.")
+        if assigned_team_id is not None and not has_permission(
+            actor_employee_id, "incident.assign",
+            ResourceContext(team_id=assigned_team_id, department_id=team_department_id),
+        ):
+            raise IncidentError("Not authorized to assign new incidents to the selected team.")
         if category_id is not None:
             cur.execute("SELECT 1 FROM service_categories WHERE category_id=%s AND is_active=TRUE", (category_id,))
             if not cur.fetchone():
