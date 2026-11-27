@@ -55,15 +55,17 @@ def directory_admin_fixture():
             (f"Directory Admin Role {suffix}", "Temporary directory test role"),
         )
         role_id = int(cursor.lastrowid)
-        cursor.execute(
-            "SELECT permission_id FROM permissions WHERE permission_key='identity.directory.manage'"
-        )
-        permission = cursor.fetchone()
-        assert permission, "identity.directory.manage must be seeded by migration 040"
-        cursor.execute(
-            "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
-            (role_id, permission[0]),
-        )
+        for permission_key in ("identity.directory.manage", "identity.roles.assign"):
+            cursor.execute(
+                "SELECT permission_id FROM permissions WHERE permission_key=%s",
+                (permission_key,),
+            )
+            permission = cursor.fetchone()
+            assert permission, f"{permission_key} must be seeded by the identity migrations"
+            cursor.execute(
+                "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+                (role_id, permission[0]),
+            )
         cursor.execute(
             "INSERT INTO application_roles (role_name,description) VALUES (%s,%s)",
             (f"Directory Member Role {suffix}", "Temporary role for revocation integration test"),
