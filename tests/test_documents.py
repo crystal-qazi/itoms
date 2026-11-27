@@ -41,6 +41,18 @@ def test_document_share_expiry_validation_precedes_database(monkeypatch):
             permission="DOWNLOAD", expires_at="not-a-date",
         )
 
+def test_permanent_delete_rejects_invalid_approval_id_before_database(monkeypatch):
+    from itoms.services import documents
+    monkeypatch.setattr(
+        documents, "get_connection",
+        lambda: pytest.fail("database should not be opened for an invalid approval id"),
+    )
+    with pytest.raises(documents.DocumentError, match="approved document-deletion"):
+        documents.permanently_delete_document(
+            actor_employee_id=1, file_id=1, approval_request_id=1,
+        )
+
+
 def test_permanent_delete_returns_not_found_for_missing_document(monkeypatch):
     from itoms.services import documents
 
