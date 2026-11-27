@@ -182,7 +182,7 @@ def get_task_detail(*, actor_employee_id: int, task_id: int) -> dict:
         task["activity"] = cur.fetchall()
         return task
     finally:
-        cur.close(); cur.close()
+        cur.close()
         conn.close()
 
 def list_task_assignees(*, actor_employee_id: int) -> list[dict]:
