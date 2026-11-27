@@ -67,7 +67,7 @@ def sla_fixture():
                (ticket_number,title,description,requester_employee_id,assigned_employee_id,
                 assigned_team_id,status,priority,first_response_due_at)
                VALUES (%s,'SLA test incident','SLA integration test',%s,%s,%s,'OPEN','LOW',
-                       DATE_SUB(UTC_TIMESTAMP(),INTERVAL 120 MINUTE))""",
+                       DATE_SUB(UTC_TIMESTAMP(),INTERVAL 30 MINUTE))""",
             (f"INC-SLA-{suffix}", employee_id, employee_id, team_id),
         )
         ticket_id = int(cursor.lastrowid)
@@ -86,7 +86,6 @@ def sla_fixture():
     cleanup = get_connection()
     cursor = cleanup.cursor()
     try:
-        cursor.execute("SELECT escalation_event_id FROM incident_sla_escalation_events WHERE ticket_id=%s", (ticket_id,))
         cursor.execute("DELETE FROM incident_sla_escalation_events WHERE ticket_id=%s", (ticket_id,))
         cursor.execute(
             """DELETE o FROM notification_outbox o JOIN notifications n
