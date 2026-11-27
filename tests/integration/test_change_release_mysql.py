@@ -6,7 +6,9 @@ ITOMS_RUN_MYSQL_INTEGRATION=1.
 from __future__ import annotations
 
 import os
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -533,3 +535,210 @@ def test_managed_team_scope_requires_active_managed_team(workflow_fixture):
         conn.close()
 
     assert has_permission(data["approver_two"], "change.read", context) is False
+
+
+
+def test_concurrent_change_transitions_commit_once(workflow_fixture):
+    from itoms.services.change_management import ChangeError, transition_change
+
+    data = workflow_fixture
+    change_id = _create_change(data)
+    barrier = threading.Barrier(2)
+
+    def submit():
+        with data["app"].app_context():
+            barrier.wait(timeout=10)
+            try:
+                transition_change(
+                    actor_employee_id=data["requester"],
+                    change_id=change_id,
+                    new_status="SUBMITTED",
+                    details="Concurrent submission",
+                    approver_employee_ids=[data["approver_one"]],
+                )
+                return "committed"
+            except ChangeError:
+                return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: submit(), range(2)))
+
+    assert sorted(outcomes) == ["committed", "rejected"]
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM change_records WHERE change_id=%s", (change_id,))
+        assert cur.fetchone() == ("SUBMITTED",)
+        cur.execute(
+            "SELECT COUNT(*) FROM approval_requests WHERE resource_type='change' AND resource_id=%s",
+            (str(change_id),),
+        )
+        assert cur.fetchone()[0] == 1
+        cur.execute(
+            """SELECT COUNT(*) FROM change_activity
+               WHERE change_id=%s AND action_key='STATUS_SUBMITTED'""",
+            (change_id,),
+        )
+        assert cur.fetchone()[0] == 1
+        cur.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE event_key='CHANGE_STATUS_CHANGED' AND target_id=%s""",
+            (str(change_id),),
+        )
+        assert cur.fetchone()[0] == 1
+    finally:
+        cur.close()
+        conn.close()
+
+
+def test_concurrent_release_transitions_commit_once(workflow_fixture):
+    from itoms.services.release_management import ReleaseError, transition_release
+
+    data = workflow_fixture
+    release_id = _create_release(data)
+    barrier = threading.Barrier(2)
+
+    def transition(status):
+        with data["app"].app_context():
+            barrier.wait(timeout=10)
+            try:
+                transition_release(
+                    actor_employee_id=data["requester"],
+                    release_id=release_id,
+                    new_status=status,
+                )
+                return status
+            except ReleaseError:
+                return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(transition, ("IN_TEST", "CANCELLED")))
+
+    committed = [value for value in outcomes if value != "rejected"]
+    assert len(committed) == 1
+    final_status = committed[0]
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM software_releases WHERE release_id=%s", (release_id,))
+        assert cur.fetchone() == (final_status,)
+        cur.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE event_key='RELEASE_STATUS_CHANGED' AND target_id=%s""",
+            (str(release_id),),
+        )
+        assert cur.fetchone()[0] == 1
+    finally:
+        cur.close()
+        conn.close()
+
+
+def test_change_transition_rolls_back_when_audit_insert_fails(workflow_fixture):
+    from itoms.services.change_management import transition_change
+
+    data = workflow_fixture
+    change_id = _create_change(data)
+    trigger_name = f"itoms_chg_rb_{data['suffix']}"
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"""CREATE TRIGGER `{trigger_name}` BEFORE INSERT ON audit_events
+                FOR EACH ROW SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT='change transition rollback injection'"""
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    try:
+        with pytest.raises(Exception, match="change transition rollback injection"):
+            transition_change(
+                actor_employee_id=data["requester"],
+                change_id=change_id,
+                new_status="CANCELLED",
+                details="Rollback test",
+            )
+    finally:
+        conn = _db()
+        cur = conn.cursor()
+        try:
+            cur.execute(f"DROP TRIGGER IF EXISTS `{trigger_name}`")
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM change_records WHERE change_id=%s", (change_id,))
+        assert cur.fetchone() == ("DRAFT",)
+        cur.execute(
+            """SELECT COUNT(*) FROM change_activity
+               WHERE change_id=%s AND action_key='STATUS_CANCELLED'""",
+            (change_id,),
+        )
+        assert cur.fetchone()[0] == 0
+        cur.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE event_key='CHANGE_STATUS_CHANGED' AND target_id=%s""",
+            (str(change_id),),
+        )
+        assert cur.fetchone()[0] == 0
+    finally:
+        cur.close()
+        conn.close()
+
+
+def test_release_transition_rolls_back_when_audit_insert_fails(workflow_fixture):
+    from itoms.services.release_management import transition_release
+
+    data = workflow_fixture
+    release_id = _create_release(data)
+    trigger_name = f"itoms_rel_rb_{data['suffix']}"
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"""CREATE TRIGGER `{trigger_name}` BEFORE INSERT ON audit_events
+                FOR EACH ROW SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT='release transition rollback injection'"""
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    try:
+        with pytest.raises(Exception, match="release transition rollback injection"):
+            transition_release(
+                actor_employee_id=data["requester"],
+                release_id=release_id,
+                new_status="CANCELLED",
+            )
+    finally:
+        conn = _db()
+        cur = conn.cursor()
+        try:
+            cur.execute(f"DROP TRIGGER IF EXISTS `{trigger_name}`")
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM software_releases WHERE release_id=%s", (release_id,))
+        assert cur.fetchone() == ("PLANNED",)
+        cur.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE event_key='RELEASE_STATUS_CHANGED' AND target_id=%s""",
+            (str(release_id),),
+        )
+        assert cur.fetchone()[0] == 0
+    finally:
+        cur.close()
+        conn.close()
