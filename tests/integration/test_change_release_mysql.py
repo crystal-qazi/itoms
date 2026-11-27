@@ -917,6 +917,50 @@ def test_service_inventory_lifecycle_update_rechecks_scope(workflow_fixture):
 
 
 
+def test_engineering_task_pagination_filters_scope_before_limit(workflow_fixture):
+    from itoms.services.engineering_tasks import create_task, list_task_assignees, list_tasks
+
+    data = workflow_fixture
+    own_task = create_task(
+        actor_employee_id=data["requester"],
+        team_id=data["team_a"],
+        title="Authorized task survives pagination",
+    )
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO teams (department_id,team_name,is_active) VALUES (%s,%s,TRUE)",
+            (data["other_department_id"], f"Other Task Team {data['suffix']}"),
+        )
+        hidden_team = int(cur.lastrowid)
+        for index in range(4):
+            cur.execute(
+                """INSERT INTO engineering_tasks
+                   (task_number,title,team_id,created_by,priority,status)
+                   VALUES (%s,%s,%s,%s,'HIGH','BACKLOG')""",
+                (f"TASK-IT-{data['suffix']}-{index}", f"Hidden department task {index}",
+                 hidden_team, data["requester"]),
+            )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    rows = list_tasks(actor_employee_id=data["requester"], limit=1)
+    assert len(rows) == 1
+    assert rows[0]["task_id"] == own_task
+
+    assignees = list_task_assignees(actor_employee_id=data["requester"])
+    assert any(
+        row["employee_id"] == data["approver_one"]
+        and row["team_id"] == data["team_a"]
+        and row["team_name"].startswith("Workflow Team A")
+        for row in assignees
+    )
+    assert all(row["employee_id"] != data["outsider"] for row in assignees)
+
+
 def test_engineering_tasks_enforce_department_and_team_scope(workflow_fixture):
     from itoms.services.engineering_tasks import (
         TaskError, change_task_status, create_task, get_task_detail,
