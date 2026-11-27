@@ -118,7 +118,7 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
         assign_team_manager, assign_team_membership, list_directory,
         remove_team_manager, remove_team_membership,
     )
-    from itoms.services.directory import DirectoryError
+    from itoms.services.directory_admin import DirectoryAdministrationError
 
     data = directory_admin_fixture
     actor_id, manager_id, member_id = (
@@ -147,7 +147,7 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
         for row in listing["managers"]
     )
 
-    with pytest.raises(DirectoryError, match="Remove the manager assignment"):
+    with pytest.raises(DirectoryAdministrationError, match="Remove the manager assignment"):
         remove_team_membership(
             actor_employee_id=actor_id, employee_id=manager_id, team_id=team_id,
         )
