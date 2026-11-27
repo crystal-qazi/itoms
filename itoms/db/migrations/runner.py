@@ -58,6 +58,7 @@ def split_sql_statements(sql_text: str) -> list[str]:
             while index + 1 < length and sql_text[index:index + 2] != "*/":
                 index += 1
             index = min(index + 2, length)
+            buffer.append(" ")
             continue
         if char == ";":
             statement = "".join(buffer).strip()
