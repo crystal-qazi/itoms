@@ -250,7 +250,11 @@ def upload_document(
     opaque_id = str(uuid.uuid4())
     storage_key = f"files/{uuid.uuid4().hex}"
     path = _safe_storage_path(storage_key)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    root = _storage_root()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
     try:
         descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
@@ -343,7 +347,7 @@ def download_document(*, employee_id: int, file_id: int) -> tuple[bytes, str, st
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """SELECT original_filename,storage_key,detected_mime_type,
+            """SELECT original_filename,storage_key,detected_mime_type,sha256_checksum,
                       scan_status,lifecycle_status,uploaded_by
                FROM managed_files WHERE file_id=%s""",
             (file_id,),
@@ -369,4 +373,6 @@ def download_document(*, employee_id: int, file_id: int) -> tuple[bytes, str, st
         raise DocumentError("Document content is unavailable.") from None
     if len(content) > MAX_FILE_BYTES:
         raise DocumentError("Stored document exceeds the permitted size.")
+    if hashlib.sha256(content).hexdigest() != row["sha256_checksum"]:
+        raise DocumentError("Stored document integrity check failed.")
     return content, row["original_filename"], row["detected_mime_type"]

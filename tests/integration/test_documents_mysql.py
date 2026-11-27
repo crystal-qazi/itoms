@@ -106,7 +106,7 @@ def document_fixture(monkeypatch):
         shutil.rmtree(storage, ignore_errors=True)
 
 
-def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture):
+def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture, monkeypatch):
     from itoms.services.documents import upload_document, list_documents, download_document
     from itoms.db.connection import get_connection
 
@@ -133,3 +133,17 @@ def test_clean_document_is_downloadable_and_metadata_is_audited(document_fixture
     finally:
         cursor.close()
         connection.close()
+
+    from itoms.services import documents
+    monkeypatch.setattr(
+        documents, "scan_with_trend_micro",
+        lambda _content: {"status": "ERROR", "details": "Scanner unavailable"},
+    )
+    quarantined = upload_document(
+        actor_employee_id=employee_id, filename="quarantined.pdf",
+        content=b"%PDF-1.7 quarantined integration fixture", classification="CONFIDENTIAL",
+    )
+    assert quarantined["scan_status"] == "ERROR"
+    assert quarantined["lifecycle_status"] == "QUARANTINED"
+    with pytest.raises(documents.DocumentError, match="unavailable until a clean scan"):
+        download_document(employee_id=employee_id, file_id=quarantined["file_id"])
