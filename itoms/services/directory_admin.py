@@ -266,22 +266,27 @@ def deactivate_employee(*, actor_employee_id: int, employee_id: int) -> bool:
             conn.commit()
             return False
 
+        # Locking reads avoid a stale REPEATABLE READ snapshot created by the
+        # earlier department lookup; employee-first writers serialize on this row.
         cur.execute(
-            "SELECT COUNT(*) FROM employee_team_memberships WHERE employee_id=%s",
+            """SELECT team_id FROM employee_team_memberships
+               WHERE employee_id=%s ORDER BY team_id FOR UPDATE""",
             (employee_id,),
         )
-        membership_count = int(cur.fetchone()[0])
+        membership_count = len(cur.fetchall())
         cur.execute(
-            "SELECT COUNT(*) FROM team_management_assignments WHERE manager_employee_id=%s",
+            """SELECT team_id FROM team_management_assignments
+               WHERE manager_employee_id=%s ORDER BY team_id FOR UPDATE""",
             (employee_id,),
         )
-        manager_count = int(cur.fetchone()[0])
+        manager_count = len(cur.fetchall())
         cur.execute(
-            """SELECT COUNT(*) FROM employee_role_assignments
-               WHERE employee_id=%s AND is_active=TRUE""",
+            """SELECT assignment_id FROM employee_role_assignments
+               WHERE employee_id=%s AND is_active=TRUE
+               ORDER BY assignment_id FOR UPDATE""",
             (employee_id,),
         )
-        active_role_count = int(cur.fetchone()[0])
+        active_role_count = len(cur.fetchall())
         if membership_count or manager_count or active_role_count:
             raise DirectoryAdministrationError(
                 "Remove team memberships and manager mappings, and revoke active roles before deactivating this employee."

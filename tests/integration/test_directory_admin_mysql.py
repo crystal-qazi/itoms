@@ -130,6 +130,7 @@ def test_department_scoped_directory_membership_and_manager_workflow(directory_a
         list_directory, remove_team_manager, remove_team_membership, set_team_active,
     )
     from itoms.services.directory_admin import DirectoryAdministrationError
+    from itoms.db.connection import get_connection
 
     data = directory_admin_fixture
     actor_id, manager_id, member_id = (
