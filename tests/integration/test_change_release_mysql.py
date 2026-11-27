@@ -238,6 +238,10 @@ def workflow_fixture():
         cur.execute(f"DELETE FROM team_management_assignments WHERE manager_employee_id IN ({marks})", ids)
         cur.execute("DELETE FROM role_permissions WHERE role_id=%s", (role_id,))
         cur.execute("DELETE FROM teams WHERE team_id IN (%s,%s)", (team_a, team_b))
+        cur.execute(
+            "DELETE FROM teams WHERE department_id=%s AND team_name=%s",
+            (other_department_id, f"Other Service Team {suffix}"),
+        )
         cur.execute("DELETE FROM application_roles WHERE role_id=%s", (role_id,))
         cur.execute(f"DELETE FROM employees WHERE employee_id IN ({marks})", ids)
         cur.execute(
