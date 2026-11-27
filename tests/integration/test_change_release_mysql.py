@@ -1048,6 +1048,37 @@ def test_incident_first_response_sla_records_first_public_staff_reply(workflow_f
         conn.close()
 
 
+def test_incident_detail_calculates_elapsed_sla_breaches(workflow_fixture):
+    from itoms.services.incidents import create_incident, get_incident_detail
+
+    data = workflow_fixture
+    ticket_id = create_incident(
+        actor_employee_id=data["requester"],
+        requester_employee_id=data["requester"],
+        assigned_team_id=data["team_a"],
+        title="SLA breach indicator test",
+        description="Due dates in the past must be reported as breached.",
+    )
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """UPDATE incident_tickets
+               SET first_response_due_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE),
+                   resolution_due_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 MINUTE)
+               WHERE ticket_id=%s""",
+            (ticket_id,),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    detail = get_incident_detail(actor_employee_id=data["requester"], ticket_id=ticket_id)
+    assert detail["first_response_breached"] in (1, True)
+    assert detail["resolution_breached"] in (1, True)
+
+
 def test_engineering_task_pagination_filters_scope_before_limit(workflow_fixture):
     from itoms.services.engineering_tasks import create_task, list_task_assignees, list_tasks
 

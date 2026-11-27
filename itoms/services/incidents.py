@@ -246,7 +246,12 @@ def get_incident_detail(*, actor_employee_id: int, ticket_id: int) -> dict:
             i.requester_employee_id,i.assigned_employee_id,i.assigned_team_id,
             COALESCE(t.department_id,e.department_id) AS department_id,
             i.first_response_due_at,i.resolution_due_at,i.first_responded_at,
-            i.resolved_at,i.closed_at,i.created_at,i.updated_at
+            i.resolved_at,i.closed_at,i.created_at,i.updated_at,
+            (i.first_response_due_at IS NOT NULL AND i.first_responded_at IS NULL
+                AND i.first_response_due_at<UTC_TIMESTAMP()) AS first_response_breached,
+            (i.resolution_due_at IS NOT NULL AND i.resolved_at IS NULL
+                AND i.status NOT IN ('CLOSED','CANCELLED')
+                AND i.resolution_due_at<UTC_TIMESTAMP()) AS resolution_breached
             FROM incident_tickets i
             LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
             LEFT JOIN teams t ON t.team_id=i.assigned_team_id
