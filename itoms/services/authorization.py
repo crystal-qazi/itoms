@@ -17,6 +17,7 @@ def has_permission(employee_id: int, permission_key: str,
     """Return true only when an active assignment grants permission in this scope."""
     if employee_id <= 0 or not permission_key:
         return False
+    has_resource_context = resource is not None
     resource = resource or ResourceContext()
     conn = get_connection()
     cur = conn.cursor()
@@ -32,6 +33,11 @@ def has_permission(employee_id: int, permission_key: str,
         assignments = cur.fetchall()
         if not assignments:
             return False
+        # A check without a resource context authorizes the action itself.
+        # Resource reads and mutations must pass trusted resource attributes
+        # and continue through the scope-specific checks below.
+        if not has_resource_context:
+            return True
         for scope_type, scope_reference in assignments:
             if scope_type == "OWN" and resource.owner_employee_id == employee_id:
                 return True
