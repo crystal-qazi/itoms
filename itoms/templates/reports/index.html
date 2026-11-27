@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Reporting · ITOMS{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">INSIGHTS</p><h1>Reporting &amp; Custom Report Builder</h1><p class="text-secondary mb-0">Build personal CSV reports from approved datasets. Source permissions are enforced when each report runs.</p></div><span class="status-pill">Allowlisted datasets</span></div>
+<section class="panel-card mt-4"><div class="panel-heading"><div><h2>Create saved report</h2><p>Choose a dataset, fields and an optional supported filter. Arbitrary SQL is never accepted.</p></div></div>
+<form method="post" action="{{ url_for('reports.create') }}" class="row g-3 mt-1"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+<div class="col-12 col-md-4"><label class="form-label" for="report-name">Report name</label><input class="form-control" id="report-name" name="report_name" maxlength="150" required></div>
+<div class="col-12 col-md-4"><label class="form-label" for="report-dataset">Dataset</label><select class="form-select" id="report-dataset" name="dataset_key" required>{% for key,item in datasets.items() %}<option value="{{ key }}">{{ item.label }}</option>{% endfor %}</select></div>
+<div class="col-12 col-md-4"><label class="form-label" for="report-columns">Fields</label><select class="form-select" id="report-columns" name="columns" multiple required size="5">{% for key,item in datasets.items() %}{% for field in item.fields %}<option value="{{ field }}" data-dataset="{{ key }}" {% if loop.first %}selected{% endif %}>{{ field }}</option>{% endfor %}{% endfor %}</select><div class="form-text">Use Ctrl (Windows) or Command (Mac) to select multiple fields.</div></div>
+<div class="col-12 col-md-3"><label class="form-label" for="report-status">Status filter (optional)</label><input class="form-control" id="report-status" name="status" maxlength="30" placeholder="e.g. ACTIVE"></div>
+<div class="col-12 col-md-3"><label class="form-label" for="report-priority">Priority filter (optional)</label><select class="form-select" id="report-priority" name="priority"><option value="">Any</option><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div>
+<div class="col-12 col-md-3"><label class="form-label" for="report-domain">Operations domain (optional)</label><select class="form-select" id="report-domain" name="domain"><option value="">Any</option><option>NETWORK</option><option>INFRASTRUCTURE</option><option>ORACLE</option></select></div>
+<div class="col-12"><button class="btn btn-primary" type="submit">Save and export report</button></div></form></section>
+<section class="panel-card mt-4"><div class="panel-heading"><div><h2>My saved reports</h2><p>Reports are private to their creator and re-check source permissions on every export.</p></div></div>
+{% if reports %}<div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Report</th><th>Dataset</th><th>Last updated</th><th>Action</th></tr></thead><tbody>{% for item in reports %}<tr><td>{{ item.report_name }}</td><td>{{ item.dataset_key }}</td><td>{{ item.updated_at }}</td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('reports.export_csv', report_id=item.report_id) }}">Export CSV</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state mt-3"><strong>No saved reports</strong><p class="text-secondary mb-0">Create a report using an approved dataset and the fields you need.</p></div>{% endif %}</section>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const dataset = document.getElementById("report-dataset");
+  const columns = document.getElementById("report-columns");
+  if (!dataset || !columns) return;
+  function filterFields() {
+    const selected = dataset.value;
+    Array.from(columns.options).forEach(function (option) {
+      const visible = option.dataset.dataset === selected;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (!visible) option.selected = false;
+    });
+    const first = Array.from(columns.options).find(function (option) { return !option.disabled; });
+    if (first && !Array.from(columns.options).some(function (option) { return option.selected; })) first.selected = true;
+  }
+  dataset.addEventListener("change", filterFields);
+  filterFields();
+});
+</script>
+{% endblock %}
