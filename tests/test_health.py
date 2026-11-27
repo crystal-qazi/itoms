@@ -72,3 +72,26 @@ def test_approval_inbox_blueprint_is_registered() -> None:
     app = create_app(TestConfig)
     assert "approvals.inbox" in app.view_functions
     assert "approvals.decision" in app.view_functions
+
+
+
+def test_service_worker_is_root_scoped_and_shell_only() -> None:
+    app = create_app(TestConfig)
+    response = app.test_client().get("/service-worker.js")
+    assert response.status_code == 200
+    assert response.headers["Service-Worker-Allowed"] == "/"
+    assert response.mimetype == "application/javascript"
+    body = response.get_data(as_text=True)
+    assert "/static/css/app.css" in body
+    assert "/static/vendor/bootstrap/js/bootstrap.bundle.min.js" in body
+    assert "request.method !== \"GET\"" in body
+    assert "SHELL_ASSETS.includes(url.pathname)" in body
+
+
+def test_pwa_manifest_is_served() -> None:
+    app = create_app(TestConfig)
+    response = app.test_client().get("/static/manifest.webmanifest")
+    assert response.status_code == 200
+    assert response.json["name"].startswith("ITOMS")
+    assert response.json["display"] == "standalone"
+    assert response.json["scope"] == "/"

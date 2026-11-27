@@ -1,5 +1,5 @@
 """ITOMS application package."""
-from flask import Flask, g, session, request, redirect, url_for
+from flask import Flask, g, session, request, redirect, url_for, send_from_directory
 
 from itoms.config import Config
 from itoms.logging_config import configure_logging
@@ -20,6 +20,16 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", 3600)
     app.config.setdefault("MAX_CONTENT_LENGTH", 1024 * 1024)
     configure_logging(app.config.get("LOG_LEVEL", "INFO"))
+
+    @app.get("/service-worker.js")
+    def service_worker():
+        """Serve the shell-only worker at the application root scope."""
+        response = send_from_directory(
+            app.static_folder, "sw.js", mimetype="application/javascript"
+        )
+        response.headers["Service-Worker-Allowed"] = "/"
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.before_request
     def validate_server_session():

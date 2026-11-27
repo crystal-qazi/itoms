@@ -1,5 +1,10 @@
 (() => {
   "use strict";
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).catch(() => {});
+    });
+  }
   const root = document.documentElement;
   const button = document.getElementById("theme-toggle");
   if (!button) return;
