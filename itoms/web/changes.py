@@ -31,12 +31,15 @@ def create():
 def detail(change_id:int):
     try: item=get_change(actor_employee_id=g.employee_id,change_id=change_id)
     except ChangeError: return "Change record not found",404
-    return render_template("changes/detail.html",item=item,transitions=["SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"],csrf_token_value=session.get("csrf_token",""))
+    return render_template("changes/detail.html",item=item,transitions=["SUBMITTED","SCHEDULED","IMPLEMENTING","IMPLEMENTED","FAILED","CANCELLED","CLOSED"],approvers=_owners() if item["can_update"] and item["status"]=="DRAFT" else [],csrf_token_value=session.get("csrf_token",""))
 @change_bp.post("/<int:change_id>/status")
 @login_required
 def status(change_id:int):
     csrf=session.get("csrf_token","")
     if not csrf or not hmac.compare_digest(str(csrf),str(request.form.get("csrf_token",""))): return "Invalid request token",400
-    try: transition_change(actor_employee_id=g.employee_id,change_id=change_id,new_status=request.form.get("status","").strip().upper(),details=request.form.get("details","").strip() or None); flash("Change status updated.","success")
+    try:
+        approvers=[int(value) for value in request.form.getlist("approver_employee_ids") if value.strip()]
+        transition_change(actor_employee_id=g.employee_id,change_id=change_id,new_status=request.form.get("status","").strip().upper(),details=request.form.get("details","").strip() or None,approver_employee_ids=approvers)
+        flash("Change status updated.","success")
     except ChangeError as exc: flash(str(exc),"danger")
     return redirect(url_for("changes.detail",change_id=change_id))

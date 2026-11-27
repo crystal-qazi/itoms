@@ -64,8 +64,14 @@ def create_change(*,actor_employee_id:int,title:str,description:str,change_type:
     except Exception: conn.rollback(); raise
     finally: cur.close(); conn.close()
 
-def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,details:str|None=None):
+def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,details:str|None=None,approver_employee_ids:list[int]|None=None):
     if new_status not in STATUSES: raise ChangeError("Invalid change status.")
+    approvers=list(dict.fromkeys(int(x) for x in (approver_employee_ids or [])))
+    if new_status=="SUBMITTED":
+        if not approvers or len(approvers)>10 or actor_employee_id in approvers:
+            raise ChangeError("Select 1–10 distinct approvers other than yourself before submitting.")
+        if not has_permission(actor_employee_id,"approvals.create"):
+            raise ChangeError("You are not authorized to submit an approval workflow.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try: cur.execute("SELECT change_id,requested_by,status FROM change_records WHERE change_id=%s",(change_id,)); snapshot=cur.fetchone()
     finally: cur.close(); conn.close()
@@ -77,6 +83,33 @@ def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,detai
     try:
         cur.execute("SELECT status,requested_by FROM change_records WHERE change_id=%s FOR UPDATE",(change_id,)); current=cur.fetchone()
         if not current or current[0]!=snapshot["status"] or current[1]!=snapshot["requested_by"]: raise ChangeError("Change record changed; reload and try again.")
+        if new_status=="SUBMITTED":
+            for approver in approvers:
+                cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(approver,))
+                if not cur.fetchone(): raise ChangeError("An approver is inactive or unavailable.")
+            cur.execute("""INSERT INTO approval_requests
+                (request_type,resource_type,resource_id,requested_by,request_reason)
+                VALUES ('CHANGE','change',%s,%s,%s)""",(str(change_id),actor_employee_id,details))
+            approval_id=int(cur.lastrowid)
+            for step,approver in enumerate(approvers,1):
+                cur.execute("""INSERT INTO approval_steps
+                    (approval_request_id,step_number,approver_employee_id)
+                    VALUES (%s,%s,%s)""",(approval_id,step,approver))
+            cur.execute("""INSERT INTO approval_history
+                (approval_request_id,actor_employee_id,action_key,comment)
+                VALUES (%s,%s,'SUBMITTED',%s)""",(approval_id,actor_employee_id,details))
+            cur.execute("""INSERT INTO audit_events
+                (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                VALUES (%s,'APPROVAL_SUBMITTED','approval',%s,'SUCCESS',
+                    JSON_OBJECT('request_type','CHANGE','resource_type','change','approver_count',%s))""",
+                (actor_employee_id,str(approval_id),len(approvers)))
+        if new_status=="SCHEDULED":
+            cur.execute("""SELECT status FROM approval_requests
+                WHERE resource_type='change' AND resource_id=%s
+                ORDER BY created_at DESC,approval_request_id DESC LIMIT 1 FOR UPDATE""",(str(change_id),))
+            approval=cur.fetchone()
+            if not approval or approval[0]!="APPROVED":
+                raise ChangeError("Scheduling is blocked until the linked change approval is fully approved.")
         cur.execute("UPDATE change_records SET status=%s,implementation_result=CASE WHEN %s IN ('IMPLEMENTED','FAILED') THEN %s ELSE implementation_result END WHERE change_id=%s",(new_status,new_status,details,change_id))
         cur.execute("INSERT INTO change_activity (change_id,actor_employee_id,action_key,details) VALUES (%s,%s,%s,%s)",(change_id,actor_employee_id,"STATUS_"+new_status,details))
         cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'CHANGE_STATUS_CHANGED','change',%s,'SUCCESS')",(actor_employee_id,str(change_id)))
