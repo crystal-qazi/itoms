@@ -63,3 +63,48 @@ def test_directory_mutation_rejects_missing_csrf(monkeypatch):
         "initial_password": "NotARealPassword123!",
     })
     assert response.status_code == 400
+
+
+
+def test_membership_route_passes_primary_selection(monkeypatch):
+    from itoms.web import directory as directory_web
+
+    app = _app_with_identity()
+    calls = []
+    monkeypatch.setattr(
+        directory_web, "assign_team_membership",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    client = app.test_client()
+    with client.session_transaction() as state:
+        state["csrf_token"] = "expected-token"
+    response = client.post("/admin/directory/employees/25/memberships", data={
+        "csrf_token": "expected-token", "team_id": "8",
+        "action": "assign", "is_primary": "1",
+    })
+    assert response.status_code == 302
+    assert calls == [{
+        "actor_employee_id": 10, "employee_id": 25, "team_id": 8, "primary": True,
+    }]
+
+
+def test_manager_route_uses_selected_employee_and_team(monkeypatch):
+    from itoms.web import directory as directory_web
+
+    app = _app_with_identity()
+    calls = []
+    monkeypatch.setattr(
+        directory_web, "assign_team_manager",
+        lambda **kwargs: calls.append(kwargs) or True,
+    )
+    client = app.test_client()
+    with client.session_transaction() as state:
+        state["csrf_token"] = "expected-token"
+    response = client.post("/admin/directory/managers", data={
+        "csrf_token": "expected-token", "manager_employee_id": "25",
+        "team_id": "8", "action": "assign",
+    })
+    assert response.status_code == 302
+    assert calls == [{
+        "actor_employee_id": 10, "manager_employee_id": 25, "team_id": 8,
+    }]
