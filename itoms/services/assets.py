@@ -42,12 +42,13 @@ def list_asset_teams(*, actor_employee_id: int, permission: str = "asset.create"
     )]
 
 
-def _asset_context(cur, asset_id: int):
+def _asset_context(cur, asset_id: int, *, lock: bool = False):
     cur.execute(
         """SELECT a.asset_id,a.asset_status,a.owner_team_id,t.department_id
            FROM asset_records a JOIN teams t ON t.team_id=a.owner_team_id
            JOIN departments d ON d.department_id=t.department_id
-           WHERE a.asset_id=%s AND t.is_active=TRUE AND d.is_active=TRUE""",
+           WHERE a.asset_id=%s AND t.is_active=TRUE AND d.is_active=TRUE"""
+        + (" FOR UPDATE" if lock else ""),
         (asset_id,),
     )
     row = cur.fetchone()
@@ -264,11 +265,22 @@ def create_maintenance(
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        row = _asset_context(cur, asset_id)
+        row = _asset_context(cur, asset_id, lock=True)
         if not row:
             raise AssetError("Asset was not found.")
         team_id = _context_value(row, "owner_team_id", 2)
         department_id = _context_value(row, "department_id", 3)
+        previous_status = _context_value(row, "asset_status", 1)
+        if previous_status not in {"IN_USE", "IN_STOCK"}:
+            raise AssetError("Only IN_USE or IN_STOCK assets can enter maintenance.")
+        cur.execute(
+            """SELECT maintenance_id FROM asset_maintenance
+               WHERE asset_id=%s AND status IN ('OPEN','IN_PROGRESS','ON_HOLD')
+               LIMIT 1 FOR UPDATE""",
+            (asset_id,),
+        )
+        if cur.fetchone():
+            raise AssetError("This asset already has an active maintenance ticket.")
         context = ResourceContext(
             team_id=team_id, department_id=department_id,
             resource_type="asset", resource_id=str(asset_id),
@@ -286,9 +298,9 @@ def create_maintenance(
                 raise AssetError("Maintenance assignee must be an active member of the owner team.")
         cur.execute(
             """INSERT INTO asset_maintenance
-               (asset_id,reported_by,assigned_to,issue_description)
-               VALUES (%s,%s,%s,%s)""",
-            (asset_id, actor_employee_id, assigned_to, detail),
+               (asset_id,reported_by,assigned_to,issue_description,previous_asset_status)
+               VALUES (%s,%s,%s,%s,%s)""",
+            (asset_id, actor_employee_id, assigned_to, detail, previous_status),
         )
         maintenance_id = int(cur.lastrowid)
         cur.execute("UPDATE asset_records SET asset_status='UNDER_REPAIR' WHERE asset_id=%s", (asset_id,))
@@ -317,7 +329,8 @@ def update_maintenance_status(
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
-            """SELECT m.asset_id,m.status,a.owner_team_id,t.department_id
+            """SELECT m.asset_id,m.status,m.previous_asset_status,
+                      a.owner_team_id,t.department_id
                FROM asset_maintenance m JOIN asset_records a ON a.asset_id=m.asset_id
                JOIN teams t ON t.team_id=a.owner_team_id
                WHERE m.maintenance_id=%s FOR UPDATE""",
@@ -343,9 +356,9 @@ def update_maintenance_status(
         )
         if new_status == "COMPLETED":
             cur.execute(
-                """UPDATE asset_records SET asset_status='IN_USE'
+                """UPDATE asset_records SET asset_status=%s
                    WHERE asset_id=%s AND asset_status='UNDER_REPAIR'""",
-                (row["asset_id"],),
+                (row["previous_asset_status"] or "IN_USE", row["asset_id"]),
             )
         cur.execute(
             """INSERT INTO audit_events

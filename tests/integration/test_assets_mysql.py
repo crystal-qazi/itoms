@@ -137,6 +137,14 @@ def test_asset_registration_and_repair_ticket_lifecycle(asset_fixture):
         actor_employee_id=data["employee_id"], maintenance_id=maintenance_id,
         new_status="COMPLETED",
     )
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT asset_status FROM asset_records WHERE asset_id=%s", (asset_id,))
+        assert cursor.fetchone()[0] == "IN_STOCK"
+    finally:
+        cursor.close()
+        connection.close()
     update_asset_status(
         actor_employee_id=data["employee_id"], asset_id=asset_id, new_status="IN_USE",
     )
