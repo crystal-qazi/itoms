@@ -6,7 +6,7 @@ Change Management creates a linked `CHANGE` approval request when a draft is sub
 
 Release Management creates a linked `RELEASE` approval request from the READY state using the `REQUEST_APPROVAL` action. The requester selects 1–10 active approvers in sequence; self-approval is prohibited. READY → APPROVED is blocked until the linked approval is fully approved and the independent SQA gate passes. APPROVED → DEPLOYING rechecks both conditions. Cancelling a release also cancels any pending linked approval atomically.
 
-The owning module re-checks the final approved state and resource identity inside its own transaction before applying the gated business transition. Approval policy configuration, delegation, parallel quorum and escalation are not yet implemented. Role grants for `approvals.create` remain explicit; no role is granted this permission implicitly.
+The owning module re-checks the final approved state and resource identity inside its own transaction before applying the gated business transition. Approval policy configuration, delegation, parallel quorum and escalation are not yet implemented. The `approvals.create` and `approvals.cancel` permission keys are registered by migration 023. Role grants remain explicit; no role is granted either permission implicitly.
 
 ## Inbox
 
