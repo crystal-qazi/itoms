@@ -13,8 +13,10 @@ def create_approval(*, actor_employee_id: int, request_type: str, resource_type:
     approvers=list(dict.fromkeys(int(x) for x in approver_employee_ids))
     if not approvers or len(approvers)>10 or actor_employee_id in approvers:
         raise ApprovalError("Provide 1–10 distinct approvers other than the requester.")
-    if not request_type or not resource_type or not resource_id:
-        raise ApprovalError("Request and resource identifiers are required.")
+    if not request_type or len(request_type)>80 or not resource_type or len(resource_type)>80 or not resource_id or len(resource_id)>100:
+        raise ApprovalError("Request and resource identifiers are required and must fit their limits.")
+    if reason is not None and len(reason)>4000:
+        raise ApprovalError("Approval reason is too long (maximum 4000 characters).")
     conn=get_connection(); cur=conn.cursor()
     try:
         for approver in approvers:
@@ -31,6 +33,11 @@ def create_approval(*, actor_employee_id: int, request_type: str, resource_type:
         cur.execute("""INSERT INTO approval_history
             (approval_request_id,actor_employee_id,action_key,comment)
             VALUES (%s,%s,'SUBMITTED',%s)""",(request_id,actor_employee_id,reason))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome,details)
+            VALUES (%s,'APPROVAL_SUBMITTED','approval',%s,'SUCCESS',
+                    JSON_OBJECT('request_type',%s,'resource_type',%s,'approver_count',%s))""",
+            (actor_employee_id,str(request_id),request_type,resource_type,len(approvers)))
         conn.commit(); return request_id
     except Exception:
         conn.rollback(); raise
@@ -41,6 +48,8 @@ def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
                     comment: str | None=None) -> None:
     if decision not in {"APPROVED","REJECTED"}:
         raise ApprovalError("Decision must be APPROVED or REJECTED.")
+    if comment is not None and len(comment)>4000:
+        raise ApprovalError("Approval comment is too long (maximum 4000 characters).")
     conn=get_connection(); cur=conn.cursor()
     try:
         cur.execute("SELECT status,current_step FROM approval_requests WHERE approval_request_id=%s FOR UPDATE",(request_id,))
@@ -70,6 +79,10 @@ def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
         cur.execute("""INSERT INTO approval_history
             (approval_request_id,actor_employee_id,action_key,comment)
             VALUES (%s,%s,%s,%s)""",(request_id,actor_employee_id,decision,comment))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome,details)
+            VALUES (%s,%s,'approval',%s,'SUCCESS',JSON_OBJECT('decision',%s))""",
+            (actor_employee_id,"APPROVAL_"+decision,str(request_id),decision))
         conn.commit()
     except Exception:
         conn.rollback(); raise
@@ -100,6 +113,10 @@ def cancel_approval(*, actor_employee_id: int, request_id: int) -> None:
         cur.execute("""INSERT INTO approval_history
             (approval_request_id,actor_employee_id,action_key)
             VALUES (%s,%s,'CANCELLED')""",(request_id,actor_employee_id))
+        cur.execute("""INSERT INTO audit_events
+            (actor_employee_id,event_key,target_type,target_id,outcome)
+            VALUES (%s,'APPROVAL_CANCELLED','approval',%s,'SUCCESS')""",
+            (actor_employee_id,str(request_id)))
         conn.commit()
     except Exception:
         conn.rollback(); raise
