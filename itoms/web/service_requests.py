@@ -5,11 +5,11 @@ import hmac
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, session, url_for
 
 from itoms.security.decorators import login_required
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.service_requests import (
     ServiceRequestError, assign_request, create_category, create_request,
     get_request_detail, list_categories, list_category_admin, list_requests,
-    set_category_active, transition_request,
+    set_category_active, transition_request, list_assignable_teams, list_assignable_members,
 )
 
 service_requests_bp = Blueprint("service_requests", __name__, url_prefix="/service-requests")
@@ -72,39 +72,18 @@ def detail(request_id: int):
         item = get_request_detail(actor_employee_id=g.employee_id, request_id=request_id)
     except ServiceRequestError:
         return "Service request not found.", 404
-    can_assign = has_permission(
-        g.employee_id, "service_request.assign",
-        __import__("itoms.services.authorization", fromlist=["ResourceContext"]).ResourceContext(
-            owner_employee_id=item["requester_employee_id"],
-            team_id=item["assigned_team_id"],
-            department_id=item["department_id"],
-        ),
+    request_context = ResourceContext(
+        owner_employee_id=item["requester_employee_id"],
+        team_id=item["assigned_team_id"],
+        department_id=item["department_id"],
     )
-    teams = []
-    if can_assign:
-        from itoms.db.connection import get_connection
-        conn = get_connection()
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                """SELECT team_id,team_name FROM teams
-                   WHERE is_active=TRUE ORDER BY team_name"""
-            )
-            teams = cur.fetchall()
-        finally:
-            cur.close()
-            conn.close()
+    can_assign = has_permission(g.employee_id, "service_request.assign", request_context)
+    teams = list_assignable_teams(actor_employee_id=g.employee_id, request_id=request_id)
+    members = list_assignable_members(actor_employee_id=g.employee_id, request_id=request_id)
     return render_template(
         "service_requests/detail.html", item=item, can_assign=can_assign,
-        can_update=has_permission(
-            g.employee_id, "service_request.update",
-            __import__("itoms.services.authorization", fromlist=["ResourceContext"]).ResourceContext(
-                owner_employee_id=item["requester_employee_id"],
-                team_id=item["assigned_team_id"],
-                department_id=item["department_id"],
-            ),
-        ),
-        teams=teams, csrf_token_value=session.get("csrf_token", ""),
+        can_update=has_permission(g.employee_id, "service_request.update", request_context),
+        teams=teams, members=members, csrf_token_value=session.get("csrf_token", ""),
     )
 
 

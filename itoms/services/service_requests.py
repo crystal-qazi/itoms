@@ -293,6 +293,60 @@ def get_request_detail(*, actor_employee_id: int, request_id: int) -> dict:
         conn.close()
 
 
+def list_assignable_teams(*, actor_employee_id: int, request_id: int) -> list[dict]:
+    """List only teams the actor may assign this particular request to."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        context = _context(cur, request_id)
+        if not context or not has_permission(actor_employee_id, "service_request.assign", context):
+            return []
+        cur.execute(
+            """SELECT t.team_id,t.team_name,t.department_id
+               FROM teams t JOIN departments d ON d.department_id=t.department_id
+               WHERE t.is_active=TRUE AND d.is_active=TRUE ORDER BY t.team_name"""
+        )
+        teams = cur.fetchall()
+        return [
+            team for team in teams
+            if has_permission(
+                actor_employee_id, "service_request.assign",
+                ResourceContext(team_id=team["team_id"], department_id=team["department_id"]),
+            )
+        ]
+    finally:
+        cur.close()
+        conn.close()
+
+
+def list_assignable_members(
+    *, actor_employee_id: int, request_id: int
+) -> list[dict]:
+    """List active employees in teams the actor may assign the request to."""
+    teams = list_assignable_teams(actor_employee_id=actor_employee_id, request_id=request_id)
+    team_ids = [int(team["team_id"]) for team in teams]
+    if not team_ids:
+        return []
+    marks = ",".join(["%s"] * len(team_ids))
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            f"""SELECT e.employee_id,e.full_name,m.team_id,t.team_name
+                FROM employees e
+                JOIN employee_team_memberships m ON m.employee_id=e.employee_id
+                JOIN teams t ON t.team_id=m.team_id
+                WHERE e.is_active=TRUE AND t.is_active=TRUE
+                  AND m.team_id IN ({marks})
+                ORDER BY t.team_name,e.full_name""",
+            tuple(team_ids),
+        )
+        return cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+
 def assign_request(
     *, actor_employee_id: int, request_id: int,
     assigned_team_id: int | None, assigned_employee_id: int | None = None,
@@ -318,6 +372,11 @@ def assign_request(
             if not team:
                 raise ServiceRequestError("Assigned team does not exist or is inactive.")
             team_department_id = team[0]
+            if not has_permission(
+                actor_employee_id, "service_request.assign",
+                ResourceContext(team_id=assigned_team_id, department_id=team_department_id),
+            ):
+                raise ServiceRequestError("Not authorized to assign requests to the selected team.")
         if assigned_employee_id is not None:
             if assigned_team_id is None:
                 raise ServiceRequestError("An individual assignee must belong to an assigned team.")
