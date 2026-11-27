@@ -78,8 +78,9 @@ def _assert_sqa_release_gate(cur, release_key: str):
 def list_releases(*,actor_employee_id:int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT r.release_id,r.release_key,r.version_label,r.status,r.target_at,
+        cur.execute("""SELECT r.release_id,r.release_key,r.version_label,r.status,r.target_at,r.service_id,
             r.released_at,r.created_by,s.service_name,e.department_id,
+            s.owner_team_id AS service_team_id,st.department_id AS service_department_id,
             CASE WHEN st.department_id=e.department_id THEN s.owner_team_id ELSE NULL END AS team_id,
             (SELECT ar.status FROM approval_requests ar
              WHERE ar.resource_type='release' AND ar.resource_id=CAST(r.release_id AS CHAR)
@@ -92,8 +93,23 @@ def list_releases(*,actor_employee_id:int):
         rows=cur.fetchall()
     finally:
         cur.close(); conn.close()
-    return [dict(x,can_update=has_permission(actor_employee_id,"release.update",_ctx(x)))
-        for x in rows if has_permission(actor_employee_id,"release.read",_ctx(x))]
+    visible=[]
+    for row in rows:
+        if not has_permission(actor_employee_id,"release.read",_ctx(row)):
+            continue
+        # A release reader must not learn a linked service's name unless they
+        # independently have permission to read that service resource.
+        if row["service_name"] is not None and (
+            row["service_department_id"] is None or not has_permission(
+                actor_employee_id,"service.inventory.read",
+                ResourceContext(team_id=row["service_team_id"],
+                    department_id=row["service_department_id"],
+                    resource_type="service",resource_id=str(row["service_id"])
+                    if "service_id" in row else None))):
+            row["service_name"]=None
+        row["can_update"]=has_permission(actor_employee_id,"release.update",_ctx(row))
+        visible.append(row)
+    return visible
 
 
 def create_release(*,actor_employee_id:int,release_key:str,version_label:str,release_notes:str,
@@ -205,9 +221,11 @@ def transition_release(*,actor_employee_id:int,release_id:int,new_status:str,
             if previous and previous[1]=="APPROVED":
                 raise ReleaseError("This release already has an approved approval request.")
             for approver in approvers:
-                cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(approver,))
+                cur.execute("""SELECT 1 FROM employees
+                    WHERE employee_id=%s AND is_active=TRUE AND department_id=%s""",
+                    (approver,row["department_id"]))
                 if not cur.fetchone():
-                    raise ReleaseError("An approver is inactive or unavailable.")
+                    raise ReleaseError("Every release approver must be active and belong to the release department.")
             cur.execute("""INSERT INTO approval_requests
                 (request_type,resource_type,resource_id,requested_by,request_reason)
                 VALUES ('RELEASE','release',%s,%s,%s)""",(str(release_id),actor_employee_id,approval_reason))

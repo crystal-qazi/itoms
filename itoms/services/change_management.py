@@ -158,8 +158,11 @@ def transition_change(*,actor_employee_id:int,change_id:int,new_status:str,detai
         if not current or current[0]!=snapshot["status"] or current[1]!=snapshot["requested_by"]: raise ChangeError("Change record changed; reload and try again.")
         if new_status=="SUBMITTED":
             for approver in approvers:
-                cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(approver,))
-                if not cur.fetchone(): raise ChangeError("An approver is inactive or unavailable.")
+                cur.execute("""SELECT 1 FROM employees
+                    WHERE employee_id=%s AND is_active=TRUE AND department_id=%s""",
+                    (approver,snapshot["department_id"]))
+                if not cur.fetchone():
+                    raise ChangeError("Every change approver must be active and belong to the change department.")
             cur.execute("""INSERT INTO approval_requests
                 (request_type,resource_type,resource_id,requested_by,request_reason)
                 VALUES ('CHANGE','change',%s,%s,%s)""",(str(change_id),actor_employee_id,details))

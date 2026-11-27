@@ -759,3 +759,64 @@ def test_change_and_release_employee_choices_are_department_scoped(workflow_fixt
     assert data["requester"] in approver_ids
     assert data["approver_two"] in approver_ids
     assert data["outsider"] not in approver_ids
+
+
+
+def test_change_submission_rejects_cross_department_approver(workflow_fixture):
+    from itoms.services.change_management import ChangeError, transition_change
+
+    data = workflow_fixture
+    change_id = _create_change(data)
+    with pytest.raises(ChangeError, match="change department"):
+        transition_change(
+            actor_employee_id=data["requester"],
+            change_id=change_id,
+            new_status="SUBMITTED",
+            details="Cross-department approver must be rejected",
+            approver_employee_ids=[data["outsider"]],
+        )
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM change_records WHERE change_id=%s", (change_id,))
+        assert cur.fetchone() == ("DRAFT",)
+        cur.execute(
+            """SELECT COUNT(*) FROM approval_requests
+               WHERE resource_type='change' AND resource_id=%s""",
+            (str(change_id),),
+        )
+        assert cur.fetchone()[0] == 0
+    finally:
+        cur.close()
+        conn.close()
+
+
+def test_release_approval_rejects_cross_department_approver(workflow_fixture):
+    from itoms.services.release_management import ReleaseError, transition_release
+
+    data = workflow_fixture
+    release_id = _create_release(data)
+    transition_release(actor_employee_id=data["requester"], release_id=release_id, new_status="IN_TEST")
+    transition_release(actor_employee_id=data["requester"], release_id=release_id, new_status="READY")
+    with pytest.raises(ReleaseError, match="release department"):
+        transition_release(
+            actor_employee_id=data["requester"],
+            release_id=release_id,
+            new_status="REQUEST_APPROVAL",
+            approver_employee_ids=[data["outsider"]],
+            approval_reason="Cross-department approver must be rejected",
+        )
+    conn = _db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status FROM software_releases WHERE release_id=%s", (release_id,))
+        assert cur.fetchone() == ("READY",)
+        cur.execute(
+            """SELECT COUNT(*) FROM approval_requests
+               WHERE resource_type='release' AND resource_id=%s""",
+            (str(release_id),),
+        )
+        assert cur.fetchone()[0] == 0
+    finally:
+        cur.close()
+        conn.close()
