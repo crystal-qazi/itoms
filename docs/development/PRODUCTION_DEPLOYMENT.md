@@ -31,6 +31,7 @@ Set these values in the service manager or approved secret store; do not rely on
 - `ITOMS_DOCUMENT_STORAGE_ROOT`: dedicated non-web-accessible directory with restrictive service-account permissions
 - `ITOMS_TREND_MICRO_ICAP_HOST`, `ITOMS_TREND_MICRO_ICAP_PORT`, `ITOMS_TREND_MICRO_ICAP_SERVICE`, `ITOMS_TREND_MICRO_ICAP_TIMEOUT`
 - Grafana webhook secret and service identity if Grafana ingestion is enabled
+- Optional SMTP: `ITOMS_SMTP_HOST`, `ITOMS_SMTP_PORT`, `ITOMS_SMTP_USERNAME`, `ITOMS_SMTP_PASSWORD`, `ITOMS_SMTP_FROM`, `ITOMS_SMTP_USE_STARTTLS`, `ITOMS_SMTP_USE_SSL`, `ITOMS_SMTP_TIMEOUT`
 
 Never reuse development credentials. Restrict the database account to the ITOMS schema and required operations. Restrict the application service account to the application files and document-storage directory only.
 
@@ -50,8 +51,8 @@ Never reuse development credentials. Restrict the database account to the ITOMS 
 
 - Separate migration credentials from least-privilege runtime database credentials.
 - Configure and test the approved HTTPS reverse proxy, TLS policy and host firewall.
-- Configure SMTP only after email templates, recipient privacy and delivery/retry behavior are approved. Email outbox rows must not be treated as delivered while no email worker is configured.
-- Configure a supervised scheduler/worker for SLA escalation, notification outbox recovery and other scheduled tasks; define monitoring and alerting for worker failure.
+- Configure SMTP only after sender identity and recipient privacy are approved. The email worker sends plain-text messages and requires exactly one secure transport mode (STARTTLS or implicit TLS). EMAIL delivery is opt-in per notification; test authentication, certificate validation, failure retry and dead-letter replay against a non-production SMTP relay.
+- Schedule `flask --app itoms notifications-process-email-outbox` only when SMTP is approved and configured. Also schedule the in-app outbox, stale-claim recovery and SLA escalation commands; supervise every worker and alert on failure/backlog.
 - Configure Trend Micro ICAP and test infected, unavailable, malformed and timeout responses.
 - Establish database and document-storage backup schedules, encryption, retention and a tested restore runbook.
 - Complete security assessment, accessibility review, browser/device testing, performance/load testing and department-by-department user acceptance.
