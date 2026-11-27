@@ -10,7 +10,7 @@ Migration 002 establishes the organizational directory, team membership, dynamic
 - The one-time bootstrap command creates the first department-scoped administrator and grants the current permission catalogue to that bootstrap role. It does not create a default username or password.
 - The Employee Directory UI at `/admin/directory` supports department-scoped employee account creation, team membership management, manager-to-team mappings and scoped role assignment/revocation. Membership, manager mapping and role assignment changes are audited. Migration 041 supplies the account-create and role-assign permission keys consumed by the administration services.
 - A manager must be an active member of the team they manage. A manager mapping must be removed before that employee's team membership can be removed.
-- Migration 040 registers `identity.directory.manage`. Migration 041 registers `identity.accounts.create` and `identity.roles.assign`; the bootstrap administrator receives the current permission catalogue, and later grants remain explicit role/permission administration.
+- Migration 040 registers `identity.directory.manage`. Migration 041 registers `identity.accounts.create` and `identity.roles.assign`; the bootstrap administrator receives the current permission catalogue, and later grants remain explicit role/permission administration. Role assignments can be revoked through the same directory UI; revocation deactivates the assignment and records an audit event.
 
 Audit records must not contain passwords, secrets, session tokens or unnecessary personal data. Audit access and retention are governed by the platform audit policy.
 
