@@ -1,6 +1,6 @@
 # Authorization Transaction Consistency
 
-**Status:** Proposed design; implementation not yet approved by tests  
+**Status:** Partially implemented; transaction-bound role-permission administration is covered by MySQL concurrency tests, while other mutating services remain on the staged rollout path  
 **Scope:** Mutating service operations that must honor permission, role, team-membership, and department revocation consistently.
 
 ## Problem
@@ -171,3 +171,17 @@ Before coding the transaction-bound evaluator:
 3. Confirm isolation level and query plans on MySQL 8.4.
 4. Implement the evaluator and migrate one simple mutation service first.
 5. Only then migrate the remaining services in small batches.
+
+
+## Targeted implementation — role-permission administration
+
+The following bounded slice is now implemented in `identity_admin.py`:
+
+- `grant_role_permission` and `revoke_role_permission` no longer authorize through the independent-connection `has_permission` helper.
+- Both operations use their own mutation transaction for authorization and the role-permission write.
+- Lock order is: acting employee row; applicable application-role rows in ascending role ID (including the target role); the actor's active role-assignment rows; then the exact role-permission rows used to verify the management grant.
+- The actor employee row serializes changes to that actor's role assignments. Runtime role-assignment writers must continue to lock the affected employee before the role row.
+- Role-permission grant/revoke writes and their audit events remain in the same transaction.
+- The MySQL integration tests cover both orderings: revocation commits first and a later grant is denied; an authorized grant obtains the locks first, then a concurrent revocation waits until the grant commits.
+
+This is deliberately **not** a global authorization consistency claim. `assign_role`, account creation, incidents, changes, releases, SQA, engineering tasks, service inventory, and other mutating services still require separate transaction-bound authorization migration and MySQL concurrency coverage. Do not describe the whole application as revocation-atomic until those paths are migrated and tested.
