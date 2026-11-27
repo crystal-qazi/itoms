@@ -8,6 +8,21 @@ from itoms.services.authorization import ResourceContext, has_permission
 class IncidentError(ValueError):
     """Incident operation is invalid or not permitted."""
 
+
+def _incident_context(cur, ticket_id: int):
+    """Load trusted requester, team and department attributes for authorization."""
+    cur.execute("""SELECT i.requester_employee_id,i.assigned_team_id,
+        COALESCE(t.department_id,e.department_id)
+        FROM incident_tickets i
+        LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+        LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+        WHERE i.ticket_id=%s""", (ticket_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return ResourceContext(owner_employee_id=row[0], team_id=row[1], department_id=row[2])
+
+
 TRANSITIONS = {
     "NEW": {"OPEN", "CANCELLED"},
     "OPEN": {"IN_PROGRESS", "PENDING", "RESOLVED", "CANCELLED"},
@@ -46,7 +61,9 @@ def create_incident(*, actor_employee_id: int, title: str, description: str,
         requester_department_id = requester_row[0]
         team_department_id = None
         if assigned_team_id is not None:
-            cur.execute("SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE", (assigned_team_id,))
+            cur.execute("""SELECT t.department_id FROM teams t
+                JOIN departments d ON d.department_id=t.department_id AND d.is_active=TRUE
+                WHERE t.team_id=%s AND t.is_active=TRUE""", (assigned_team_id,))
             team_row = cur.fetchone()
             if not team_row:
                 raise IncidentError("Assigned team does not exist or is inactive.")
@@ -112,7 +129,15 @@ def list_incidents(*, actor_employee_id: int, limit: int = 50, team_id: int | No
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT ticket_id,ticket_number,title,status,priority,requester_employee_id,assigned_team_id,created_at,updated_at FROM incident_tickets" + where + " ORDER BY created_at DESC,ticket_id DESC LIMIT %s", tuple(params + [limit * 3]))
+        cur.execute("""SELECT i.ticket_id,i.ticket_number,i.title,i.status,i.priority,
+            i.requester_employee_id,i.assigned_team_id,
+            COALESCE(t.department_id,e.department_id) AS department_id,
+            i.created_at,i.updated_at
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id""" +
+            where.replace("assigned_team_id", "i.assigned_team_id").replace("status=", "i.status=").replace("priority=", "i.priority=") +
+            " ORDER BY i.created_at DESC,i.ticket_id DESC LIMIT %s", tuple(params + [limit * 3]))
         candidates = cur.fetchall()
     finally:
         cur.close()
@@ -120,7 +145,8 @@ def list_incidents(*, actor_employee_id: int, limit: int = 50, team_id: int | No
     visible = []
     for item in candidates:
         context = ResourceContext(owner_employee_id=item["requester_employee_id"],
-                                  team_id=item["assigned_team_id"])
+                                  team_id=item["assigned_team_id"],
+                                  department_id=item["department_id"])
         if has_permission(actor_employee_id, "incident.read", context):
             visible.append(item)
             if len(visible) >= limit:
@@ -132,26 +158,28 @@ def transition_incident(*, actor_employee_id: int, ticket_id: int, new_status: s
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""SELECT requester_employee_id,assigned_team_id
-            FROM incident_tickets WHERE ticket_id=%s""", (ticket_id,))
-        snapshot = cur.fetchone()
+        context = _incident_context(cur, ticket_id)
     finally:
         cur.close()
         conn.close()
-    if not snapshot:
+    if not context:
         raise IncidentError("Incident not found.")
-    requester_id, team_id = snapshot
-    context = ResourceContext(owner_employee_id=requester_id, team_id=team_id)
     if not has_permission(actor_employee_id, "incident.update", context):
         raise IncidentError("Not authorized to update this incident.")
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""SELECT status,requester_employee_id,assigned_team_id
-            FROM incident_tickets WHERE ticket_id=%s FOR UPDATE""", (ticket_id,))
+        cur.execute("""SELECT i.status,i.requester_employee_id,i.assigned_team_id,
+            COALESCE(t.department_id,e.department_id)
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+            WHERE i.ticket_id=%s FOR UPDATE""", (ticket_id,))
         row = cur.fetchone()
-        if not row or row[1] != requester_id or row[2] != team_id:
+        if not row or row[1] != context.owner_employee_id or row[2] != context.team_id or row[3] != context.department_id:
             raise IncidentError("Incident changed; reload and try again.")
+        if not has_permission(actor_employee_id, "incident.update", context):
+            raise IncidentError("Not authorized to update this incident.")
         old_status = row[0]
         if new_status not in TRANSITIONS.get(old_status, set()):
             raise IncidentError(f"Transition from {old_status} to {new_status} is not allowed.")
@@ -180,14 +208,20 @@ def get_incident_detail(*, actor_employee_id: int, ticket_id: int) -> dict:
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute("""SELECT ticket_id,ticket_number,title,description,status,priority,source,
-            requester_employee_id,assigned_employee_id,assigned_team_id,first_response_due_at,
-            resolution_due_at,first_responded_at,resolved_at,closed_at,created_at,updated_at
-            FROM incident_tickets WHERE ticket_id=%s""", (ticket_id,))
+            i.requester_employee_id,i.assigned_employee_id,i.assigned_team_id,
+            COALESCE(t.department_id,e.department_id) AS department_id,
+            i.first_response_due_at,i.resolution_due_at,i.first_responded_at,
+            i.resolved_at,i.closed_at,i.created_at,i.updated_at
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+            WHERE i.ticket_id=%s""", (ticket_id,))
         ticket = cur.fetchone()
         if not ticket:
             raise IncidentError("Incident not found.")
         context = ResourceContext(owner_employee_id=ticket["requester_employee_id"],
-                                  team_id=ticket["assigned_team_id"])
+                                  team_id=ticket["assigned_team_id"],
+                                  department_id=ticket["department_id"])
         if not has_permission(actor_employee_id, "incident.read", context):
             raise IncidentError("Incident not found.")
         cur.execute("""SELECT c.comment_id,c.author_employee_id,c.comment_body,c.is_internal,c.created_at,
@@ -211,11 +245,16 @@ def add_comment(*, actor_employee_id: int, ticket_id: int, body: str, internal: 
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT requester_employee_id,assigned_team_id FROM incident_tickets WHERE ticket_id=%s", (ticket_id,))
+        cur.execute("""SELECT i.requester_employee_id,i.assigned_team_id,
+            COALESCE(t.department_id,e.department_id)
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+            WHERE i.ticket_id=%s""", (ticket_id,))
         row = cur.fetchone()
         if not row:
             raise IncidentError("Incident not found.")
-        context = ResourceContext(owner_employee_id=row[0],team_id=row[1])
+        context = ResourceContext(owner_employee_id=row[0],team_id=row[1],department_id=row[2])
         permission = "incident.comment.internal" if internal else "incident.comment"
         if not has_permission(actor_employee_id, permission, context):
             raise IncidentError("Not authorized to comment on this incident.")
@@ -246,31 +285,39 @@ def assign_incident(*, actor_employee_id: int, ticket_id: int,
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""SELECT requester_employee_id,assigned_team_id,assigned_employee_id
-            FROM incident_tickets WHERE ticket_id=%s""", (ticket_id,))
+        cur.execute("""SELECT i.requester_employee_id,i.assigned_team_id,
+            i.assigned_employee_id,COALESCE(t.department_id,e.department_id)
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+            WHERE i.ticket_id=%s""", (ticket_id,))
         snapshot = cur.fetchone()
     finally:
         cur.close()
         conn.close()
     if not snapshot:
         raise IncidentError("Incident not found.")
-    requester_id, old_team_id, old_employee_id = snapshot
-    old_context = ResourceContext(owner_employee_id=requester_id, team_id=old_team_id)
+    requester_id, old_team_id, old_employee_id, old_department_id = snapshot
+    old_context = ResourceContext(owner_employee_id=requester_id, team_id=old_team_id,
+                                  department_id=old_department_id)
     if old_team_id is not None and not has_permission(actor_employee_id, "incident.assign", old_context):
         raise IncidentError("Not authorized to reassign this incident.")
     if assigned_team_id is None and old_team_id is None:
         raise IncidentError("Incident has no current team assignment.")
     if assigned_team_id is not None:
-        if not has_permission(actor_employee_id, "incident.assign",
-                              ResourceContext(owner_employee_id=requester_id, team_id=assigned_team_id)):
-            raise IncidentError("Not authorized to assign incidents to the selected team.")
         check = get_connection()
         check_cur = check.cursor()
         try:
-            check_cur.execute("SELECT 1 FROM teams WHERE team_id=%s AND is_active=TRUE",
-                              (assigned_team_id,))
-            if not check_cur.fetchone():
+            check_cur.execute("""SELECT t.department_id FROM teams t
+                JOIN departments d ON d.department_id=t.department_id AND d.is_active=TRUE
+                WHERE t.team_id=%s AND t.is_active=TRUE""", (assigned_team_id,))
+            team_row = check_cur.fetchone()
+            if not team_row:
                 raise IncidentError("Selected team is inactive or unavailable.")
+            new_context = ResourceContext(owner_employee_id=requester_id,
+                team_id=assigned_team_id, department_id=team_row[0])
+            if not has_permission(actor_employee_id, "incident.assign", new_context):
+                raise IncidentError("Not authorized to assign incidents to the selected team.")
             if assigned_employee_id is not None:
                 check_cur.execute("""SELECT 1 FROM employees e
                     JOIN employee_team_memberships m ON m.employee_id=e.employee_id
@@ -286,11 +333,19 @@ def assign_incident(*, actor_employee_id: int, ticket_id: int,
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("""SELECT requester_employee_id,assigned_team_id,assigned_employee_id
-            FROM incident_tickets WHERE ticket_id=%s FOR UPDATE""", (ticket_id,))
+        cur.execute("""SELECT i.requester_employee_id,i.assigned_team_id,
+            i.assigned_employee_id,COALESCE(t.department_id,e.department_id)
+            FROM incident_tickets i
+            LEFT JOIN employees e ON e.employee_id=i.requester_employee_id
+            LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+            WHERE i.ticket_id=%s FOR UPDATE""", (ticket_id,))
         row = cur.fetchone()
         if not row or row != snapshot:
             raise IncidentError("Incident assignment changed; reload and try again.")
+        if old_team_id is not None and not has_permission(actor_employee_id, "incident.assign", old_context):
+            raise IncidentError("Not authorized to reassign this incident.")
+        if assigned_team_id is not None and not has_permission(actor_employee_id, "incident.assign", new_context):
+            raise IncidentError("Not authorized to assign incidents to the selected team.")
         cur.execute("""UPDATE incident_tickets SET assigned_team_id=%s,assigned_employee_id=%s
             WHERE ticket_id=%s""", (assigned_team_id, assigned_employee_id, ticket_id))
         cur.execute("""INSERT INTO incident_activity
@@ -316,20 +371,22 @@ def list_assignable_teams(*, actor_employee_id: int, ticket_id: int) -> list[dic
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT requester_employee_id FROM incident_tickets WHERE ticket_id=%s",
-                    (ticket_id,))
+        cur.execute("""SELECT i.requester_employee_id FROM incident_tickets i
+            WHERE i.ticket_id=%s""", (ticket_id,))
         ticket = cur.fetchone()
         if not ticket:
             raise IncidentError("Incident not found.")
-        cur.execute("SELECT team_id,team_name FROM teams WHERE is_active=TRUE ORDER BY team_name")
+        cur.execute("""SELECT t.team_id,t.team_name,t.department_id FROM teams t
+            JOIN departments d ON d.department_id=t.department_id AND d.is_active=TRUE
+            WHERE t.is_active=TRUE ORDER BY t.team_name""")
         teams = cur.fetchall()
     finally:
         cur.close()
         conn.close()
     return [team for team in teams if has_permission(
         actor_employee_id, "incident.assign",
-        ResourceContext(owner_employee_id=ticket["requester_employee_id"],
-                        team_id=team["team_id"]))]
+        ResourceContext(owner_employee_id=ticket[0],
+                        team_id=team["team_id"], department_id=team["department_id"]))]
 
 
 
@@ -337,8 +394,10 @@ def list_accessible_incident_teams(*, actor_employee_id: int) -> list[dict]:
     """Return active teams where the actor can read incident records."""
     conn = get_connection(); cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT team_id,team_name FROM teams WHERE is_active=TRUE ORDER BY team_name")
+        cur.execute("""SELECT t.team_id,t.team_name,t.department_id FROM teams t
+            JOIN departments d ON d.department_id=t.department_id AND d.is_active=TRUE
+            WHERE t.is_active=TRUE ORDER BY t.team_name""")
         teams = cur.fetchall()
     finally:
         cur.close(); conn.close()
-    return [team for team in teams if has_permission(actor_employee_id, "incident.read", ResourceContext(team_id=team["team_id"]))]
+    return [team for team in teams if has_permission(actor_employee_id, "incident.read", ResourceContext(team_id=team["team_id"], department_id=team["department_id"]))]
