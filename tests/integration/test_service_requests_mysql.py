@@ -1472,3 +1472,87 @@ def test_assignment_rolls_back_when_notification_outbox_insert_fails(service_req
         finally:
             cursor.close()
             cleanup.close()
+
+
+
+def test_concurrent_status_transitions_serialize_and_reject_stale_transition(
+    service_request_fixture, monkeypatch,
+):
+    """Two simultaneous transitions cannot both apply against the same old state."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from itoms.services import service_requests
+    from itoms.services.service_requests import (
+        ServiceRequestError, create_request, transition_request,
+    )
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Concurrent status transition",
+        description="Only one competing OPEN to IN_PROGRESS transition may succeed.",
+    )
+
+    connection_barrier = Barrier(2)
+    original_get_connection = service_requests.get_connection
+
+    def synchronized_connection():
+        connection = original_get_connection()
+        connection_barrier.wait(timeout=20)
+        return connection
+
+    def attempt_transition():
+        with data["app"].app_context():
+            try:
+                transition_request(
+                    actor_employee_id=data["requester_id"],
+                    request_id=request_id,
+                    new_status="IN_PROGRESS",
+                )
+                return ("success", "")
+            except ServiceRequestError as exc:
+                return ("rejected", str(exc))
+
+    monkeypatch.setattr(service_requests, "get_connection", synchronized_connection)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(attempt_transition) for _ in range(2)]
+            outcomes = [future.result(timeout=40) for future in futures]
+    finally:
+        monkeypatch.setattr(service_requests, "get_connection", original_get_connection)
+
+    assert sorted(result for result, _message in outcomes) == ["rejected", "success"]
+    rejected_message = next(message for result, message in outcomes if result == "rejected")
+    assert "Cannot move a service request from IN_PROGRESS to IN_PROGRESS" == rejected_message
+
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT status FROM service_requests WHERE request_id=%s",
+            (request_id,),
+        )
+        assert cursor.fetchone()[0] == "IN_PROGRESS"
+        cursor.execute(
+            """SELECT COUNT(*) FROM service_request_activity
+               WHERE request_id=%s AND activity_key='REQUEST_STATUS_CHANGED'""",
+            (request_id,),
+        )
+        assert cursor.fetchone()[0] == 1
+        cursor.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE target_type='service_request' AND target_id=%s
+                 AND event_key='SERVICE_REQUEST_STATUS_CHANGED'""",
+            (str(request_id),),
+        )
+        assert cursor.fetchone()[0] == 1
+        cursor.execute(
+            """SELECT COUNT(*) FROM notifications
+               WHERE target_type='service_request' AND target_id=%s""",
+            (str(request_id),),
+        )
+        assert cursor.fetchone()[0] == 0
+    finally:
+        cursor.close()
+        connection.close()
