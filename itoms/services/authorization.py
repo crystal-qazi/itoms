@@ -98,6 +98,7 @@ def has_permission_in_transaction(
         return False
     actor_department_id = actor[0]
 
+    has_resource_context = resource is not None
     resource = resource or ResourceContext()
     team_member = False
     managed_team = False
@@ -170,8 +171,10 @@ def has_permission_in_transaction(
         role_id = int(raw_role_id)
         if role_id not in active_role_ids:
             continue
-        in_scope = False
-        if scope_type == "OWN":
+        in_scope = not has_resource_context
+        if not has_resource_context:
+            pass
+        elif scope_type == "OWN":
             in_scope = resource.owner_employee_id == employee_id
         elif scope_type == "TEAM":
             in_scope = (
