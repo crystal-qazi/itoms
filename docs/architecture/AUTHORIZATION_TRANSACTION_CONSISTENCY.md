@@ -186,3 +186,24 @@ The following bounded slice is implemented in `identity_admin.py` and verified b
 - The MySQL integration tests cover both orderings: revocation commits first and a later grant is denied; an authorized grant obtains the locks first, then a concurrent revocation waits until the grant commits.
 
 This is deliberately **not** a global authorization consistency claim. `assign_role`, account creation, incidents, changes, releases, SQA, engineering tasks, service inventory, and other mutating services still require separate transaction-bound authorization migration and MySQL concurrency coverage. Do not describe the whole application as revocation-atomic until those paths are migrated and tested.
+## Lock-graph audit — 2026-11-28
+
+A focused source review was performed before starting the next transaction-bound authorization rollout. It found that the candidate order above is not yet safe to adopt as a global protocol. The following concrete conflicts must be resolved first:
+
+- **Role assignment (`identity_admin.assign_role`)** locks the target employee, then (for TEAM scope) team and membership, and only then the role. The actor's `identity.roles.assign` check uses a separate connection. This does not yet serialize actor revocation with the assignment write, and it does not match a simple actor → roles → scope → resource order.
+- **Role-assignment revocation (`identity_admin.revoke_role_assignment`)** initially reads the assignment and target department without locks, performs actor authorization on a separate connection, then locks the target employee and scope rows before role and assignment rows. It needs a defined actor/target employee lock order and a current-state revalidation protocol; the initial unlocked lookup must not become the authority for the final write.
+- **Employee deactivation (`directory_admin.deactivate_employee`)** locks actor and target employee rows together in ascending employee ID order, but its authorization check is separate-connection and occurs before those locks. Any global protocol must preserve this deterministic multi-employee ordering while making actor authorization current inside the transaction.
+- **Service Request mutations** are not ready for an isolated helper swap. `add_comment` locks the request context (a joined request/requester/team read) before checking permission through another connection. Assignment and status paths also use separate-connection checks around resource locking. The lock footprint of `_context(..., lock=True)` must be made explicit before it can participate in a global ordering; a joined `FOR UPDATE` must not be assumed to lock only the request row.
+- **Directory membership writers** share employee → team → membership ordering for their protected data, but actor authorization is pre-checked on another connection. Manager mapping writers and membership removal also touch membership/manager rows, so their shared ordering must remain explicit.
+- **Role-permission administration** has a proven bounded order (actor employee → sorted role rows → actor assignment rows → exact role-permission rows). Any global design must retain that guarantee and avoid introducing a reverse edge from role/permission locks back to employee locks.
+
+### Required design work before implementation
+
+1. Build a lock graph for every authorization-state writer and the first protected mutation slice, including all rows locked implicitly by joined locking reads and all multi-employee operations.
+2. Resolve employee-row ordering for operations involving both actor and target (ascending employee ID is already used by employee deactivation; assess whether it can be applied consistently without breaking domain invariants).
+3. Define role/assignment ordering so role-permission administration, role assignment, and role-assignment revocation cannot form a role ↔ employee cycle.
+4. Define scope ordering for TEAM and MANAGED_TEAMS, including team, membership, and manager-mapping rows.
+5. Inspect actual MySQL 8.4 isolation, indexes, and `EXPLAIN` plans; verify locking-read behavior on the exact queries used.
+6. Only after the above is agreed, implement the transaction-bound evaluator and migrate one mutation path with deterministic two-connection tests for both race winners.
+
+**No transaction-bound authorization helper or Service Request mutation migration is claimed by this audit.** The next safe deliverable is the reviewed lock graph and a test matrix; implementation must follow that design rather than infer a global order from the current candidate list.
