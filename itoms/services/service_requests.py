@@ -274,16 +274,144 @@ def set_category_active(*, actor_employee_id: int, category_id: int, is_active: 
         conn.close()
 
 
+def list_priorities(*, include_inactive: bool = False) -> list[dict]:
+    """List configured Service Request priorities in their administrator-defined order."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT priority_key,priority_label,sort_order,is_active
+               FROM service_request_priorities
+               WHERE (%s=TRUE OR is_active=TRUE)
+               ORDER BY sort_order,priority_key""",
+            (include_inactive,),
+        )
+        return cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def list_priority_admin(*, actor_employee_id: int) -> list[dict]:
+    """List active and inactive priorities for an authorized administrator."""
+    if not has_permission(actor_employee_id, "service_request.priorities.manage"):
+        raise ServiceRequestError("Not authorized to manage service request priorities.")
+    return list_priorities(include_inactive=True)
+
+
+def create_priority(
+    *, actor_employee_id: int, priority_key: str, priority_label: str, sort_order: int = 100,
+) -> str:
+    """Create a priority level with transaction-bound authorization and audit."""
+    key = (priority_key or "").strip().upper()
+    label = (priority_label or "").strip()
+    if (not key.isascii() or not 2 <= len(key) <= 30 or not key[0].isalpha()
+            or not key.replace("_", "").isalnum()):
+        raise ServiceRequestError("Priority key must be 2–30 ASCII letters, numbers or underscores.")
+    if not 1 <= len(label) <= 60:
+        raise ServiceRequestError("Priority label must contain 1–60 characters.")
+    if type(sort_order) is not int or not 0 <= sort_order <= 9999:
+        raise ServiceRequestError("Priority sort order must be between 0 and 9,999.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.priorities.manage"
+        ):
+            raise ServiceRequestError("Not authorized to manage service request priorities.")
+        cur.execute(
+            """INSERT INTO service_request_priorities
+               (priority_key,priority_label,sort_order,created_by)
+               VALUES (%s,%s,%s,%s)""",
+            (key, label, sort_order, actor_employee_id),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'SERVICE_REQUEST_PRIORITY_CREATED','service_request_priority',%s,'SUCCESS',
+                       JSON_OBJECT('priority_label',%s,'sort_order',%s))""",
+            (actor_employee_id, key, label, sort_order),
+        )
+        conn.commit()
+        return key
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def update_priority(
+    *, actor_employee_id: int, priority_key: str, priority_label: str,
+    sort_order: int, is_active: bool,
+) -> bool:
+    """Update a priority's label/order/availability without changing its stable key."""
+    key = (priority_key or "").strip().upper()
+    label = (priority_label or "").strip()
+    if not key or len(key) > 30 or not 1 <= len(label) <= 60:
+        raise ServiceRequestError("A valid priority key and 1–60 character label are required.")
+    if type(sort_order) is not int or not 0 <= sort_order <= 9999:
+        raise ServiceRequestError("Priority sort order must be between 0 and 9,999.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.priorities.manage"
+        ):
+            raise ServiceRequestError("Not authorized to manage service request priorities.")
+        cur.execute(
+            """SELECT priority_label,sort_order,is_active
+               FROM service_request_priorities WHERE priority_key=%s FOR UPDATE""",
+            (key,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ServiceRequestError("Service Request priority was not found.")
+        if bool(row[2]) and not bool(is_active):
+            cur.execute(
+                "SELECT COUNT(*) FROM service_request_priorities WHERE is_active=TRUE"
+            )
+            if int(cur.fetchone()[0]) <= 1:
+                raise ServiceRequestError("At least one active Service Request priority must remain.")
+        changed = (row[0] != label or int(row[1]) != sort_order or bool(row[2]) != bool(is_active))
+        if not changed:
+            conn.commit()
+            return False
+        cur.execute(
+            """UPDATE service_request_priorities
+               SET priority_label=%s,sort_order=%s,is_active=%s
+               WHERE priority_key=%s""",
+            (label, sort_order, bool(is_active), key),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'SERVICE_REQUEST_PRIORITY_UPDATED','service_request_priority',%s,'SUCCESS',
+                       JSON_OBJECT('priority_label',%s,'sort_order',%s,'is_active',%s))""",
+            (actor_employee_id, key, label, sort_order, bool(is_active)),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def create_request(
     *, actor_employee_id: int, title: str, description: str,
-    category_id: int | None = None, priority: str = "MEDIUM",
+    category_id: int | None = None, priority: str | None = None,
     requester_employee_id: int | None = None,
 ) -> int:
     """Submit a basic request; no catalog, approval, SLA or fulfillment automation."""
     name, detail = (title or "").strip(), (description or "").strip()
     if not name or len(name) > 240 or not detail or len(detail) > 20000:
         raise ServiceRequestError("A title (maximum 240) and description (maximum 20,000) are required.")
-    if priority not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+    priority_key = (priority or "").strip().upper() or None
+    if priority_key and (len(priority_key) > 30 or not priority_key.isascii()):
         raise ServiceRequestError("Invalid service request priority.")
     requester_id = requester_employee_id or actor_employee_id
     conn = get_connection()
@@ -311,6 +439,22 @@ def create_request(
             cur, actor_employee_id, "service_request.create", context
         ):
             raise ServiceRequestError("Not authorized to submit a request for this employee.")
+        if priority_key is None:
+            cur.execute(
+                """SELECT priority_key FROM service_request_priorities
+                   WHERE is_active=TRUE ORDER BY sort_order,priority_key LIMIT 1 FOR UPDATE"""
+            )
+            default_priority = cur.fetchone()
+            if not default_priority:
+                raise ServiceRequestError("No active Service Request priority is configured.")
+            priority_key = default_priority[0]
+        cur.execute(
+            """SELECT 1 FROM service_request_priorities
+               WHERE priority_key=%s AND is_active=TRUE FOR UPDATE""",
+            (priority_key,),
+        )
+        if not cur.fetchone():
+            raise ServiceRequestError("Service Request priority does not exist or is inactive.")
         request_number = (
             "SR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-"
             + secrets.token_hex(3).upper()
@@ -319,7 +463,7 @@ def create_request(
             """INSERT INTO service_requests
                (request_number,title,description,category_id,requester_employee_id,priority,created_by)
                VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-            (request_number, name, detail, category_id, requester_id, priority, actor_employee_id),
+            (request_number, name, detail, category_id, requester_id, priority_key, actor_employee_id),
         )
         request_id = int(cur.lastrowid)
         cur.execute(
@@ -352,13 +496,20 @@ def list_requests(
     limit = max(1, min(int(limit), 200))
     if status and status not in TRANSITIONS:
         raise ServiceRequestError("Invalid service request status filter.")
-    if priority and priority not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+    if priority and (len(priority) > 30 or not priority.isascii()):
         raise ServiceRequestError("Invalid service request priority filter.")
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     visible: list[dict] = []
     offset = 0
     try:
+        if priority:
+            cur.execute(
+                "SELECT 1 FROM service_request_priorities WHERE priority_key=%s AND is_active=TRUE",
+                (priority,),
+            )
+            if not cur.fetchone():
+                raise ServiceRequestError("Invalid or inactive service request priority filter.")
         while len(visible) < limit:
             cur.execute(
                 """SELECT r.request_id,r.request_number,r.title,r.priority,r.status,
