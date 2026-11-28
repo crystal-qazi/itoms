@@ -165,5 +165,6 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Added `test_own_scope_reader_http_mutations_are_denied_without_side_effects` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-http-mutation-tests`.
 - The MySQL-backed test authenticates an employee with only an OWN-scoped `service_request.read` grant and submits valid-CSRF HTTP POST requests to the comment, assignment, and status mutation routes for another employee's request.
 - It asserts the route boundary redirects after denial and that request status/assignment, comments, activity history, and actor-specific audit history remain unchanged.
-- Open PR [#4](https://github.com/crystal-qazi/itoms/pull/4) targets `feature/itoms-foundation`; head commit `90782b822db71b477f07b75ab22b7d3f84b95496`.
-- At memory update time, no GitHub Actions workflow run or commit status was returned for the head commit. CI evidence is therefore pending; the PR has not been merged. No production code or authorization policy changed.
+- GitHub Actions run [46122892064](https://github.com/crystal-qazi/itoms/actions/runs/46122892064) completed successfully. Both `python-quality` (compileall, full pytest suite, pip-audit, Bandit) and `mysql-migrations` (all migrations twice on MySQL 8.4 and MySQL integration suite) passed.
+- Merged [PR #4](https://github.com/crystal-qazi/itoms/pull/4) into `feature/itoms-foundation` using squash merge. Merge commit: `3e96a62cdf52eb9dcdcad8e0a4cc9d6e716862f0`.
+- Test-only change; no production code or authorization policy changed.
