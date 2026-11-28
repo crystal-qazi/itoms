@@ -858,3 +858,138 @@ def test_service_request_creation_rolls_back_when_audit_write_fails(
         finally:
             cursor.close()
             cleanup.close()
+
+
+def test_own_scope_reader_cannot_mutate_another_employees_request(service_request_fixture):
+    """Read-only OWN scope must not permit comments, assignment, or status changes."""
+    import pytest
+
+    from itoms.services.service_requests import (
+        ServiceRequestError, add_comment, assign_request, create_request,
+        transition_request,
+    )
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Mutation scope denial",
+        description="Only the requester should be able to access this request.",
+    )
+
+    outsider_id = None
+    outsider_role_id = None
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO employees
+               (employee_code,full_name,department_id,is_active)
+               VALUES (%s,%s,%s,TRUE)""",
+            (f"SR-{data['suffix']}-mutator", "Service Request Read Only", data["department_id"]),
+        )
+        outsider_id = int(cursor.lastrowid)
+        cursor.execute(
+            """INSERT INTO application_roles (role_name,description)
+               VALUES (%s,%s)""",
+            (f"Service Request Read Only {data['suffix']}", "Own-scope read-only test role"),
+        )
+        outsider_role_id = int(cursor.lastrowid)
+        cursor.execute(
+            "SELECT permission_id FROM permissions WHERE permission_key=%s",
+            ("service_request.read",),
+        )
+        permission = cursor.fetchone()
+        assert permission, "service_request.read permission migration must be applied"
+        cursor.execute(
+            "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+            (outsider_role_id, permission[0]),
+        )
+        cursor.execute(
+            """INSERT INTO employee_role_assignments
+               (employee_id,role_id,scope_type,is_active)
+               VALUES (%s,%s,'OWN',TRUE)""",
+            (outsider_id, outsider_role_id),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+        connection.close()
+
+    try:
+        with pytest.raises(ServiceRequestError):
+            add_comment(
+                actor_employee_id=outsider_id,
+                request_id=request_id,
+                body="Unauthorized comment",
+            )
+        with pytest.raises(ServiceRequestError):
+            assign_request(
+                actor_employee_id=outsider_id,
+                request_id=request_id,
+                assigned_team_id=data["team_id"],
+                assigned_employee_id=data["assignee_id"],
+            )
+        with pytest.raises(ServiceRequestError):
+            transition_request(
+                actor_employee_id=outsider_id,
+                request_id=request_id,
+                new_status="ON_HOLD",
+                pending_reason="Unauthorized status change",
+            )
+
+        connection = _db()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                """SELECT status,assigned_team_id,assigned_employee_id
+                   FROM service_requests WHERE request_id=%s""",
+                (request_id,),
+            )
+            assert cursor.fetchone() == ("OPEN", None, None)
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_comments WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 0
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_activity WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                """SELECT COUNT(*) FROM audit_events
+                   WHERE target_type='service_request' AND target_id=%s
+                     AND actor_employee_id=%s""",
+                (str(request_id), outsider_id),
+            )
+            assert cursor.fetchone()[0] == 0
+        finally:
+            cursor.close()
+            connection.close()
+    finally:
+        cleanup = _db()
+        cursor = cleanup.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM employee_role_assignments WHERE employee_id=%s",
+                (outsider_id,),
+            )
+            cursor.execute(
+                "DELETE FROM role_permissions WHERE role_id=%s",
+                (outsider_role_id,),
+            )
+            cursor.execute(
+                "DELETE FROM application_roles WHERE role_id=%s",
+                (outsider_role_id,),
+            )
+            cursor.execute("DELETE FROM employees WHERE employee_id=%s", (outsider_id,))
+            cleanup.commit()
+        except Exception:
+            cleanup.rollback()
+            raise
+        finally:
+            cursor.close()
+            cleanup.close()
