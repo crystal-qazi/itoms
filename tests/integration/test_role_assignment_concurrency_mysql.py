@@ -88,7 +88,12 @@ def role_assignment_fixture():
             ("identity.roles.permissions.manage",),
         )
         manage_permission = cursor.fetchone()
-        assert assign_permission and manage_permission, "permission catalogue migrations must be applied"
+        cursor.execute(
+            "SELECT permission_id FROM permissions WHERE permission_key=%s",
+            ("identity.directory.manage",),
+        )
+        directory_manage_permission = cursor.fetchone()
+        assert assign_permission and manage_permission and directory_manage_permission, "permission catalogue migrations must be applied"
 
         cursor.execute(
             "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
@@ -97,6 +102,10 @@ def role_assignment_fixture():
         cursor.execute(
             "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
             (revoker_role_id, manage_permission[0]),
+        )
+        cursor.execute(
+            "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+            (revoker_role_id, directory_manage_permission[0]),
         )
         for employee_id, role_id in (
             (assigner_id, assigner_role_id),
@@ -328,3 +337,113 @@ def test_managed_teams_role_assignment_revalidates_all_team_memberships(
     finally:
         cursor.close()
         connection.close()
+
+
+
+def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
+    role_assignment_fixture, monkeypatch
+):
+    from itoms.services import directory, directory_admin, identity_admin
+
+    data = role_assignment_fixture
+    original_check = directory.has_permissions_in_transaction
+    revocation_locked = threading.Event()
+    allow_revocation = threading.Event()
+
+    def coordinated_check(cur, actor_employee_id, permission_key, resources, **kwargs):
+        result = original_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+        if actor_employee_id == data["revoker_id"] and permission_key == "identity.directory.manage":
+            revocation_locked.set()
+            if not allow_revocation.wait(timeout=15):
+                raise TimeoutError("test did not release membership revocation")
+        return result
+
+    monkeypatch.setattr(directory, "has_permissions_in_transaction", coordinated_check)
+
+    def remove_membership():
+        with data["app"].app_context():
+            return directory_admin.remove_team_membership(
+                actor_employee_id=data["revoker_id"],
+                employee_id=data["target_employee_id"],
+                team_id=data["team_ids"][0],
+            )
+
+    def assign_team_role():
+        with data["app"].app_context():
+            return identity_admin.assign_role(
+                actor_employee_id=data["assigner_id"],
+                employee_id=data["target_employee_id"],
+                role_id=data["target_role_id"],
+                scope_type="TEAM",
+                scope_reference=str(data["team_ids"][0]),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        removal_future = pool.submit(remove_membership)
+        assert revocation_locked.wait(timeout=10), "membership removal did not acquire its locks"
+        assignment_future = pool.submit(assign_team_role)
+        assert not assignment_future.done(), "team-scoped assignment passed while membership removal held locks"
+        allow_revocation.set()
+        removal_future.result(timeout=15)
+        with pytest.raises(identity_admin.IdentityAdministrationError, match="belong to the active team"):
+            assignment_future.result(timeout=15)
+
+
+def test_employee_deactivation_wins_before_role_assignment(
+    role_assignment_fixture, monkeypatch
+):
+    from itoms.services import directory_admin, identity_admin
+
+    data = role_assignment_fixture
+    # Deactivation requires team and manager scopes to be explicitly removed first.
+    for team_id in data["team_ids"]:
+        directory_admin.remove_team_membership(
+            actor_employee_id=data["revoker_id"],
+            employee_id=data["target_employee_id"],
+            team_id=team_id,
+        )
+        directory_admin.remove_team_manager(
+            actor_employee_id=data["revoker_id"],
+            manager_employee_id=data["target_employee_id"],
+            team_id=team_id,
+        )
+
+    original_check = directory_admin.has_permissions_in_transaction
+    deactivation_locked = threading.Event()
+    allow_deactivation = threading.Event()
+
+    def coordinated_check(cur, actor_employee_id, permission_key, resources, **kwargs):
+        result = original_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+        if actor_employee_id == data["revoker_id"] and permission_key == "identity.directory.manage":
+            deactivation_locked.set()
+            if not allow_deactivation.wait(timeout=15):
+                raise TimeoutError("test did not release employee deactivation")
+        return result
+
+    monkeypatch.setattr(directory_admin, "has_permissions_in_transaction", coordinated_check)
+
+    def deactivate():
+        with data["app"].app_context():
+            return directory_admin.deactivate_employee(
+                actor_employee_id=data["revoker_id"],
+                employee_id=data["target_employee_id"],
+            )
+
+    def assign():
+        with data["app"].app_context():
+            return identity_admin.assign_role(
+                actor_employee_id=data["assigner_id"],
+                employee_id=data["target_employee_id"],
+                role_id=data["target_role_id"],
+                scope_type="DEPARTMENT",
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        deactivation_future = pool.submit(deactivate)
+        assert deactivation_locked.wait(timeout=10), "deactivation did not acquire its locks"
+        assignment_future = pool.submit(assign)
+        assert not assignment_future.done(), "role assignment passed while deactivation held employee locks"
+        allow_deactivation.set()
+        assert deactivation_future.result(timeout=15) is True
+        with pytest.raises(identity_admin.IdentityAdministrationError, match="inactive"):
+            assignment_future.result(timeout=15)
