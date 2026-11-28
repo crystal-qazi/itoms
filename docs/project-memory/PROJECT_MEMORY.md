@@ -1,7 +1,7 @@
 # ITOMS — Master Project Memory
 
 **Last synchronized:** 2026-11-28  
-**Status:** Planning baseline finalized; implementation readiness and specialist-skill packaging have outstanding items.  
+**Status:** Planning baseline finalized; substantial application implementation exists on `feature/itoms-foundation`; Service Request release gates and branch reconciliation remain open.  
 **Repository:** https://github.com/crystal-qazi/itoms (`main`)
 
 > This is the living project memory summary. Read [MEMORY_POLICY.md](./MEMORY_POLICY.md) before every ITOMS task. This file is updated after each task.
@@ -88,16 +88,20 @@ The user wants three specialist skills retained as standing standards for ChatGP
 
 Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authentication provider, or deployment topology.
 
-## 7. Current status and pending work (last known)
+## 7. Current status and pending work (reviewed 2026-11-28)
 
-1. **Repository created:** ITOMS central GitHub repository exists and is accessible; default branch is `main`.
-2. **Planning:** Questionnaire completed through Q293; consolidated Master Requirements & System Blueprint selected.
-3. **UI/UX skill:** v1.0.0 created and retained.
-4. **Security skill:** v1.0.0 created.
-5. **Full-stack skill:** 29 decisions finalized; v1.0.0 package/ZIP creation and validation pending in the latest recovered status.
-6. **Local agent setup:** Installation/configuration of the ITOMS specialist skills for OpenCode, Qoder, and Hermes remained pending in the latest recovered status.
-7. **Documentation migration:** The exact full blueprint and remaining Q1–Q275 decision details should be migrated into dedicated requirements and decision records when the source artifact is available in this repository or current project files.
-8. **Implementation status:** No implementation milestone or production readiness claim is established by the currently recovered project memory. Inspect repository contents before reporting implementation status.
+1. **Canonical memory:** `main` contains `docs/project-memory/` and remains the canonical memory branch.
+2. **Approved blueprint:** The full `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md` exists on `feature/itoms-foundation` (835 lines in the branch comparison); the planning baseline is therefore recoverable from GitHub.
+3. **Implementation branch:** `feature/itoms-foundation` contains a substantial Flask/MySQL application, 43 numbered migrations, specialist skills, tests, CI, architecture notes, setup/deployment guidance, and module implementations. Its README describes it as active development, not a production release.
+4. **Earlier baseline branch:** `foundation/engineering-skills-baseline` also exists and is an earlier engineering baseline.
+5. **Branch relationship:** GitHub comparison of `main...feature/itoms-foundation` returned `diverged`, with feature branch 613 commits ahead and 3 commits behind `main` at review time. The feature branch does not contain `docs/project-memory/`. No open PR was returned by the repository-scoped PR search. Do not merge, force-push, or overwrite either branch automatically; prepare a deliberate reconciliation plan.
+6. **Specialist skills:** UI/UX Engineer v1.0.0, Full-Stack Engineer v1.0.0, and Security Engineer v1.0.0 skill files and references are present on `feature/itoms-foundation`. Their availability on that branch is confirmed; local agent installation/configuration remains unverified/pending.
+7. **Service Request representative validation:** `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` records CI run `46119899408`: 182 Python tests passed, 56 skipped; 43 migrations applied and rerun idempotently; 56 Service Request MySQL integration tests passed. These are recorded CI results, not tests rerun during the 2026-11-28 review.
+8. **Service Request remaining gates:** denied-action/cross-scope route tests, representative audit rollback tests, broader deadlock/load stress, manual keyboard/screen-reader/contrast/reflow/target-size/theme/mobile review, automated accessibility scan, dedicated dashboards/aggregate analytics follow-up, worker monitoring, and deployment validation remain open as detailed in `IMPLEMENTATION_REVIEW_2026-11-28.md`.
+9. **Migration count discrepancy:** Feature branch README says 42 numbered migrations, while the Service Request validation records 43 applied and migration `043_service_request_priorities.sql` exists. Resolve documentation discrepancy; current migration files indicate 43.
+10. **Full questionnaire history:** Exact Q1–Q275 selected options and rationales still require backfill from source conversations/decision records. Do not reconstruct by guess.
+11. **Full-stack skill package:** The v1.0.0 skill and references are present in the feature branch. A separately generated/validated ZIP package is not confirmed by this review.
+12. **Production status:** No production readiness or release approval is established. Continue module-level specialist validation and safe deployment gates.
 
 ## 8. Constraints and working preferences
 
@@ -109,18 +113,25 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Use the repository as the canonical memory and review it before every ITOMS task.
 - After every ITOMS task, update and push relevant project-memory records.
 
-## 9. Memory migration backlog
+## 9. Memory and project backlog
 
-- [ ] Add the complete approved Master Requirements & System Blueprint as a dedicated requirements document.
 - [ ] Backfill all 293 questionnaire decisions, preserving exact question numbers, option numbers, selected answers, and rationale where available.
 - [ ] Add a decision register with status and traceability.
-- [ ] Add the complete UI/UX Engineer v1.0.0 skill package and references.
-- [ ] Add the complete Security Engineer v1.0.0 skill package and references.
-- [ ] Prepare, validate, and add the Full-Stack Engineer v1.0.0 package (29 decisions).
-- [ ] Record the eight teams by their approved names and responsibilities from the blueprint; names are not currently present in the recovered context.
-- [ ] Record the implementation roadmap and milestone status from the approved blueprint once recovered.
+- [ ] Record the eight teams by their approved names and responsibilities from the full blueprint.
+- [ ] Record the implementation roadmap and milestone status from the approved blueprint.
+- [ ] Decide and execute a safe reconciliation of the 613-ahead/3-behind `feature/itoms-foundation` branch with the memory-bearing `main`; preserve all work and do not force-push.
+- [ ] Resolve the README migration-count discrepancy (42 stated vs 43 present/applied).
+- [ ] Complete the open Service Request security, accessibility, operational and deployment gates in `IMPLEMENTATION_REVIEW_2026-11-28.md`.
+- [ ] Verify local agent skill installation/configuration for OpenCode, Qoder and Hermes.
+- [ ] If a distributable Full-Stack skill ZIP is still desired, prepare and validate it; the source skill package already exists on the feature branch.
 
 ## 10. Change log
+
+### 2026-11-28 — Repository and Service Request implementation review
+- Reviewed the canonical memory files on `main`, the full blueprint and all three specialist skills on `feature/itoms-foundation`, and the Service Request validation, route, service, templates and tests.
+- Confirmed the feature branch contains a substantial application implementation and recorded the historical CI evidence without claiming to rerun it.
+- Recorded branch divergence (613 ahead / 3 behind), missing memory directory on the feature branch, migration-count discrepancy, and the remaining Service Request release gates.
+- Added [IMPLEMENTATION_REVIEW_2026-11-28.md](./IMPLEMENTATION_REVIEW_2026-11-28.md).
 
 ### 2026-11-28 — Initial GitHub project-memory migration
 - Established this project-memory directory and mandatory review/update/push policy.
