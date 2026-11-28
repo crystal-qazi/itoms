@@ -103,3 +103,12 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Updated the root README to state: 43 numbered SQL migrations (`001`–`043`).
 - Merged PR [#3](https://github.com/crystal-qazi/itoms/pull/3) into `feature/itoms-foundation` as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`.
 - This was a documentation-only change; no migration SQL or application code changed. No CI workflow was triggered for the docs-only branch.
+
+
+## 10. Follow-up HTTP mutation route regression — 2026-11-28
+- Added `tests/integration/test_service_requests_mysql.py::test_own_scope_reader_http_mutations_are_denied_without_side_effects` on branch `feature/security-service-request-http-mutation-tests`.
+- The test creates a separate employee with only OWN-scoped `service_request.read`, then sends valid-CSRF HTTP POSTs to the comment, assignment, and status routes for another employee's request.
+- It verifies each route returns its existing redirect/error boundary and that request status/assignment, comment count, activity count, and outsider audit rows remain unchanged.
+- Open PR [#4](https://github.com/crystal-qazi/itoms/pull/4) targets `feature/itoms-foundation`; head commit `90782b822db71b477f07b75ab22b7d3f84b95496`.
+- No workflow run or commit status was returned when checked. Do not claim test execution or CI success; PR remains unmerged pending validation.
+- Test-only change. No production authorization logic or permission policy changed.
