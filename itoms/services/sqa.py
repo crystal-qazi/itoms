@@ -127,45 +127,111 @@ def get_test_plan(*, actor_employee_id: int, plan_id: int):
 
 
 def create_test_plan(*, actor_employee_id: int, title: str, scope_description: str, release_key: str | None):
-    title=title.strip()
-    if not title or len(title)>200:
+    title = title.strip()
+    if not title or len(title) > 200:
         raise SQAError("Plan title is required (maximum 200 characters).")
-    release_key=(release_key or "").strip().upper() or None
-    conn=get_connection(); cur=conn.cursor()
+    release_key = (release_key or "").strip().upper() or None
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("""SELECT e.department_id,m.team_id FROM employees e
-            LEFT JOIN employee_team_memberships m ON m.employee_id=e.employee_id AND m.is_primary=TRUE
-            WHERE e.employee_id=%s AND e.is_active=TRUE""",(actor_employee_id,))
-        actor_scope=cur.fetchone()
-        if not actor_scope or not has_permission(actor_employee_id,"sqa.plan.create",
-            ResourceContext(owner_employee_id=actor_employee_id,department_id=actor_scope[0],team_id=actor_scope[1])):
-            raise SQAError("Not authorized to create SQA plans.")
+        cur.execute(
+            """SELECT e.department_id,m.team_id FROM employees e
+               LEFT JOIN employee_team_memberships m
+                 ON m.employee_id=e.employee_id AND m.is_primary=TRUE
+               WHERE e.employee_id=%s AND e.is_active=TRUE""",
+            (actor_employee_id,),
+        )
+        actor_scope = cur.fetchone()
+        if not actor_scope:
+            raise SQAError("An active employee account is required to create SQA plans.")
+        actor_context = ResourceContext(
+            owner_employee_id=actor_employee_id,
+            department_id=actor_scope["department_id"],
+            team_id=actor_scope["team_id"],
+        )
+
+        release = None
+        release_context = None
+        lock_employee_ids = []
         if release_key:
-            cur.execute("""SELECT r.release_id,r.created_by,e.department_id,s.owner_team_id
-                FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
-                LEFT JOIN service_records s ON s.service_id=r.service_id WHERE r.release_key=%s""",(release_key,))
-            release=cur.fetchone()
+            cur.execute(
+                """SELECT r.release_id,r.created_by,e.department_id,
+                          s.owner_team_id,st.department_id AS service_department_id
+                   FROM software_releases r
+                   JOIN employees e ON e.employee_id=r.created_by
+                   LEFT JOIN service_records s ON s.service_id=r.service_id
+                   LEFT JOIN teams st ON st.team_id=s.owner_team_id
+                   WHERE r.release_key=%s""",
+                (release_key,),
+            )
+            release = cur.fetchone()
             if not release:
                 raise SQAError("Selected release was not found.")
-            if not has_permission(actor_employee_id,"release.read",
-                ResourceContext(owner_employee_id=release[1],department_id=release[2],team_id=release[3],
-                    resource_type="release",resource_id=str(release[0]))):
-                raise SQAError("Not authorized to associate this release.")
-        plan_key="SQA-"+secrets.token_hex(5).upper()
-        cur.execute("""INSERT INTO sqa_test_plans
-            (plan_key,release_key,title,scope_description,created_by,status)
-            VALUES (%s,%s,%s,%s,%s,'ACTIVE')""",
-            (plan_key,release_key,title,scope_description.strip() or None,actor_employee_id))
-        plan_id=int(cur.lastrowid)
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome)
-            VALUES (%s,'SQA_PLAN_CREATED','sqa_plan',%s,'SUCCESS')""",(actor_employee_id,str(plan_id)))
-        conn.commit(); return plan_id
-    except Exception:
-        conn.rollback(); raise
-    finally:
-        cur.close(); conn.close()
+            release_team_id = (
+                release["owner_team_id"]
+                if release["service_department_id"] == release["department_id"]
+                else None
+            )
+            release_context = ResourceContext(
+                owner_employee_id=release["created_by"],
+                department_id=release["department_id"],
+                team_id=release_team_id,
+                resource_type="release",
+                resource_id=str(release["release_id"]),
+            )
+            lock_employee_ids.append(release["created_by"])
 
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "sqa.plan.create", actor_context,
+            lock_employee_ids=lock_employee_ids,
+        ):
+            raise SQAError("Not authorized to create SQA plans.")
+        if release_context is not None and not has_permission_in_transaction(
+            cur, actor_employee_id, "release.read", release_context,
+            lock_employee_ids=lock_employee_ids,
+        ):
+            raise SQAError("Not authorized to associate this release.")
+
+        cur.execute(
+            "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+            (actor_employee_id,),
+        )
+        locked_actor = cur.fetchone()
+        if (not locked_actor or not locked_actor["is_active"]
+                or locked_actor["department_id"] != actor_scope["department_id"]):
+            raise SQAError("Employee scope changed; retry SQA plan creation.")
+        if release is not None:
+            cur.execute(
+                "SELECT release_key,created_by FROM software_releases WHERE release_id=%s FOR UPDATE",
+                (release["release_id"],),
+            )
+            locked_release = cur.fetchone()
+            if (not locked_release or locked_release["release_key"] != release_key
+                    or locked_release["created_by"] != release["created_by"]):
+                raise SQAError("Linked release changed; retry SQA plan creation.")
+
+        plan_key = "SQA-" + secrets.token_hex(5).upper()
+        cur.execute(
+            """INSERT INTO sqa_test_plans
+               (plan_key,release_key,title,scope_description,created_by,status)
+               VALUES (%s,%s,%s,%s,%s,'ACTIVE')""",
+            (plan_key, release_key, title, scope_description.strip() or None, actor_employee_id),
+        )
+        plan_id = int(cur.lastrowid)
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'SQA_PLAN_CREATED','sqa_plan',%s,'SUCCESS')""",
+            (actor_employee_id, str(plan_id)),
+        )
+        conn.commit()
+        return plan_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 def add_test_case(*, actor_employee_id: int, plan_id: int, case_key: str, title: str,
                   preconditions: str, steps: str, expected_result: str):
