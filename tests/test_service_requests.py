@@ -104,3 +104,19 @@ def test_update_priority_rejects_boolean_sort_order_before_database(monkeypatch)
             sort_order=True, is_active=True,
         )
 
+@pytest.mark.parametrize(
+    "filters, message",
+    [
+        ({"search": "x" * 121}, "search text"),
+        ({"created_from": "not-a-date"}, "start date"),
+        ({"created_from": "2026-02-02", "created_to": "2026-02-01"}, "Start date"),
+    ],
+)
+def test_advanced_search_rejects_invalid_filters_before_database(monkeypatch, filters, message):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened for invalid search filters"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match=message):
+        service_requests.list_requests(actor_employee_id=1, **filters)
+
