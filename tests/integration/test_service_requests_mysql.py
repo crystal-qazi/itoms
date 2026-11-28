@@ -88,6 +88,16 @@ def service_request_fixture():
         )
         cursor.execute(
             "SELECT permission_id FROM permissions WHERE permission_key=%s",
+            ("service_request.priorities.manage",),
+        )
+        priority_manage_permission = cursor.fetchone()
+        assert priority_manage_permission, "priority management permission migration must be applied"
+        cursor.execute(
+            "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+            (administrator_role_id, priority_manage_permission[0]),
+        )
+        cursor.execute(
+            "SELECT permission_id FROM permissions WHERE permission_key=%s",
             ("identity.roles.permissions.manage",),
         )
         role_manage_permission = cursor.fetchone()
@@ -480,3 +490,66 @@ def test_comment_authorization_and_role_permission_revocation_share_transaction_
             request_id=request_id,
             body="This must be denied after permission revocation.",
         )
+
+def test_priority_catalogue_is_admin_configurable_and_used_for_new_requests(service_request_fixture):
+    from itoms.services.service_requests import (
+        ServiceRequestError, create_priority, create_request, list_priorities,
+        list_priority_admin, list_requests, update_priority,
+    )
+
+    data = service_request_fixture
+    assert [row["priority_key"] for row in list_priorities()] == [
+        "LOW", "MEDIUM", "HIGH", "CRITICAL",
+    ]
+
+    create_priority(
+        actor_employee_id=data["administrator_id"],
+        priority_key="urgent",
+        priority_label="Urgent",
+        sort_order=5,
+    )
+    assert list_priorities()[0]["priority_key"] == "URGENT"
+
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Urgent access request",
+        description="This request uses an administrator-created priority.",
+        priority="URGENT",
+    )
+    rows = list_requests(
+        actor_employee_id=data["requester_id"], priority="URGENT",
+    )
+    assert any(row["request_id"] == request_id for row in rows)
+
+    assert update_priority(
+        actor_employee_id=data["administrator_id"],
+        priority_key="URGENT",
+        priority_label="Urgent",
+        sort_order=5,
+        is_active=False,
+    )
+    inactive = {
+        row["priority_key"]: row
+        for row in list_priority_admin(actor_employee_id=data["administrator_id"])
+    }
+    assert inactive["URGENT"]["is_active"] is False
+    assert all(row["priority_key"] != "URGENT" for row in list_priorities())
+
+    with pytest.raises(ServiceRequestError, match="inactive"):
+        create_request(
+            actor_employee_id=data["requester_id"],
+            title="Another urgent request",
+            description="An inactive priority must not be selectable.",
+            priority="URGENT",
+        )
+
+    default_request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Default priority request",
+        description="The service selects the first active configured priority.",
+    )
+    default_rows = list_requests(
+        actor_employee_id=data["requester_id"], priority="LOW",
+    )
+    assert any(row["request_id"] == default_request_id for row in default_rows)
+
