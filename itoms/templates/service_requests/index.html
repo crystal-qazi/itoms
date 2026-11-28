@@ -28,7 +28,7 @@
     <div class="col-12 col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Add category</button></div>
   </form>
   {% if category_admin %}
-  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Category</th><th>Description</th><th>Status</th><th>Action</th></tr></thead><tbody>
+  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th scope="col">Category</th><th scope="col">Description</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead><tbody>
   {% for category in category_admin %}<tr><td>{{ category.category_name }}</td><td>{{ category.description or '—' }}</td><td>{{ 'Active' if category.is_active else 'Inactive' }}</td><td>
     <form method="post" action="{{ url_for('service_requests.category_active', category_id=category.category_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><input type="hidden" name="is_active" value="{{ '0' if category.is_active else '1' }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Deactivate' if category.is_active else 'Activate' }}</button></form>
   </td></tr>{% endfor %}
@@ -47,7 +47,7 @@
     <div class="col-6 col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Add priority</button></div>
   </form>
   {% if priority_admin %}
-  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Key</th><th>Display label</th><th>Order</th><th>Availability</th><th>Action</th></tr></thead><tbody>
+  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th scope="col">Key</th><th scope="col">Display label</th><th scope="col">Order</th><th scope="col">Availability</th><th scope="col">Action</th></tr></thead><tbody>
   {% for priority in priority_admin %}<tr>
     <td><code>{{ priority.priority_key }}</code></td>
     <td colspan="4">
@@ -76,7 +76,7 @@
     <div class="col-6 col-lg-3 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Search requests</button></div>
   </form>
   {% if requests %}
-  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Request</th><th>Title</th><th>Category</th><th>Team</th><th>Priority</th><th>Status</th><th>Created</th></tr></thead><tbody>
+  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th scope="col">Request</th><th scope="col">Title</th><th scope="col">Category</th><th scope="col">Team</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col">Created</th></tr></thead><tbody>
   {% for item in requests %}<tr><td class="text-nowrap"><strong>{{ item.request_number }}</strong></td><td><a href="{{ url_for('service_requests.detail', request_id=item.request_id) }}">{{ item.title }}</a></td><td>{{ item.category_name or '—' }}</td><td>{{ item.team_name or 'Unassigned' }}</td><td>{{ item.priority }}</td><td>{{ item.status|replace('_',' ') }}</td><td class="text-nowrap">{{ item.created_at }}</td></tr>{% endfor %}
   </tbody></table></div>
   {% else %}<div class="empty-state"><strong>No service requests found</strong><p class="text-secondary mb-0">Requests visible in your access scope will appear here.</p></div>{% endif %}
