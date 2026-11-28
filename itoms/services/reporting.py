@@ -21,8 +21,7 @@ DATASETS = {
     "service_requests": {
         "label": "Service Requests",
         "fields": ("request_number", "title", "priority", "status", "created_at"),
-        "filters": {"status": {"OPEN", "IN_PROGRESS", "ON_HOLD", "COMPLETED", "CANCELLED"},
-                    "priority": {"LOW", "MEDIUM", "HIGH", "CRITICAL"}},
+        "filters": {"status": {"OPEN", "IN_PROGRESS", "ON_HOLD", "COMPLETED", "CANCELLED"}},
     },
     "projects": {
         "label": "Projects",
@@ -93,6 +92,10 @@ def create_report(
         if value in (None, ""):
             continue
         allowed = dataset["filters"].get(key)
+        if dataset_key == "service_requests" and key == "priority":
+            allowed = {
+                row["priority_key"] for row in service_requests.list_priorities()
+            }
         if allowed is None or value not in allowed:
             raise ReportingError(f"Invalid {key} filter for this report dataset.")
         selected_filters[key] = value
