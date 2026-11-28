@@ -37,8 +37,27 @@ def create_employee_account(*, actor_employee_id: int, employee_code: str,
         if not cur.fetchone():
             raise IdentityAdministrationError("Department does not exist or is inactive.")
         context = ResourceContext(department_id=department_id, team_id=primary_team_id)
-        if not has_permission(actor_employee_id, "identity.accounts.create", context):
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.accounts.create", [context]
+        ):
             raise IdentityAdministrationError("Not authorized to create accounts in this department or team.")
+        # Revalidate department/team state after authorization locks. The helper
+        # has already locked the actor and any supplied primary-team row.
+        cur.execute(
+            "SELECT 1 FROM departments WHERE department_id=%s AND is_active=TRUE FOR UPDATE",
+            (department_id,),
+        )
+        if not cur.fetchone():
+            raise IdentityAdministrationError("Department does not exist or is inactive.")
+        if primary_team_id is not None:
+            cur.execute(
+                "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+                (primary_team_id,),
+            )
+            locked_team = cur.fetchone()
+            if (not locked_team or not locked_team[1]
+                    or locked_team[0] != department_id):
+                raise IdentityAdministrationError("Primary team changed; retry account creation.")
         cur.execute("""INSERT INTO employees
             (employee_code,full_name,email,job_title,department_id)
             VALUES (%s,%s,%s,%s,%s)""",
