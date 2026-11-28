@@ -175,5 +175,13 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 ## 18. Concurrent Service Request transition regression — 2026-11-28
 - Added a deterministic two-connection MySQL regression test `test_concurrent_status_transitions_serialize_and_reject_stale_transition` to `tests/integration/test_service_requests_mysql.py`.
 - The test synchronizes both connections before competing OPEN → IN_PROGRESS transitions and checks exactly one success, one stale-state rejection, and exactly one persisted status activity/audit event.
-- PR [#11](https://github.com/crystal-qazi/itoms/pull/11), head `a293af7fb252330d627b89d3de7f94fcd71cf76e`, is open. GitHub Actions run [46124493783](https://github.com/crystal-qazi/itoms/actions/runs/46124493783): `python-quality` passed; `mysql-migrations` was still in progress at this update. Do not merge until both checks pass.
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11) was updated to head `e0b03bd9e673ccd8ddf839bf0e77e65623049ae7`; fresh GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations`. It was squash-merged as `544853f84846ceadf15fe126b0ab4df34228d131`.
 - Test-only change; no production code changed.
+
+
+## 19. Concurrent Service Request transition test merged — 2026-11-28
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11) adds a deterministic two-connection MySQL regression for simultaneous OPEN → IN_PROGRESS transitions. Exactly one succeeds, the stale competing transition is rejected, and only one status activity/audit event is persisted.
+- The first run [46124493783](https://github.com/crystal-qazi/itoms/actions/runs/46124493783) passed `python-quality` but failed MySQL integration on a punctuation mismatch in the test's expected error string. Corrected the assertion in a follow-up commit; run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both required jobs.
+- PR #11 was squash-merged into `feature/itoms-foundation` as `544853f84846ceadf15fe126b0ab4df34228d131`.
+- Documentation-only PR [#12](https://github.com/crystal-qazi/itoms/pull/12) records the evidence and states that broad cross-service load/deadlock testing remains open. Merged as `15d04848d93b764deb142ff94db19fc543c06110`; no CI triggered.
+- No production code changed.
