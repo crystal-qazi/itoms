@@ -1524,7 +1524,7 @@ def test_concurrent_status_transitions_serialize_and_reject_stale_transition(
 
     assert sorted(result for result, _message in outcomes) == ["rejected", "success"]
     rejected_message = next(message for result, message in outcomes if result == "rejected")
-    assert "Cannot move a service request from IN_PROGRESS to IN_PROGRESS" == rejected_message
+    assert rejected_message == "Cannot move a service request from IN_PROGRESS to IN_PROGRESS."
 
     connection = _db()
     cursor = connection.cursor()
