@@ -222,3 +222,10 @@ No production application or notification-worker code was changed in PRs #11–#
 - Added read-only SQL observations for per-channel/status queue depth and age, stale PROCESSING claims and DEAD backlog.
 - Explicitly documented that these queries are not alerting; operational thresholds, alert routing, worker supervision and on-call ownership still require approval.
 - Documentation-only PR [#15](https://github.com/crystal-qazi/itoms/pull/15) was squash-merged into `feature/itoms-foundation` as `4bbbfbb430b590452cd8a227f5612aca4399088e`. No CI was triggered; no production code changed.
+
+
+## 23. Concurrent notification stale-claim recovery regression — 2026-11-28 (pending)
+- Added a four-worker MySQL integration test `test_concurrent_stale_outbox_recovery_processes_each_claim_once` in `tests/integration/test_notifications_outbox_mysql.py`.
+- The test creates 40 stale PROCESSING outbox rows and synchronizes four independent connections. Each calls `recover_stale_outbox(stale_after_seconds=300, max_attempts=8, batch_size=10)`. Assertions require four batches of ten, all 40 rows back to PENDING with `attempt_count=1`, no remaining lock timestamps, the expected recovery reason, and exactly 40 recovery audit events. NULL-actor audit rows are explicitly removed during test cleanup.
+- PR [#16](https://github.com/crystal-qazi/itoms/pull/16), head `00028ffd2d5a158bf856e3e38972080aeb928917`, is open and mergeable. Initial workflow-run and combined-status queries returned no entries. CI is unverified; do not merge until `python-quality` and `mysql-migrations` pass.
+- Test-only change; no production notification code changed. The test has not been executed locally.
