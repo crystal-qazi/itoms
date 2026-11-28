@@ -3,7 +3,8 @@
 ## Repository baseline
 - Repository: crystal-qazi/itoms
 - Integration branch: foundation/engineering-skills-baseline
-- Default branch remains main; no merge performed.
+- Default branch remains `main`; no merge performed.
+- Authoritative requirements baseline: `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md` (ITOMS v1.0, Planning Finalized).
 
 ## Skill entry points committed
 - `skills/itoms-ui-ux-engineer/SKILL.md` — v1.0.0 project-specific UI/UX standard.
@@ -16,22 +17,26 @@
 - `skills/itoms-fullstack-engineer/references/decision-baseline.md`
 
 ## Verification and provenance
-The full specialist skill source packages were previously generated and are available in the user's ChatGPT Library. The repository entry points above are the committed skill texts. UI/UX and Security entry points are concise repository-integrated versions; the complete original package reference/template files have not yet been expanded into this repository.
+The complete UI/UX and Security v1.0.0 source packages are available in the user's ChatGPT Library. The repository entry points above are concise project-integrated skill texts; the complete original package reference/template files have not yet been expanded into this repository.
 
-Full-Stack Decisions 27–29 are represented. Decisions 1–26 are deliberately not reconstructed. The authoritative Master Requirements & System Blueprint and original decision record still need to be committed and checked before declaring complete requirements traceability.
+Full-Stack Decisions 27–29 are represented. Decisions 1–26 are deliberately not reconstructed; the original decision record is still required for complete decision traceability.
+
+The Master Requirements & System Blueprint v1.0 has now been committed to the repository. Requirements-to-skill cross-checking remains to be performed.
 
 ## Current status
 - Repository foundation: in progress on this branch.
+- Master Requirements & System Blueprint: committed.
 - Three specialist entry points: committed.
 - Full-Stack reference set: committed.
-- Complete specialist reference/template expansion: pending.
-- Blueprint traceability: blocked pending authoritative source document.
-- Representative-module validation: blocked; do not select or invent a module before Blueprint review.
+- Complete UI/UX and Security reference/template expansion: pending.
+- Original decision record for Decisions 1–26: pending.
+- Requirements-to-skill cross-check: pending.
+- Representative-module validation: pending; choose the slice from the Blueprint and record evidence.
 - No application module implementation or test execution is claimed.
 
 ## Next actions
-1. Add the authoritative Blueprint and original decision record.
-2. Expand the original UI/UX and Security reference/template files from their v1.0.0 packages.
+1. Expand the original UI/UX and Security reference/template files from their v1.0.0 packages.
+2. Obtain the original decision record and verify Decisions 1–26.
 3. Cross-check all three skills against the Blueprint and each other.
 4. Select a representative vertical slice from the Blueprint.
 5. Implement and test it end-to-end, then record pass/limitations/failure evidence.
