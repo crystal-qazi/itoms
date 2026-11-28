@@ -3,7 +3,9 @@ from __future__ import annotations
 from itoms.db.connection import get_connection
 from itoms.security.password_policy import validate_password
 from itoms.services.auth import hash_password
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import (
+    ResourceContext, has_permission, has_permissions_in_transaction,
+)
 
 class IdentityAdministrationError(ValueError):
     """Identity administration request was invalid or not authorized."""
