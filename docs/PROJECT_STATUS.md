@@ -12,7 +12,7 @@ Production branch: `main` (not modified)
 - Dynamic role/permission authorization with OWN, TEAM, MANAGED_TEAMS, DEPARTMENT and RESOURCE scope support; identity and directory administration.
 - Approval workflow, Change Management and Release Management with SQA release gates.
 - Helpdesk Incident Management, public/internal comments, Grafana webhook ingestion and 24x7 read-time SLA indicators.
-- Service Requests basic lifecycle, category management, team/employee assignment and audit history.
+- Service Requests lifecycle, dynamic categories, team/employee assignment, pending reasons, comments, audit history and transactional in-app notification enqueueing.
 - Service and Software Inventory.
 - Engineering Task Management.
 - SQA plans, cases, executions, defects and release signoffs.
@@ -47,6 +47,12 @@ Production branch: `main` (not modified)
 - Full security assessment, accessibility audit, browser-based end-to-end QA, production configuration validation, deployment rehearsal and restore drill.
 - AI/RAG is intentionally deferred from the initial release.
 
+## Engineering standards and representative validation
+
+- The three specialist engineering skill packages are integrated under `skills/` (UI/UX, Full-Stack and Security).
+- The approved Master Requirements & System Blueprint and requirements-to-skills crosswalk are committed under `docs/`.
+- Service Request representative-slice findings and remaining skill gates: `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md`.
+
 ## Release status
 
-The feature branch has automated Python and MySQL 8.4 CI. The latest verified run reported 137 Python tests passed (41 skipped), 41 MySQL integration tests passed, and 39 migrations applied twice idempotently. This is not a production-readiness certification: required external configuration, remaining engineering scope and deployment verification must be completed before production use.
+The feature branch has automated Python and MySQL 8.4 CI. The latest verified implementation run (commit `2824abf`) reported 166 Python tests passed (43 skipped), 43 MySQL 8.4 integration tests passed, and 42 migrations applied with an idempotent second run. This run includes the Service Request pending-reason/comment/notification changes and test-fixture cleanup. This is not a production-readiness certification: required external configuration, remaining engineering scope and deployment verification must be completed before production use.
