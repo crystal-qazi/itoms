@@ -379,7 +379,7 @@ def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
             return directory_admin.remove_team_membership(
                 actor_employee_id=data["revoker_id"],
                 employee_id=data["target_employee_id"],
-                team_id=data["team_ids"][0],
+                team_id=data["team_ids"][1],
             )
 
     def assign_team_role():
@@ -389,7 +389,7 @@ def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
                 employee_id=data["target_employee_id"],
                 role_id=data["target_role_id"],
                 scope_type="TEAM",
-                scope_reference=str(data["team_ids"][0]),
+                scope_reference=str(data["team_ids"][1]),
             )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -409,8 +409,21 @@ def test_employee_deactivation_wins_before_role_assignment(
     from itoms.services import directory_admin, identity_admin
 
     data = role_assignment_fixture
+    # Move the primary marker, then clear it so both memberships can be removed.
+    directory_admin.assign_team_membership(
+        actor_employee_id=data["revoker_id"],
+        employee_id=data["target_employee_id"],
+        team_id=data["team_ids"][1],
+        primary=True,
+    )
     # Deactivation requires team and manager scopes to be explicitly removed first.
     for team_id in data["team_ids"]:
+        directory_admin.assign_team_membership(
+            actor_employee_id=data["revoker_id"],
+            employee_id=data["target_employee_id"],
+            team_id=team_id,
+            primary=False,
+        )
         directory_admin.remove_team_membership(
             actor_employee_id=data["revoker_id"],
             employee_id=data["target_employee_id"],
