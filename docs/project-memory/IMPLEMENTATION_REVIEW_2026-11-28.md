@@ -141,5 +141,12 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - PR [#6](https://github.com/crystal-qazi/itoms/pull/6), head `def547dad9197d72e3cf503666f2690296270b92`: GitHub Actions run [46123462065](https://github.com/crystal-qazi/itoms/actions/runs/46123462065) passed both `python-quality` and `mysql-migrations`. Squash-merged into `feature/itoms-foundation` as `e540f3502a4da0e9a46e2c9591cc05338760adc6`.
 - PR [#7](https://github.com/crystal-qazi/itoms/pull/7) had both checks pass on its original head (run [46123617945](https://github.com/crystal-qazi/itoms/actions/runs/46123617945)), but became unmergeable after PR #6 updated the same test file. Closed as superseded; no force-push was used.
 - Recreated the status rollback test on a new branch based on the merged PR #6 commit: `feature/security-service-request-status-audit-rollback-rebased`, head `229e160273adc2f784ebe51f465472eb6c1678eb`, PR [#8](https://github.com/crystal-qazi/itoms/pull/8).
-- Fresh PR #8 checks: `python-quality` passed; `mysql-migrations` was still running at review time. PR #8 remains open and must not be merged until both checks pass.
+- Fresh PR #8 checks completed successfully: both `python-quality` and `mysql-migrations` passed in run [46123807867](https://github.com/crystal-qazi/itoms/actions/runs/46123807867). PR #8 was squash-merged into `feature/itoms-foundation` as `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0`.
 - The rebase carries forward the assignment rollback test from the target branch and adds the status rollback test. No production code changed.
+
+
+## 14. Status audit rollback regression merged — 2026-11-28
+- GitHub Actions run [46123807867](https://github.com/crystal-qazi/itoms/actions/runs/46123807867) for rebased PR #8 completed successfully: `python-quality` and `mysql-migrations` both passed.
+- Merged PR [#8](https://github.com/crystal-qazi/itoms/pull/8) into `feature/itoms-foundation` using squash merge. Merge commit: `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0`.
+- PR #7 was closed as superseded by #8 after PR #6 merged; the rebased branch avoided force-pushing and received fresh CI.
+- Test-only change; no production service or authorization logic changed.
