@@ -135,6 +135,7 @@ def role_assignment_fixture():
         "revoker_role_id": revoker_role_id,
         "target_role_id": target_role_id,
         "team_ids": team_ids,
+        "assign_permission_id": int(assign_permission[0]),
     }
     yield data
 
@@ -517,7 +518,7 @@ def test_authorization_locking_queries_use_indexes_under_repeatable_read(
             (
                 "role-permission lookup",
                 "SELECT permission_id FROM role_permissions WHERE role_id=%s AND permission_id=%s",
-                (data["assigner_role_id"], 1),
+                (data["assigner_role_id"], data["assign_permission_id"]),
             ),
         ]
         for label, query, params in checks:
