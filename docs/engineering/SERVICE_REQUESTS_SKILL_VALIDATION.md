@@ -4,7 +4,7 @@
 **Implementation branch:** `feature/itoms-foundation`  
 **Module:** IT Service Request Management  
 **Authority:** `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md`, Section 7.4  
-**Review status:** Code review and targeted implementation in progress; final CI/accessibility/security gates depend on recorded evidence.
+**Review status:** Targeted code and MySQL validation passed; full Security and UI/UX gates remain open.
 
 ## 1. Actual implementation inspected
 
@@ -123,9 +123,9 @@ Comments currently use `service_request.update`; there is no separate comment pe
 
 | Gate | Current status | Evidence required |
 |---|---|---|
-| Python unit suite | Awaiting latest post-change CI | GitHub Actions job result |
-| MySQL migrations | Awaiting latest post-change CI | Migration count and idempotent second run |
-| Service Request MySQL integration | Awaiting latest post-change CI | Test result including pending reason/comment/notification case |
+| Python unit suite | Passed | CI run `46111756702`: 166 passed, 43 skipped |
+| MySQL migrations | Passed | CI run `46111756702`: 42 applied; second run idempotent |
+| Service Request MySQL integration | Passed | CI run `46111756702`: 43 passed, including pending reason/comment/notification coverage |
 | Authorization negative tests | Not complete | Cross-scope and revoked-permission MySQL tests |
 | Concurrency/revocation tests | Not complete | Deterministic two-connection MySQL tests |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
