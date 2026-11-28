@@ -198,6 +198,10 @@ def service_request_fixture():
             (administrator_id,),
         )
         cursor.execute(
+            "DELETE FROM service_request_priorities WHERE created_by=%s",
+            (administrator_id,),
+        )
+        cursor.execute(
             f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})",
             employee_ids,
         )
