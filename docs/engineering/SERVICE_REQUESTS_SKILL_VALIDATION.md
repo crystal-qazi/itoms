@@ -27,7 +27,7 @@ The validation uses the real application branch, not the documentation-only engi
 |---|---|---|
 | Request submission | Authenticated POST form; server validation; session employee is default requester | Implemented |
 | Dynamic categories | Category CRUD/activation permission and migration-backed table | Implemented |
-| Automatic unique IDs | Date-prefixed random request number plus UNIQUE constraint | Implemented; collision handling should be reviewed |
+| Automatic unique IDs | Date-prefixed 64-bit random suffix, UNIQUE constraint and bounded duplicate-key retry | Implemented |
 | Team/employee assignment | Active team and active team-membership validation; scoped assign permission | Implemented |
 | Configurable priority levels | Migration 043 creates an Admin-managed priority catalogue with stable keys, labels, ordering and active state; the request column uses a foreign key and retains the four defaults | Implemented; writes use transaction-bound authorization and audit |
 | Status tracking | OPEN, IN_PROGRESS, ON_HOLD, COMPLETED, CANCELLED with explicit transition map | Implemented |
