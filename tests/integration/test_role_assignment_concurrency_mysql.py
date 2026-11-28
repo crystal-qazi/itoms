@@ -338,6 +338,25 @@ def test_managed_teams_role_assignment_revalidates_all_team_memberships(
         cursor.close()
         connection.close()
 
+    from itoms.services import directory_admin
+    for team_id in data["team_ids"]:
+        directory_admin.remove_team_manager(
+            actor_employee_id=data["revoker_id"],
+            manager_employee_id=data["target_employee_id"],
+            team_id=team_id,
+        )
+    with pytest.raises(identity_admin.IdentityAdministrationError, match="no active managed teams"):
+        identity_admin.assign_role(
+            actor_employee_id=data["assigner_id"],
+            employee_id=data["target_employee_id"],
+            role_id=data["target_role_id"],
+            scope_type="MANAGED_TEAMS",
+        )
+    return
+    finally:
+        cursor.close()
+        connection.close()
+
 
 
 def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
