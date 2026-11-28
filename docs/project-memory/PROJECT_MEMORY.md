@@ -159,3 +159,11 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Established this project-memory directory and mandatory review/update/push policy.
 - Migrated all ITOMS-specific facts and decisions available in active project context and retrieved prior-conversation summaries.
 - Explicitly marked historical details that are not currently retrievable rather than fabricating them.
+
+
+### 2026-11-28 — Service Request HTTP mutation scope regression test
+- Added `test_own_scope_reader_http_mutations_are_denied_without_side_effects` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-http-mutation-tests`.
+- The MySQL-backed test authenticates an employee with only an OWN-scoped `service_request.read` grant and submits valid-CSRF HTTP POST requests to the comment, assignment, and status mutation routes for another employee's request.
+- It asserts the route boundary redirects after denial and that request status/assignment, comments, activity history, and actor-specific audit history remain unchanged.
+- Open PR [#4](https://github.com/crystal-qazi/itoms/pull/4) targets `feature/itoms-foundation`; head commit `90782b822db71b477f07b75ab22b7d3f84b95496`.
+- At memory update time, no GitHub Actions workflow run or commit status was returned for the head commit. CI evidence is therefore pending; the PR has not been merged. No production code or authorization policy changed.
