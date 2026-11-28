@@ -84,11 +84,14 @@ def test_account_creation_rejects_out_of_scope_department(monkeypatch):
 
 
 def test_department_role_assignment_is_bound_to_target_department(monkeypatch):
-    connection = Connection([(7,), (1,)])
+    connection = Connection([(7,), (7, True), (1,)])
     checks = []
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
-    monkeypatch.setattr(identity_admin, "has_permission",
-                        lambda actor, key, context=None: checks.append((key, context)) or True)
+    monkeypatch.setattr(
+        identity_admin, "has_permissions_in_transaction",
+        lambda cur, actor, key, resources, **kwargs:
+            checks.append((key, resources, kwargs.get("lock_employee_ids"))) or True,
+    )
 
     assignment_id = identity_admin.assign_role(
         actor_employee_id=10, employee_id=20, role_id=3,
@@ -98,7 +101,8 @@ def test_department_role_assignment_is_bound_to_target_department(monkeypatch):
     assert assignment_id == 91
     assert checks == [(
         "identity.roles.assign",
-        ResourceContext(department_id=7),
+        [ResourceContext(department_id=7)],
+        [20],
     )]
     assert connection.committed
 
@@ -106,7 +110,9 @@ def test_department_role_assignment_is_bound_to_target_department(monkeypatch):
 def test_role_assignment_rejects_out_of_scope_target(monkeypatch):
     connection = Connection([(99,)])
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
-    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: False)
+    monkeypatch.setattr(
+        identity_admin, "has_permissions_in_transaction", lambda *_args, **_kwargs: False
+    )
 
     with pytest.raises(identity_admin.IdentityAdministrationError, match="employee scope"):
         identity_admin.assign_role(
