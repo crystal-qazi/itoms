@@ -240,3 +240,135 @@ def test_concurrent_outbox_claimers_receive_disjoint_batches(notification_fixtur
     finally:
         cursor.close()
         connection.close()
+
+
+
+def test_concurrent_stale_outbox_recovery_processes_each_claim_once(
+    notification_fixture, monkeypatch,
+):
+    """Four recovery workers must partition stale claims without duplicate attempts."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from flask import current_app
+    from itoms.db.connection import get_connection
+    from itoms.services import notifications
+    from itoms.services.notifications import create_notification, recover_stale_outbox
+
+    employee_id = notification_fixture["employee_id"]
+    app = current_app._get_current_object()
+    for index in range(40):
+        create_notification(
+            actor_employee_id=employee_id,
+            recipient_employee_id=employee_id,
+            notification_type="OUTBOX_RECOVERY_CONCURRENCY",
+            title=f"Stale recovery item {index}",
+            body="Concurrent recovery must increment each attempt only once.",
+            channels=("IN_APP",),
+        )
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """SELECT o.outbox_id
+               FROM notification_outbox o
+               JOIN notifications n ON n.notification_id=o.notification_id
+               WHERE n.recipient_employee_id=%s
+                 AND n.notification_type='OUTBOX_RECOVERY_CONCURRENCY'
+               ORDER BY o.outbox_id""",
+            (employee_id,),
+        )
+        outbox_ids = [int(row[0]) for row in cursor.fetchall()]
+        assert len(outbox_ids) == 40
+        placeholders = ",".join(["%s"] * len(outbox_ids))
+        cursor.execute(
+            f"""UPDATE notification_outbox
+                SET delivery_status='PROCESSING',
+                    locked_at=DATE_SUB(UTC_TIMESTAMP(), INTERVAL 600 SECOND),
+                    attempt_count=0
+                WHERE outbox_id IN ({placeholders})""",
+            tuple(outbox_ids),
+        )
+        assert cursor.rowcount == 40
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+        connection.close()
+
+    recovery_barrier = Barrier(4)
+    original_get_connection = notifications.get_connection
+
+    def synchronized_connection():
+        connection = original_get_connection()
+        recovery_barrier.wait(timeout=20)
+        return connection
+
+    def recover_batch():
+        with app.app_context():
+            return recover_stale_outbox(
+                stale_after_seconds=300, max_attempts=8, batch_size=10,
+            )
+
+    try:
+        monkeypatch.setattr(notifications, "get_connection", synchronized_connection)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(recover_batch) for _ in range(4)]
+            results = [future.result(timeout=60) for future in futures]
+        assert results == [{"recovered": 10, "dead_lettered": 0}] * 4
+
+        connection = get_connection()
+        cursor = connection.cursor()
+        try:
+            placeholders = ",".join(["%s"] * len(outbox_ids))
+            cursor.execute(
+                f"""SELECT delivery_status,attempt_count,locked_at,last_error
+                    FROM notification_outbox
+                    WHERE outbox_id IN ({placeholders})""",
+                tuple(outbox_ids),
+            )
+            rows = cursor.fetchall()
+            assert len(rows) == 40
+            assert all(
+                status == "PENDING"
+                and attempt_count == 1
+                and locked_at is None
+                and last_error == "Recovered stale worker claim"
+                for status, attempt_count, locked_at, last_error in rows
+            )
+            cursor.execute(
+                f"""SELECT COUNT(*) FROM audit_events
+                    WHERE event_key='NOTIFICATION_OUTBOX_RECOVERED'
+                      AND target_type='notification_outbox'
+                      AND target_id IN ({",".join(["%s"] * len(outbox_ids))})""",
+                tuple(str(outbox_id) for outbox_id in outbox_ids),
+            )
+            assert cursor.fetchone()[0] == 40
+        finally:
+            cursor.close()
+            connection.close()
+    finally:
+        monkeypatch.setattr(notifications, "get_connection", original_get_connection)
+        # Recovery audit rows have a NULL actor; remove them even if a worker
+        # or assertion fails so the shared fixture leaves no persistent data.
+        cleanup = original_get_connection()
+        cursor = cleanup.cursor()
+        try:
+            placeholders = ",".join(["%s"] * len(outbox_ids))
+            cursor.execute(
+                f"""DELETE FROM audit_events
+                    WHERE event_key='NOTIFICATION_OUTBOX_RECOVERED'
+                      AND target_type='notification_outbox'
+                      AND target_id IN ({placeholders})""",
+                tuple(str(outbox_id) for outbox_id in outbox_ids),
+            )
+            cleanup.commit()
+        except Exception:
+            cleanup.rollback()
+            raise
+        finally:
+            cursor.close()
+            cleanup.close()

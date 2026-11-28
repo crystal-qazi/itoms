@@ -74,3 +74,8 @@ GROUP BY channel;
 ```
 
 These queries are observation aids, not alerting. Operations must approve service-specific backlog/age thresholds, monitoring cadence, worker restart policy, alert routing and on-call ownership. Do not invent a universal threshold or treat a successful one-off CLI run as proof of continuous delivery.
+
+
+### Recovery query index
+
+Migration `044_notification_outbox_recovery_index.sql` adds `idx_outbox_recovery (delivery_status, locked_at, outbox_id)`. The stale-claim recovery worker filters and orders by these columns before applying `FOR UPDATE SKIP LOCKED`; the dedicated composite index narrows the locking scan to stale PROCESSING rows rather than relying on the ready-delivery index (`delivery_status, available_at`). The four-worker MySQL regression in PR #16 exercises this recovery path against 40 stale rows and checks that each row is recovered exactly once.
