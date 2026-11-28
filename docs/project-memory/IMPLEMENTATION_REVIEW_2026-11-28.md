@@ -72,3 +72,13 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 **Completed in this review:** GitHub memory review, branch comparison, blueprint/skill discovery, Service Request documentation and source inspection, and recording of the next evidence gates.
 
 **Not completed:** code changes, local test execution, manual browser/accessibility testing, full security assessment, deployment validation, branch merge, or production readiness approval.
+
+
+## 7. Follow-up security regression work — 2026-11-28
+
+- Added `tests/integration/test_service_requests_mysql.py::test_service_request_detail_hides_requests_outside_actor_own_scope` on `feature/security-service-request-cross-scope-tests`.
+- Test provisions an outsider employee with only an OWN-scoped `service_request.read` grant and verifies the authenticated detail route returns the same generic 404 response as a missing request.
+- Draft PR: https://github.com/crystal-qazi/itoms/pull/1, targeting `feature/itoms-foundation` (not `main`, to avoid mixing the divergent canonical-memory and implementation branches).
+- Latest GitHub Actions run at this update: `46121953722`; Python test suite passed, while dependency/security checks and MySQL migration/integration job were still running. Overall CI result is pending.
+- An earlier intermediate commit/run failed because the test was briefly placed in a separate module while depending on a module-local fixture. The test was moved into the fixture-owning integration module and the misplaced file removed. Do not treat the intermediate failure as the final branch state; verify the latest run.
+- No application production code was modified. The only code change is an integration regression test. No production-readiness conclusion is implied.
