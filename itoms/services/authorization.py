@@ -70,22 +70,19 @@ def has_permission(employee_id: int, permission_key: str,
         cur.close()
         conn.close()
 
-def has_permission_in_transaction(
+def has_permissions_in_transaction(
     cur, employee_id: int, permission_key: str,
-    resource: ResourceContext | None = None,
+    resources: list[ResourceContext | None],
 ) -> bool:
-    """Evaluate permission using locks held by the caller's mutation transaction.
+    """Require one permission grant for every resource in a single transaction.
 
-    Lock order for this evaluator is: actor employee -> resource team and
-    membership/manager mapping (when applicable) -> sorted application roles
-    -> actor role assignments -> exact role-permission rows. Runtime writers
-    that change an actor's role assignments lock that employee first; directory
-    membership/manager writers use employee -> team -> membership/mapping.
-    The caller must lock its protected resource only after this function returns
-    and revalidate the resource's scope snapshot before writing.
+    Lock order: actor employee -> resource teams in ascending team_id ->
+    membership/manager-mapping rows in ascending team_id -> sorted application
+    roles -> actor role assignments -> exact role-permission rows. Callers lock
+    protected resource rows only after this function and revalidate snapshots.
     """
     if (not isinstance(employee_id, int) or isinstance(employee_id, bool)
-            or employee_id <= 0 or not permission_key):
+            or employee_id <= 0 or not permission_key or not resources):
         return False
 
     cur.execute(
@@ -98,34 +95,39 @@ def has_permission_in_transaction(
         return False
     actor_department_id = actor[0]
 
-    has_resource_context = resource is not None
-    resource = resource or ResourceContext()
-    team_member = False
-    managed_team = False
-    if resource.team_id is not None:
+    # Lock all team scopes in a single deterministic order. This matters for
+    # mutations such as assignment that authorize both the existing request
+    # scope and a separately selected destination team.
+    team_ids = sorted({
+        int(resource.team_id)
+        for resource in resources
+        if resource is not None and resource.team_id is not None
+    })
+    active_team_ids: set[int] = set()
+    member_team_ids: set[int] = set()
+    managed_team_ids: set[int] = set()
+    for team_id in team_ids:
         cur.execute(
-            """SELECT department_id FROM teams
-               WHERE team_id=%s AND is_active=TRUE FOR UPDATE""",
-            (resource.team_id,),
+            "SELECT team_id FROM teams WHERE team_id=%s AND is_active=TRUE FOR UPDATE",
+            (team_id,),
         )
-        team = cur.fetchone()
-        if team:
+        if cur.fetchone():
+            active_team_ids.add(team_id)
             cur.execute(
                 """SELECT 1 FROM employee_team_memberships
                    WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
-                (employee_id, resource.team_id),
+                (employee_id, team_id),
             )
-            team_member = cur.fetchone() is not None
+            if cur.fetchone():
+                member_team_ids.add(team_id)
             cur.execute(
                 """SELECT 1 FROM team_management_assignments
                    WHERE manager_employee_id=%s AND team_id=%s FOR UPDATE""",
-                (employee_id, resource.team_id),
+                (employee_id, team_id),
             )
-            managed_team = cur.fetchone() is not None
+            if cur.fetchone():
+                managed_team_ids.add(team_id)
 
-    # The employee row serializes all supported runtime role-assignment writers
-    # for this actor. Discover role IDs, lock them deterministically, then lock
-    # and revalidate the exact active assignments.
     cur.execute(
         """SELECT DISTINCT role_id FROM employee_role_assignments
            WHERE employee_id=%s AND is_active=TRUE
@@ -154,8 +156,6 @@ def has_permission_in_transaction(
     assignments = cur.fetchall()
     locked_role_ids = {int(row[1]) for row in assignments}
     if locked_role_ids != set(candidate_role_ids):
-        # A non-conforming writer or expiry boundary changed the authorization
-        # set between discovery and locking. Fail closed; caller can retry.
         return False
 
     cur.execute(
@@ -167,43 +167,62 @@ def has_permission_in_transaction(
         return False
     permission_id = int(permission[0])
 
-    for _assignment_id, raw_role_id, scope_type, scope_reference in assignments:
-        role_id = int(raw_role_id)
-        if role_id not in active_role_ids:
-            continue
-        in_scope = not has_resource_context
-        if not has_resource_context:
-            pass
-        elif scope_type == "OWN":
-            in_scope = resource.owner_employee_id == employee_id
-        elif scope_type == "TEAM":
-            in_scope = (
-                resource.team_id is not None and team_member
-                and (scope_reference is None
-                     or str(scope_reference) == str(resource.team_id))
-            )
-        elif scope_type == "MANAGED_TEAMS":
-            in_scope = resource.team_id is not None and managed_team
-        elif scope_type == "DEPARTMENT":
-            in_scope = (
-                resource.department_id is not None
-                and actor_department_id == resource.department_id
-                and (scope_reference is None
-                     or str(scope_reference) == str(resource.department_id))
-            )
-        elif scope_type == "RESOURCE":
-            in_scope = (
-                bool(resource.resource_type) and bool(resource.resource_id)
-                and scope_reference == f"{resource.resource_type}:{resource.resource_id}"
-            )
-        if not in_scope:
-            continue
+    granted_role_ids: set[int] = set()
+    for role_id in sorted(active_role_ids):
         cur.execute(
             """SELECT 1 FROM role_permissions
                WHERE role_id=%s AND permission_id=%s FOR UPDATE""",
             (role_id, permission_id),
         )
         if cur.fetchone():
-            return True
-    return False
+            granted_role_ids.add(role_id)
 
+    def resource_is_authorized(resource: ResourceContext | None) -> bool:
+        if resource is None:
+            return bool(granted_role_ids)
+        for _assignment_id, raw_role_id, scope_type, scope_reference in assignments:
+            role_id = int(raw_role_id)
+            if role_id not in granted_role_ids:
+                continue
+            in_scope = False
+            if scope_type == "OWN":
+                in_scope = resource.owner_employee_id == employee_id
+            elif scope_type == "TEAM":
+                in_scope = (
+                    resource.team_id in member_team_ids
+                    and resource.team_id in active_team_ids
+                    and (scope_reference is None
+                         or str(scope_reference) == str(resource.team_id))
+                )
+            elif scope_type == "MANAGED_TEAMS":
+                in_scope = (
+                    resource.team_id in managed_team_ids
+                    and resource.team_id in active_team_ids
+                )
+            elif scope_type == "DEPARTMENT":
+                in_scope = (
+                    resource.department_id is not None
+                    and actor_department_id == resource.department_id
+                    and (scope_reference is None
+                         or str(scope_reference) == str(resource.department_id))
+                )
+            elif scope_type == "RESOURCE":
+                in_scope = (
+                    bool(resource.resource_type) and bool(resource.resource_id)
+                    and scope_reference == f"{resource.resource_type}:{resource.resource_id}"
+                )
+            if in_scope:
+                return True
+        return False
+
+    return all(resource_is_authorized(resource) for resource in resources)
+
+
+def has_permission_in_transaction(
+    cur, employee_id: int, permission_key: str,
+    resource: ResourceContext | None = None,
+) -> bool:
+    """Transaction-bound permission check for one trusted resource/action."""
+    return has_permissions_in_transaction(
+        cur, employee_id, permission_key, [resource]
+    )
