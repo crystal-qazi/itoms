@@ -52,6 +52,23 @@ def role_assignment_fixture():
             employee_ids.append(int(cursor.lastrowid))
         assigner_id, revoker_id, target_employee_id = employee_ids
 
+        team_ids = []
+        for label in ("managed-a", "managed-b"):
+            cursor.execute(
+                "INSERT INTO teams (team_name,department_id,is_active) VALUES (%s,%s,TRUE)",
+                (f"RA {label} {suffix}", department_id),
+            )
+            team_ids.append(int(cursor.lastrowid))
+        for team_id in team_ids:
+            cursor.execute(
+                "INSERT INTO employee_team_memberships (employee_id,team_id,is_primary) VALUES (%s,%s,%s)",
+                (target_employee_id, team_id, team_id == team_ids[0]),
+            )
+            cursor.execute(
+                "INSERT INTO team_management_assignments (manager_employee_id,team_id,assigned_by) VALUES (%s,%s,%s)",
+                (target_employee_id, team_id, assigner_id),
+            )
+
         role_ids = []
         for label in ("assigner", "revoker", "target"):
             cursor.execute(
@@ -108,6 +125,7 @@ def role_assignment_fixture():
         "assigner_role_id": assigner_role_id,
         "revoker_role_id": revoker_role_id,
         "target_role_id": target_role_id,
+        "team_ids": team_ids,
     }
     yield data
 
@@ -118,6 +136,14 @@ def role_assignment_fixture():
         marks = ",".join(["%s"] * len(actor_ids))
         cursor.execute(
             f"DELETE FROM audit_events WHERE actor_employee_id IN ({marks})",
+            actor_ids,
+        )
+        cursor.execute(
+            "DELETE FROM team_management_assignments WHERE manager_employee_id=%s",
+            (target_employee_id,),
+        )
+        cursor.execute(
+            f"DELETE FROM employee_team_memberships WHERE employee_id IN ({marks})",
             actor_ids,
         )
         cursor.execute(
@@ -135,6 +161,10 @@ def role_assignment_fixture():
         cursor.execute(
             f"DELETE FROM employees WHERE employee_id IN ({marks})",
             actor_ids,
+        )
+        cursor.execute(
+            "DELETE FROM teams WHERE team_id IN (%s,%s)",
+            tuple(team_ids),
         )
         cursor.execute("DELETE FROM departments WHERE department_id=%s", (department_id,))
         cleanup.commit()
@@ -267,3 +297,34 @@ def test_permission_revocation_wins_before_role_assignment_authorization(
         assert revocation_future.result(timeout=15) is True
         with pytest.raises(identity_admin.IdentityAdministrationError, match="Not authorized"):
             assignment_future.result(timeout=15)
+
+
+
+def test_managed_teams_role_assignment_revalidates_all_team_memberships(
+    role_assignment_fixture,
+):
+    from itoms.services import identity_admin
+
+    data = role_assignment_fixture
+    assignment_id = identity_admin.assign_role(
+        actor_employee_id=data["assigner_id"],
+        employee_id=data["target_employee_id"],
+        role_id=data["target_role_id"],
+        scope_type="MANAGED_TEAMS",
+    )
+    assert assignment_id > 0
+
+    from itoms.db.connection import get_connection
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """SELECT scope_type,scope_reference FROM employee_role_assignments
+               WHERE assignment_id=%s""",
+            (assignment_id,),
+        )
+        row = cursor.fetchone()
+        assert row == ("MANAGED_TEAMS", None)
+    finally:
+        cursor.close()
+        connection.close()
