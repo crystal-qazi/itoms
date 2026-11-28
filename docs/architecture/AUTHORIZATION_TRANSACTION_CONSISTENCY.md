@@ -213,20 +213,20 @@ A focused source review was performed before starting the next transaction-bound
 
 Implemented on `feature/itoms-foundation`:
 
-- Added `authorization.has_permission_in_transaction(cur, ...)`; it uses the caller's transaction and does not open a second connection.
+- Added `authorization.has_permission_in_transaction(cur, ...)` and `has_permissions_in_transaction(cur, ..., resources)`; they use the caller's transaction and do not open a second connection. The multi-resource form locks every involved team in ascending ID order and requires the permission to cover every supplied resource.
 - Lock order for this evaluator: actor employee → trusted resource team → exact employee-team membership and manager-team mapping → sorted active role rows → actor role-assignment rows → exact role-permission rows.
 - This order is compatible with the existing directory membership/manager writers for the same actor because they serialize on the employee row and then use team → membership/mapping. Runtime role-assignment writers also lock the affected employee before role rows.
-- `service_requests.add_comment` now reads a non-locking resource snapshot, performs the transaction-bound authorization, locks the request row only after authorization, and rejects if requester/team identifiers changed while authorization locks were acquired. Comment, activity, audit, notification and outbox writes remain in the same transaction.
+- Service Request create, assignment, status, category mutations and comment creation now perform transaction-bound authorization. Request assignment authorizes both the existing request scope and destination team in one evaluator call, with sorted team locks. Comment/status operations lock the request row only after authorization and reject if requester/team identifiers changed while authorization locks were acquired. All related business, activity, audit and notification/outbox writes remain in the owning transaction.
 - The evaluator fails closed if the actor is inactive, role assignments change between discovery and locking, the team is inactive/membership is absent for TEAM scope, the manager mapping is absent for MANAGED_TEAMS scope, or the exact permission grant is absent.
-- The bounded race test holds the authorization/request locks while a second connection attempts to revoke the relevant permission. The revocation waits; after the first transaction commits, the revocation succeeds and a subsequent comment attempt is denied.
+- The bounded race test holds the authorization/request locks while a second connection attempts to revoke the relevant permission. The revocation waits; after the first transaction commits, the revocation succeeds and a subsequent comment attempt is denied. Existing MySQL integration coverage also exercises Service Request create, assignment, status, category and comment flows using the transaction-bound evaluator.
 
 ### Verification
 
-CI run [46112814997](https://github.com/crystal-qazi/itoms/actions/runs/46112814997), commit `d38f6d990c4b569a70c02a9865362ec740618018`:
+CI run [46113102986](https://github.com/crystal-qazi/itoms/actions/runs/46113102986), commit `9b30471da104c28ccb16c042a70fd19495c2041a`:
 - Python quality: 166 passed, 44 skipped.
 - MySQL 8.4 integration: 44 passed.
 - Migrations: 42 applied; second migration run was idempotent.
 
 ### Explicit remaining gaps
 
-This helper is currently used by `add_comment` only. Do not infer that request assignment/status/category administration or any other ITOMS mutation is revocation-atomic. Remaining work includes both race orderings for team-membership and manager-scope revocation, department/employee deactivation races, assignment/status/category/create mutation migrations, and the broader services listed above. Global MySQL isolation/query-plan evidence and a complete lock graph are still required before a repository-wide security pass.
+This evaluator is currently used by Service Request create, assignment, status, category create/activation and comment mutations. Do not infer that other ITOMS services are revocation-atomic. Remaining work includes both race orderings for team-membership and manager-scope revocation, department/employee deactivation races, MySQL isolation/query-plan evidence, and transaction-bound authorization migration for identity/directory, incident, change, release, SQA, engineering task, inventory and other mutation services. A repository-wide security pass remains open.
