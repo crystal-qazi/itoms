@@ -112,3 +112,11 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - GitHub Actions run [46122892064](https://github.com/crystal-qazi/itoms/actions/runs/46122892064) passed both `python-quality` (compileall, pytest, pip-audit, Bandit) and `mysql-migrations` (43 migrations applied and rerun idempotently on MySQL 8.4, plus the MySQL integration suite).
 - PR [#4](https://github.com/crystal-qazi/itoms/pull/4) was squash-merged into `feature/itoms-foundation`; merge commit `3e96a62cdf52eb9dcdcad8e0a4cc9d6e716862f0`.
 - Test-only change. No production authorization logic or permission policy changed.
+
+
+## 11. Comment audit rollback regression — 2026-11-28
+- Added `tests/integration/test_service_requests_mysql.py::test_comment_creation_rolls_back_when_audit_write_fails` on branch `feature/security-service-request-comment-audit-rollback`.
+- A temporary MySQL trigger rejects `SERVICE_REQUEST_COMMENTED`; the test verifies comment, activity and audit rows are rolled back and drops the trigger in `finally`.
+- Open PR [#5](https://github.com/crystal-qazi/itoms/pull/5) targets `feature/itoms-foundation`; head commit `3705fe22c47b219ad3041a3fd62c2c7b7937c93e`.
+- GitHub Actions run [46123162387](https://github.com/crystal-qazi/itoms/actions/runs/46123162387) was still in progress when recorded; validation and merge remain pending.
+- Test-only change; no production code or permission policy changed.
