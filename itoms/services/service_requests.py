@@ -510,10 +510,12 @@ def list_requests(
     *, actor_employee_id: int, status: str | None = None, priority: str | None = None,
     search: str | None = None, category_id: int | None = None,
     created_from: str | date | None = None, created_to: str | date | None = None,
-    limit: int = 100,
+    visible_offset: int = 0, limit: int = 100,
 ) -> list[dict]:
     """Return scoped requests with bounded keyword, category and date filters."""
     limit = max(1, min(int(limit), 200))
+    if type(visible_offset) is not int or visible_offset < 0:
+        raise ServiceRequestError("Invalid Service Request result offset.")
     if status and status not in TRANSITIONS:
         raise ServiceRequestError("Invalid service request status filter.")
     if priority and (len(priority) > 30 or not priority.isascii()):
@@ -545,6 +547,7 @@ def list_requests(
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     visible: list[dict] = []
+    visible_seen = 0
     offset = 0
     try:
         if priority:
@@ -592,6 +595,9 @@ def list_requests(
                     department_id=row["department_id"],
                 )
                 if has_permission(actor_employee_id, "service_request.read", context):
+                    if visible_seen < visible_offset:
+                        visible_seen += 1
+                        continue
                     visible.append(row)
                     if len(visible) >= limit:
                         break
