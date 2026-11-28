@@ -128,3 +128,10 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - PR [#6](https://github.com/crystal-qazi/itoms/pull/6) targets `feature/itoms-foundation`, head commit `def547dad9197d72e3cf503666f2690296270b92`.
 - No GitHub Actions workflow run was returned for the head commit at the time of this review. CI remains pending/unverified; do not merge until both `python-quality` and `mysql-migrations` pass.
 - Test-only change. No production application code was modified.
+
+
+## Service Request transaction rollback follow-up — 2026-11-28
+- PR [#6](https://github.com/crystal-qazi/itoms/pull/6): MySQL regression test for assignment rollback when `SERVICE_REQUEST_ASSIGNED` audit insertion fails. Branch `feature/security-service-request-assignment-audit-rollback`, head `def547dad9197d72e3cf503666f2690296270b92`.
+- PR [#7](https://github.com/crystal-qazi/itoms/pull/7): MySQL regression test for status rollback when `SERVICE_REQUEST_STATUS_CHANGED` audit insertion fails. Branch `feature/security-service-request-status-audit-rollback`, head `12a68b48c34502edf12e73c304f9801625338a17`.
+- Both changes are test-only, target `feature/itoms-foundation`, and remain open/unmerged. The tests verify failed audit writes do not leave changed request state, activity/audit rows, or queued in-app notifications.
+- At review time, the GitHub Actions run lookup and combined commit status lookup returned no checks for these heads. CI must be treated as unverified; do not merge until both `python-quality` and `mysql-migrations` are confirmed passing.
