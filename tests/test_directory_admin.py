@@ -37,7 +37,9 @@ class Connection:
 def test_manager_assignment_requires_team_membership(monkeypatch):
     connection = Connection([(7, 7), (20, 7, True), (7, True), None])
     monkeypatch.setattr(directory_admin, "get_connection", lambda: connection)
-    monkeypatch.setattr(directory_admin, "has_permission", lambda *_: True)
+    monkeypatch.setattr(
+        directory_admin, "has_permissions_in_transaction", lambda *_args, **_kwargs: True
+    )
 
     with pytest.raises(DirectoryAdministrationError, match="active member"):
         directory_admin.assign_team_manager(
