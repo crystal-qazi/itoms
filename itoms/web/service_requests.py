@@ -7,8 +7,8 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from itoms.security.decorators import login_required
 from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.service_requests import (
-    ServiceRequestError, assign_request, create_category, create_request,
-    get_request_detail, list_categories, list_category_admin, list_requests,
+    ServiceRequestError, add_comment, assign_request, create_category, create_request,
+    get_request_detail, list_categories, list_category_admin, list_requests, list_comments,
     set_category_active, transition_request, list_assignable_teams, list_assignable_members,
 )
 
@@ -80,10 +80,12 @@ def detail(request_id: int):
     can_assign = has_permission(g.employee_id, "service_request.assign", request_context)
     teams = list_assignable_teams(actor_employee_id=g.employee_id, request_id=request_id)
     members = list_assignable_members(actor_employee_id=g.employee_id, request_id=request_id)
+    comments = list_comments(actor_employee_id=g.employee_id, request_id=request_id)
     return render_template(
         "service_requests/detail.html", item=item, can_assign=can_assign,
         can_update=has_permission(g.employee_id, "service_request.update", request_context),
-        teams=teams, members=members, csrf_token_value=session.get("csrf_token", ""),
+        teams=teams, members=members, comments=comments,
+        csrf_token_value=session.get("csrf_token", ""),
     )
 
 
@@ -116,6 +118,7 @@ def status(request_id: int):
             actor_employee_id=g.employee_id, request_id=request_id,
             new_status=request.form.get("status", ""),
             resolution_notes=request.form.get("resolution_notes", ""),
+            pending_reason=request.form.get("pending_reason", ""),
         )
         flash("Service request status updated.", "success")
     except ServiceRequestError as exc:
@@ -154,3 +157,21 @@ def category_active(category_id: int):
     except ServiceRequestError as exc:
         flash(str(exc), "danger")
     return redirect(url_for("service_requests.index"))
+
+
+
+@service_requests_bp.post("/<int:request_id>/comments")
+@login_required
+def comment_create(request_id: int):
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        add_comment(
+            actor_employee_id=g.employee_id,
+            request_id=request_id,
+            body=request.form.get("body", ""),
+        )
+        flash("Comment added.", "success")
+    except ServiceRequestError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("service_requests.detail", request_id=request_id))
