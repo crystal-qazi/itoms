@@ -129,7 +129,7 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 | MySQL migrations | Passed | CI run `46119899408`: 43 applied; second run idempotent |
 | Service Request MySQL integration | Passed | Baseline run `46119899408` plus regression runs `46122079076`, `46122357121`, `46122892064`, `46123162387`, `46123462065`, `46123807867` and `46123997617`; rollback tests cover create/comment/assignment/status and notification outbox failures |
 | Authorization negative tests | Partial | Missing-CSRF rejection plus cross-scope HTTP 404 and denied comment/assignment/status mutation routes are covered; broader cross-module denial matrix remains |
-| Concurrency/revocation tests | Passed for deterministic shared-scope races | Role-permission, TEAM membership, MANAGED_TEAMS manager mapping and employee-deactivation races are covered; broader load/deadlock stress remains |
+| Concurrency/revocation tests | Passed for deterministic shared-scope races | Role-permission, TEAM membership, MANAGED_TEAMS manager mapping and employee-deactivation races are covered; Service Request transition and notification outbox claim/recovery races are also covered; broader sustained load/deadlock stress remains |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
 | WCAG 2.2 AA | Not tested | Automated scan plus manual checklist |
 | Deployment readiness | Not tested in target environment | Config, worker, backup/restore and deployment evidence |
@@ -164,3 +164,13 @@ All listed changes are test-only. PR #7 was closed as superseded after PR #6 cha
 - GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations` after correcting the test's expected error-message punctuation. The first run failed only on that assertion; the concurrency behavior itself produced the expected one-success/one-rejection outcome.
 - PR [#11](https://github.com/crystal-qazi/itoms/pull/11) was squash-merged into `feature/itoms-foundation` as `544853f84846ceadf15fe126b0ab4df34228d131`.
 - This is a focused Service Request race regression, not a broad load/deadlock certification. Cross-service concurrency/load testing remains open.
+
+
+## 11. Concurrent notification stale-claim recovery — 2026-11-28
+
+- Four independent MySQL workers concurrently recover 40 stale `PROCESSING` notification outbox rows in batches of ten.
+- The regression asserts all 40 rows return to `PENDING`, each `attempt_count` increments exactly once, all lock timestamps clear, and exactly one `NOTIFICATION_OUTBOX_RECOVERED` audit event exists per row. NULL-actor audit rows are cleaned up even when the test fails.
+- Initial CI runs exposed an actual contention issue: the recovery query could use a broad scan, so some concurrent workers received zero rows. Added migration `044_notification_outbox_recovery_index.sql` with `idx_outbox_recovery (delivery_status, locked_at, outbox_id)` and an explicit `FORCE INDEX` hint on the stale-recovery SELECT.
+- GitHub Actions run [46125978646](https://github.com/crystal-qazi/itoms/actions/runs/46125978646) passed both `python-quality` and `mysql-migrations` on MySQL 8.4.
+- PR [#16](https://github.com/crystal-qazi/itoms/pull/16) was squash-merged as `804458a2fbc90d51510e813933018725682a9fc6`.
+- This verifies a controlled four-worker recovery contention scenario; it does not certify sustained throughput, production alerting or worker supervision.

@@ -79,3 +79,12 @@ These queries are observation aids, not alerting. Operations must approve servic
 ### Recovery query index
 
 Migration `044_notification_outbox_recovery_index.sql` adds `idx_outbox_recovery (delivery_status, locked_at, outbox_id)`. The stale-claim recovery worker filters and orders by these columns before applying `FOR UPDATE SKIP LOCKED`; the dedicated composite index narrows the locking scan to stale PROCESSING rows rather than relying on the ready-delivery index (`delivery_status, available_at`). The four-worker MySQL regression in PR #16 exercises this recovery path against 40 stale rows and checks that each row is recovered exactly once.
+
+
+## Concurrent stale-claim recovery verification — 2026-11-28
+
+- Migration `044_notification_outbox_recovery_index.sql` adds `idx_outbox_recovery (delivery_status, locked_at, outbox_id)`.
+- The recovery query explicitly uses this index. The four-worker regression initially exposed that the optimizer could choose a broad scan on the small test fixture even after the index was added; the explicit index hint made the intended stale-row locking range deterministic.
+- MySQL 8.4 CI run [46125978646](https://github.com/crystal-qazi/itoms/actions/runs/46125978646) passed both `python-quality` and `mysql-migrations`. The four-worker test recovered 40 stale rows in four batches of ten, with exactly one retry increment and one recovery audit event per row.
+- PR [#16](https://github.com/crystal-qazi/itoms/pull/16) was squash-merged into `feature/itoms-foundation` as `804458a2fbc90d51510e813933018725682a9fc6`.
+- This is focused concurrency evidence, not sustained worker throughput or production monitoring certification.
