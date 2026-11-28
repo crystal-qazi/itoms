@@ -179,8 +179,11 @@ def test_outbox_process_recover_and_audited_replay(notification_fixture, monkeyp
 
 
 
-def test_concurrent_outbox_claimers_receive_disjoint_batches(notification_fixture, monkeypatch):
-    """MySQL SKIP LOCKED must prevent two workers claiming the same outbox item."""
+
+def test_eight_concurrent_outbox_claimers_receive_disjoint_batches(
+    notification_fixture, monkeypatch,
+):
+    """Eight simultaneous workers must partition 80 due outbox rows exactly once."""
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
@@ -190,58 +193,57 @@ def test_concurrent_outbox_claimers_receive_disjoint_batches(notification_fixtur
 
     employee_id = notification_fixture["employee_id"]
     app = current_app._get_current_object()
-    for index in range(10):
+    for index in range(80):
         create_notification(
             actor_employee_id=employee_id,
             recipient_employee_id=employee_id,
-            notification_type="OUTBOX_CONCURRENCY",
-            title=f"Concurrent claim {index}",
-            body="Each queued item must be claimed by only one worker.",
+            notification_type="OUTBOX_EIGHT_WORKER_CONCURRENCY",
+            title=f"Eight-worker claim {index}",
+            body="Each queued item must be claimed by exactly one worker.",
             channels=("IN_APP",),
         )
 
-    connection_barrier = Barrier(2)
+    connection_barrier = Barrier(8)
     original_get_connection = notifications.get_connection
 
     def synchronized_connection():
         connection = original_get_connection()
-        connection_barrier.wait(timeout=20)
+        connection_barrier.wait(timeout=30)
         return connection
 
     def claim_batch():
         with app.app_context():
-            return claim_outbox_batch(batch_size=5, channel="IN_APP")
+            return claim_outbox_batch(batch_size=10, channel="IN_APP")
 
     monkeypatch.setattr(notifications, "get_connection", synchronized_connection)
     try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(claim_batch) for _ in range(2)]
-            batches = [future.result(timeout=40) for future in futures]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(claim_batch) for _ in range(8)]
+            batches = [future.result(timeout=90) for future in futures]
     finally:
         monkeypatch.setattr(notifications, "get_connection", original_get_connection)
 
-    first_ids = {int(row["outbox_id"]) for row in batches[0]}
-    second_ids = {int(row["outbox_id"]) for row in batches[1]}
-    assert len(first_ids) == 5
-    assert len(second_ids) == 5
-    assert first_ids.isdisjoint(second_ids)
+    batch_ids = [{int(row["outbox_id"]) for row in batch} for batch in batches]
+    assert [len(ids) for ids in batch_ids] == [10] * 8
+    claimed_ids = set().union(*batch_ids)
+    assert len(claimed_ids) == 80
+    for index, first in enumerate(batch_ids):
+        for second in batch_ids[index + 1:]:
+            assert first.isdisjoint(second)
 
     connection = original_get_connection()
     cursor = connection.cursor()
     try:
-        all_ids = first_ids | second_ids
-        marks = ",".join(["%s"] * len(all_ids))
+        placeholders = ",".join(["%s"] * len(claimed_ids))
         cursor.execute(
             f"""SELECT COUNT(*) FROM notification_outbox
-                WHERE outbox_id IN ({marks}) AND delivery_status='PROCESSING'""",
-            tuple(sorted(all_ids)),
+                WHERE outbox_id IN ({placeholders}) AND delivery_status='PROCESSING'""",
+            tuple(sorted(claimed_ids)),
         )
-        assert cursor.fetchone()[0] == 10
+        assert cursor.fetchone()[0] == 80
     finally:
         cursor.close()
         connection.close()
-
-
 
 def test_concurrent_stale_outbox_recovery_processes_each_claim_once(
     notification_fixture, monkeypatch,
