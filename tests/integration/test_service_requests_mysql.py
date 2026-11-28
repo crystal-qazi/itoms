@@ -618,4 +618,25 @@ def test_request_number_collision_is_retried(service_request_fixture, monkeypatc
     assert first["request_number"] != second["request_number"]
     assert second["request_number"].endswith("B" * 16)
 
+def test_request_queue_paginates_after_scope_filtering(service_request_fixture):
+    from itoms.services.service_requests import create_request, list_requests
+
+    data = service_request_fixture
+    request_ids = []
+    for index in range(3):
+        request_ids.append(create_request(
+            actor_employee_id=data["requester_id"],
+            title=f"Pagination request {index}",
+            description="Used to verify stable request queue page ordering.",
+        ))
+
+    first_page = list_requests(
+        actor_employee_id=data["requester_id"], visible_offset=0, limit=2,
+    )
+    second_page = list_requests(
+        actor_employee_id=data["requester_id"], visible_offset=2, limit=2,
+    )
+    assert [row["request_id"] for row in first_page] == list(reversed(request_ids[1:]))
+    assert [row["request_id"] for row in second_page] == [request_ids[0]]
+
 
