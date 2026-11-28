@@ -361,6 +361,11 @@ def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
     from itoms.services import directory, directory_admin, identity_admin
 
     data = role_assignment_fixture
+    directory_admin.remove_team_manager(
+        actor_employee_id=data["revoker_id"],
+        manager_employee_id=data["target_employee_id"],
+        team_id=data["team_ids"][1],
+    )
     original_check = directory.has_permissions_in_transaction
     revocation_locked = threading.Event()
     allow_revocation = threading.Event()
@@ -435,14 +440,14 @@ def test_employee_deactivation_wins_before_role_assignment(
             team_id=team_id,
             primary=False,
         )
-        directory_admin.remove_team_membership(
-            actor_employee_id=data["revoker_id"],
-            employee_id=data["target_employee_id"],
-            team_id=team_id,
-        )
         directory_admin.remove_team_manager(
             actor_employee_id=data["revoker_id"],
             manager_employee_id=data["target_employee_id"],
+            team_id=team_id,
+        )
+        directory_admin.remove_team_membership(
+            actor_employee_id=data["revoker_id"],
+            employee_id=data["target_employee_id"],
             team_id=team_id,
         )
 
