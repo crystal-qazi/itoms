@@ -231,5 +231,11 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 ### 2026-11-28 — Concurrent Service Request transition regression (PR #11 pending)
 - Added `test_concurrent_status_transitions_serialize_and_reject_stale_transition` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-concurrent-transitions`.
 - The MySQL integration test opens two independent connections, synchronizes both workers before their concurrent transition, and verifies only one OPEN → IN_PROGRESS transition succeeds; the stale competing transition is rejected and only one activity/audit status event is persisted.
-- PR [#11](https://github.com/crystal-qazi/itoms/pull/11), head `a293af7fb252330d627b89d3de7f94fcd71cf76e`, targets `feature/itoms-foundation`. `python-quality` passed; `mysql-migrations` was still in progress at this update. Do not merge until both pass.
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11) was corrected in follow-up commit `e0b03bd9e673ccd8ddf839bf0e77e65623049ae7`; GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations`. It was squash-merged as `544853f84846ceadf15fe126b0ab4df34228d131`.
 - Test-only change; no production service or authorization code changed.
+
+
+### 2026-11-28 — Concurrent Service Request transition regression merged and documented
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11) adds a deterministic two-connection race test for competing OPEN → IN_PROGRESS transitions. After correcting a punctuation-only expected-message assertion, GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations`; squash merge commit: `544853f84846ceadf15fe126b0ab4df34228d131`.
+- Documentation-only PR [#12](https://github.com/crystal-qazi/itoms/pull/12) records the test evidence and clarifies its limits; squash merge commit: `15d04848d93b764deb142ff94db19fc543c06110`. No CI was triggered for the docs-only change.
+- The focused test proves one concurrent state transition wins and a stale competing transition is rejected, with one activity and audit event. Broader cross-service load/deadlock testing remains open. No production code changed.
