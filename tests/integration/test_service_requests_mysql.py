@@ -86,6 +86,16 @@ def service_request_fixture():
             "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
             (administrator_role_id, manage_permission[0]),
         )
+        cursor.execute(
+            "SELECT permission_id FROM permissions WHERE permission_key=%s",
+            ("identity.roles.permissions.manage",),
+        )
+        role_manage_permission = cursor.fetchone()
+        assert role_manage_permission, "role permission administration permission must be registered"
+        cursor.execute(
+            "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+            (administrator_role_id, role_manage_permission[0]),
+        )
 
         cursor.execute(
             """INSERT INTO employee_role_assignments
@@ -393,3 +403,79 @@ def test_pending_reasons_comments_and_in_app_notifications(service_request_fixtu
     finally:
         cursor.close()
         connection.close()
+
+
+
+def test_comment_authorization_and_role_permission_revocation_share_transaction_locks(
+    service_request_fixture,
+):
+    """A comment authorization winner completes before role revocation can commit."""
+    import threading
+
+    from itoms.services.authorization import has_permission_in_transaction
+    from itoms.services.identity_admin import revoke_role_permission
+    from itoms.services.service_requests import ServiceRequestError, _context, add_comment, create_request
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Permission race",
+        description="Exercise transaction-bound authorization against revocation.",
+    )
+
+    connection = _db()
+    cursor = connection.cursor()
+    started = threading.Event()
+    finished = threading.Event()
+    outcome = {}
+
+    def revoke():
+        started.set()
+        try:
+            outcome["removed"] = revoke_role_permission(
+                actor_employee_id=data["administrator_id"],
+                role_id=data["requester_role_id"],
+                permission_key="service_request.update",
+            )
+        except Exception as exc:  # surfaced in the main test thread
+            outcome["error"] = exc
+        finally:
+            finished.set()
+
+    try:
+        context = _context(cursor, request_id)
+        assert context is not None
+        assert has_permission_in_transaction(
+            cursor, data["requester_id"], "service_request.update", context
+        )
+        cursor.execute(
+            """SELECT requester_employee_id,assigned_team_id
+               FROM service_requests WHERE request_id=%s FOR UPDATE""",
+            (request_id,),
+        )
+        assert cursor.fetchone() == (data["requester_id"], None)
+
+        worker = threading.Thread(target=revoke, daemon=True)
+        worker.start()
+        assert started.wait(timeout=2)
+        # The evaluator holds the exact role row/permission grant until this
+        # transaction commits. The revocation must not pass it.
+        assert not finished.wait(timeout=0.5)
+        connection.commit()
+        assert finished.wait(timeout=5)
+        worker.join(timeout=1)
+        assert "error" not in outcome, repr(outcome.get("error"))
+        assert outcome.get("removed") is True
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+        connection.close()
+
+    with pytest.raises(ServiceRequestError, match="Not authorized"):
+        add_comment(
+            actor_employee_id=data["requester_id"],
+            request_id=request_id,
+            body="This must be denied after permission revocation.",
+        )
