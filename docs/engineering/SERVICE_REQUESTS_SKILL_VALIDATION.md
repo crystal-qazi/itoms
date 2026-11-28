@@ -136,7 +136,7 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 
 ## 8. Release recommendation
 
-The core Section 7.4 workflow is implemented: configurable priorities, advanced search, scope-aware pagination, shared saved-report fields, collision-safe request numbers, pending reasons, comments and in-app notification enqueueing. Service Request write paths use transaction-bound authorization; deterministic shared-scope revocation races, mutation-route CSRF checks, cross-scope denials and representative audit/outbox rollback tests pass. Do not claim all specialist gates or production readiness: dedicated dashboards/aggregate analytics, manual keyboard/screen-reader and WCAG 2.2 AA verification, broader cross-service deadlock/load testing, worker monitoring and deployment validation remain open.
+The core Section 7.4 workflow is implemented: configurable priorities, advanced search, scope-aware pagination, shared saved-report fields, collision-safe request numbers, pending reasons, comments and in-app notification enqueueing. Service Request write paths use transaction-bound authorization; deterministic shared-scope revocation races, mutation-route CSRF checks, cross-scope denials and representative audit/outbox rollback tests pass. Do not claim all specialist gates or production readiness: dedicated dashboards/aggregate analytics, manual keyboard/screen-reader and WCAG 2.2 AA verification, broader cross-service deadlock/load testing beyond the tested Service Request transition race, worker monitoring and deployment validation remain open.
 
 
 ## 9. Additional MySQL security/transaction regression evidence — 2026-11-28
@@ -154,3 +154,13 @@ The following test-only PRs were merged into `feature/itoms-foundation` after th
 | [#9](https://github.com/crystal-qazi/itoms/pull/9) | Assignment notification/outbox insert rollback | [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) | `a67fda9cd699c8245eca1d8095d7f7b63ee2992b` |
 
 All listed changes are test-only. PR #7 was closed as superseded after PR #6 changed the same test file; the status test was rebased and merged as PR #8. No production service or authorization logic was changed by these increments.
+
+
+## 10. Concurrent Service Request state-transition evidence — 2026-11-28
+
+- Added `test_concurrent_status_transitions_serialize_and_reject_stale_transition` in `tests/integration/test_service_requests_mysql.py`.
+- The test opens two independent MySQL connections and synchronizes two workers before competing OPEN → IN_PROGRESS transitions on the same request.
+- Verified outcome: exactly one transition succeeds; the second observes the committed IN_PROGRESS state and is rejected as an invalid stale transition. Exactly one status activity and one `SERVICE_REQUEST_STATUS_CHANGED` audit event are persisted.
+- GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations` after correcting the test's expected error-message punctuation. The first run failed only on that assertion; the concurrency behavior itself produced the expected one-success/one-rejection outcome.
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11) was squash-merged into `feature/itoms-foundation` as `544853f84846ceadf15fe126b0ab4df34228d131`.
+- This is a focused Service Request race regression, not a broad load/deadlock certification. Cross-service concurrency/load testing remains open.
