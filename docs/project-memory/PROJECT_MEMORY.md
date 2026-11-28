@@ -212,5 +212,11 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 ### 2026-11-28 — Notification outbox rollback regression opened (PR #9)
 - Added `test_assignment_rolls_back_when_notification_outbox_insert_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-notification-outbox-rollback-complete`.
 - The test forces the `notification_outbox` insert to fail after the assignment audit and notification inbox insert, then verifies assignment, activity, audit, inbox notification and outbox rows all roll back.
-- PR [#9](https://github.com/crystal-qazi/itoms/pull/9), head `3f7033290924d2f325b0ad6d4de543d0e1fa0984`, targets `feature/itoms-foundation`. Both `python-quality` and `mysql-migrations` were in progress at memory update time; do not merge until both pass.
+- PR [#9](https://github.com/crystal-qazi/itoms/pull/9), head `3f7033290924d2f325b0ad6d4de543d0e1fa0984`, targets `feature/itoms-foundation`. Both `python-quality` and `mysql-migrations` passed in GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617). PR #9 was squash-merged as `a67fda9cd699c8245eca1d8095d7f7b63ee2992b`.
 - Test-only change; no production code changed.
+
+
+### 2026-11-28 — Notification outbox rollback regression merged
+- GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) completed successfully: `python-quality` and `mysql-migrations` both passed.
+- PR [#9](https://github.com/crystal-qazi/itoms/pull/9) was squash-merged into `feature/itoms-foundation` as `a67fda9cd699c8245eca1d8095d7f7b63ee2992b`.
+- The new MySQL test forces the notification outbox insert to fail after the audit and inbox notification writes, and verifies the complete assignment transaction rolls back. Test-only; no production code changed.
