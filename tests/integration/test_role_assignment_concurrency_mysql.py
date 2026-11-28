@@ -419,6 +419,65 @@ def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
             assignment_future.result(timeout=15)
 
 
+
+def test_manager_scope_revocation_wins_before_managed_team_role_assignment(
+    role_assignment_fixture, monkeypatch
+):
+    from itoms.services import directory_admin, identity_admin
+
+    data = role_assignment_fixture
+    original_check = directory_admin.has_permissions_in_transaction
+    revocation_locked = threading.Event()
+    allow_revocation = threading.Event()
+
+    def coordinated_check(cur, actor_employee_id, permission_key, resources, **kwargs):
+        result = original_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+        if actor_employee_id == data["revoker_id"] and permission_key == "identity.directory.manage":
+            revocation_locked.set()
+            if not allow_revocation.wait(timeout=15):
+                raise TimeoutError("test did not release manager-scope revocation")
+        return result
+
+    monkeypatch.setattr(directory_admin, "has_permissions_in_transaction", coordinated_check)
+    original_assignment_check = identity_admin.has_permissions_in_transaction
+    assignment_check_started = threading.Event()
+
+    def track_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs):
+        if actor_employee_id == data["assigner_id"]:
+            assignment_check_started.set()
+        return original_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+
+    monkeypatch.setattr(identity_admin, "has_permissions_in_transaction", track_assignment_check)
+
+    def remove_manager():
+        with data["app"].app_context():
+            return directory_admin.remove_team_manager(
+                actor_employee_id=data["revoker_id"],
+                manager_employee_id=data["target_employee_id"],
+                team_id=data["team_ids"][0],
+            )
+
+    def assign_managed_team_role():
+        with data["app"].app_context():
+            return identity_admin.assign_role(
+                actor_employee_id=data["assigner_id"],
+                employee_id=data["target_employee_id"],
+                role_id=data["target_role_id"],
+                scope_type="MANAGED_TEAMS",
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        removal_future = pool.submit(remove_manager)
+        assert revocation_locked.wait(timeout=10), "manager removal did not acquire its locks"
+        assignment_future = pool.submit(assign_managed_team_role)
+        assert assignment_check_started.wait(timeout=10), "managed-team role assignment did not start authorization"
+        assert not assignment_future.done(), "managed-team role assignment passed while manager removal held locks"
+        allow_revocation.set()
+        removal_future.result(timeout=15)
+        with pytest.raises(identity_admin.IdentityAdministrationError, match="Managed-team scope changed"):
+            assignment_future.result(timeout=15)
+
+
 def test_employee_deactivation_wins_before_role_assignment(
     role_assignment_fixture, monkeypatch
 ):
