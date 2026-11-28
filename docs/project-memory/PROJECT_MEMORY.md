@@ -246,3 +246,9 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - PR [#13](https://github.com/crystal-qazi/itoms/pull/13), head `7b83a889149e3639fe3d4eea13c57b1ef80350cc`, passed both `python-quality` and `mysql-migrations` in run [46124841345](https://github.com/crystal-qazi/itoms/actions/runs/46124841345), then squash-merged as `b8d4123f5a484df669982fe171713b652f85da14`.
 - Documentation-only PR [#14](https://github.com/crystal-qazi/itoms/pull/14) records the concurrency evidence and the remaining operational monitoring limitations; squash-merged as `6f2aa1d7cd836122779bbd2aa709d1b178295194`. No CI was triggered for this docs-only change.
 - This verifies SKIP LOCKED claim isolation, not sustained load, production worker supervision, alert delivery or full cross-service deadlock behavior. Those remain open.
+
+
+### 2026-11-28 — Notification operations runbook added
+- Documentation-only PR [#15](https://github.com/crystal-qazi/itoms/pull/15) adds the notification worker CLI runbook and read-only SQL observations for queue depth/age, stale PROCESSING claims and DEAD backlog to `docs/architecture/NOTIFICATIONS.md`.
+- The runbook explicitly distinguishes observation queries from alerting and leaves thresholds, alert routing, worker supervision and on-call ownership for operational approval.
+- PR #15 was squash-merged into `feature/itoms-foundation` as `4bbbfbb430b590452cd8a227f5612aca4399088e`. No CI was triggered for this documentation-only change.
