@@ -53,7 +53,9 @@ def operations_fixture():
         )
         role_id = int(cursor.lastrowid)
         keys = ("operations.read", "operations.create", "operations.update",
-                "oracle.inventory.read", "oracle.inventory.manage")
+                "oracle.inventory.read", "oracle.inventory.manage",
+                "service.inventory.create", "service.inventory.update",
+                "engineering.tasks.create", "engineering.tasks.update")
         for key in keys:
             cursor.execute("SELECT permission_id FROM permissions WHERE permission_key=%s", (key,))
             permission = cursor.fetchone()
@@ -92,6 +94,15 @@ def operations_fixture():
     cursor = cleanup.cursor()
     try:
         cursor.execute("DELETE FROM oracle_database_inventory WHERE service_id=%s", (service_id,))
+        created_service_id = data.get("created_service_id")
+        if created_service_id:
+            cursor.execute("DELETE FROM service_records WHERE service_id=%s", (created_service_id,))
+        cursor.execute(
+            """DELETE FROM engineering_task_activity WHERE task_id IN
+               (SELECT task_id FROM engineering_tasks WHERE created_by=%s)""",
+            (employee_id,),
+        )
+        cursor.execute("DELETE FROM engineering_tasks WHERE created_by=%s", (employee_id,))
         cursor.execute("DELETE FROM service_records WHERE service_id=%s", (service_id,))
         cursor.execute("DELETE FROM operational_work_items WHERE created_by=%s", (employee_id,))
         cursor.execute("DELETE FROM audit_events WHERE actor_employee_id=%s", (employee_id,))
@@ -137,6 +148,40 @@ def test_operations_work_and_oracle_inventory_lifecycle(operations_fixture):
         actor_employee_id=data["employee_id"], work_item_id=work_id,
         new_status="COMPLETED",
     )
+
+    from itoms.services.service_inventory import (
+        create_service_record, update_service_lifecycle,
+    )
+    created_service_id = create_service_record(
+        actor_employee_id=data["employee_id"],
+        service_key=f"OPS-NEW-{data['suffix']}",
+        service_name="New integration service",
+        service_type="APPLICATION",
+        owner_team_id=data["team_id"],
+        criticality="HIGH",
+    )
+    data["created_service_id"] = created_service_id
+    update_service_lifecycle(
+        actor_employee_id=data["employee_id"],
+        service_id=created_service_id,
+        lifecycle_status="ACTIVE",
+    )
+
+    from itoms.services.engineering_tasks import create_task, change_task_status
+    task_id = create_task(
+        actor_employee_id=data["employee_id"],
+        team_id=data["team_id"],
+        title="Validate transaction-bound task creation",
+        assigned_to=data["employee_id"],
+        priority="HIGH",
+    )
+    change_task_status(
+        actor_employee_id=data["employee_id"], task_id=task_id, new_status="READY",
+    )
+    change_task_status(
+        actor_employee_id=data["employee_id"], task_id=task_id, new_status="IN_PROGRESS",
+    )
+
     oracle_id = create_oracle_database(
         actor_employee_id=data["employee_id"], service_id=data["service_id"],
         environment_name="TEST", database_name=f"DB_{data['suffix']}",
@@ -155,6 +200,13 @@ def test_operations_work_and_oracle_inventory_lifecycle(operations_fixture):
     try:
         cursor.execute("SELECT status FROM operational_work_items WHERE work_item_id=%s", (work_id,))
         assert cursor.fetchone()[0] == "COMPLETED"
+        cursor.execute(
+            "SELECT lifecycle_status FROM service_records WHERE service_id=%s",
+            (created_service_id,),
+        )
+        assert cursor.fetchone()[0] == "ACTIVE"
+        cursor.execute("SELECT status FROM engineering_tasks WHERE task_id=%s", (task_id,))
+        assert cursor.fetchone()[0] == "IN_PROGRESS"
         cursor.execute("SELECT lifecycle_status FROM oracle_database_inventory WHERE oracle_database_id=%s", (oracle_id,))
         assert cursor.fetchone()[0] == "MAINTENANCE"
         cursor.execute(
