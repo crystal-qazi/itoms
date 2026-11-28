@@ -83,7 +83,7 @@ Comments currently use `service_request.update`; there is no separate comment pe
 **Controls observed**
 - All module routes require authenticated login.
 - Mutating forms validate the session CSRF token with constant-time comparison.
-- Every request read/action performs server-side permission and resource-scope checks. Comment creation now uses a transaction-bound permission evaluator in the same MySQL transaction as the protected write.
+- Every request read/action performs server-side permission and resource-scope checks. Request creation, assignment, status transition, category create/activation and comment creation now use transaction-bound permission evaluation in the same MySQL transaction as the protected write.
 - Requester identity defaults to the authenticated employee; web form does not accept a requester ID.
 - Team and assignee selections are validated against active records and membership.
 - SQL values are parameterized; comments are plain text and Jinja autoescaping is retained.
@@ -92,8 +92,8 @@ Comments currently use `service_request.update`; there is no separate comment pe
 - Notification delivery is queued through the existing outbox; no synchronous external network call is made in the request transaction.
 
 **Security gate not passed**
-- The shared `has_permission` still owns a separate DB connection. Request creation, assignment, status transition and category administration still authorize outside their mutation transaction. Only `add_comment` has been migrated to `has_permission_in_transaction`; its lock order is actor employee → team/membership/manager mapping → sorted roles → actor assignments → exact permission grant → request row (with scope revalidation). This is a bounded guarantee, not a global lock protocol.
-- A MySQL two-connection race test proves the comment authorization transaction wins before a concurrent role-permission revocation, then the later comment is denied. Team-membership/manager-scope revocation, department change and employee deactivation races remain unproven.
+- The shared `has_permission` remains a separate-connection helper for read/list paths. Service Request create, assignment, status transition, category create/activation and comment mutations now use transaction-bound evaluation. The lock order is actor employee → sorted resource teams → membership/manager mapping rows → sorted roles → actor assignments → exact permission grants → protected request/category write. Assignment authorizes current and destination-team contexts together; comment/status revalidate the request's requester/team snapshot after acquiring its row lock. This is a module-bounded guarantee, not a global application protocol.
+- A MySQL two-connection race test proves that an in-flight authorized comment holds its permission state until commit; a concurrent role-permission revocation then succeeds and subsequent comment access is denied. Team-membership/manager-scope revocation, department change and employee deactivation race tests remain outstanding.
 - Request-number collision behavior needs a controlled retry or equivalent strategy.
 - Negative tests should cover cross-scope comment access, assignment to an unauthorized team, stale/inactive employee membership, CSRF failure for every mutation route and audit rollback.
 
@@ -123,9 +123,9 @@ Comments currently use `service_request.update`; there is no separate comment pe
 
 | Gate | Current status | Evidence required |
 |---|---|---|
-| Python unit suite | Passed | CI run `46112814997`: 166 passed, 44 skipped |
-| MySQL migrations | Passed | CI run `46112814997`: 42 applied; second run idempotent |
-| Service Request MySQL integration | Passed | CI run `46112814997`: 44 passed, including comment-vs-role-revocation race |
+| Python unit suite | Passed | CI run `46113102986`: 166 passed, 44 skipped |
+| MySQL migrations | Passed | CI run `46113102986`: 42 applied; second run idempotent |
+| Service Request MySQL integration | Passed | CI run `46113102986`: 44 passed, including comment-vs-role-revocation race |
 | Authorization negative tests | Partial | Comment after role-permission revocation is denied; cross-scope, unauthorized-team and stale-membership matrix remains |
 | Concurrency/revocation tests | Partial | Comment-vs-role-permission revocation covered; team/manager/department and other mutation races remain |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
