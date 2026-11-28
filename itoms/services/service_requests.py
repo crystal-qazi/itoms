@@ -7,6 +7,7 @@ import secrets
 from itoms.db.connection import get_connection
 from itoms.services.authorization import (
     ResourceContext, has_permission, has_permission_in_transaction,
+    has_permissions_in_transaction,
 )
 
 
@@ -306,7 +307,9 @@ def create_request(
             owner_employee_id=requester_id,
             department_id=requester[0],
         )
-        if not has_permission(actor_employee_id, "service_request.create", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.create", context
+        ):
             raise ServiceRequestError("Not authorized to submit a request for this employee.")
         request_number = (
             "SR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-"
@@ -497,8 +500,7 @@ def assign_request(
         context = _context(cur, request_id)
         if not context:
             raise ServiceRequestError("Service request was not found.")
-        if not has_permission(actor_employee_id, "service_request.assign", context):
-            raise ServiceRequestError("Not authorized to assign this service request.")
+        resources = [context]
         team_department_id = None
         if assigned_team_id is not None:
             cur.execute(
@@ -511,11 +513,13 @@ def assign_request(
             if not team:
                 raise ServiceRequestError("Assigned team does not exist or is inactive.")
             team_department_id = team[0]
-            if not has_permission(
-                actor_employee_id, "service_request.assign",
-                ResourceContext(team_id=assigned_team_id, department_id=team_department_id),
-            ):
-                raise ServiceRequestError("Not authorized to assign requests to the selected team.")
+            resources.append(
+                ResourceContext(team_id=assigned_team_id, department_id=team_department_id)
+            )
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "service_request.assign", resources
+        ):
+            raise ServiceRequestError("Not authorized to assign this service request or selected team.")
         if assigned_employee_id is not None:
             if assigned_team_id is None:
                 raise ServiceRequestError("An individual assignee must belong to an assigned team.")
@@ -527,10 +531,16 @@ def assign_request(
             )
             if not cur.fetchone():
                 raise ServiceRequestError("Assignee must be an active member of the selected team.")
-        cur.execute("SELECT status FROM service_requests WHERE request_id=%s FOR UPDATE", (request_id,))
+        cur.execute(
+            """SELECT status,requester_employee_id,assigned_team_id
+               FROM service_requests WHERE request_id=%s FOR UPDATE""",
+            (request_id,),
+        )
         current = cur.fetchone()
         if not current:
             raise ServiceRequestError("Service request was not found.")
+        if current[1] != context.owner_employee_id or current[2] != context.team_id:
+            raise ServiceRequestError("Service request scope changed; retry the operation.")
         if current[0] in {"COMPLETED", "CANCELLED"}:
             raise ServiceRequestError("Closed requests cannot be reassigned.")
         cur.execute(
