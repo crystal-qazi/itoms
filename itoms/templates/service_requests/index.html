@@ -12,7 +12,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
     <div class="col-12 col-lg-6"><label class="form-label" for="sr-title">Request title</label><input class="form-control" id="sr-title" name="title" maxlength="240" required></div>
     <div class="col-6 col-lg-3"><label class="form-label" for="sr-category">Category</label><select class="form-select" id="sr-category" name="category_id"><option value="">Uncategorized</option>{% for category in categories %}<option value="{{ category.category_id }}">{{ category.category_name }}</option>{% endfor %}</select></div>
-    <div class="col-6 col-lg-3"><label class="form-label" for="sr-priority">Priority</label><select class="form-select" id="sr-priority" name="priority"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div>
+    <div class="col-6 col-lg-3"><label class="form-label" for="sr-priority">Priority</label><select class="form-select" id="sr-priority" name="priority" required>{% for priority in priorities %}<option value="{{ priority.priority_key }}" {% if priority.priority_key == default_priority %}selected{% endif %}>{{ priority.priority_label }}</option>{% endfor %}</select></div>
     <div class="col-12"><label class="form-label" for="sr-description">Request details</label><textarea class="form-control" id="sr-description" name="description" rows="3" maxlength="20000" required></textarea></div>
     <div class="col-12"><button class="btn btn-primary" type="submit">Submit request</button></div>
   </form>
@@ -36,11 +36,39 @@
   {% endif %}
 </section>
 {% endif %}
+{% if can_manage_priorities %}
+<section class="panel-card mt-4">
+  <div class="panel-heading"><div><h2>Priority administration</h2><p>Configure the priority levels available when employees submit requests.</p></div></div>
+  <form method="post" action="{{ url_for('service_requests.priority_create') }}" class="row g-2 mt-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+    <div class="col-12 col-md-3"><label class="form-label" for="priority-key">Priority key</label><input class="form-control" id="priority-key" name="priority_key" maxlength="30" pattern="[A-Za-z][A-Za-z0-9_]{1,29}" required></div>
+    <div class="col-12 col-md-5"><label class="form-label" for="priority-label">Display label</label><input class="form-control" id="priority-label" name="priority_label" maxlength="60" required></div>
+    <div class="col-6 col-md-2"><label class="form-label" for="priority-order">Sort order</label><input class="form-control" id="priority-order" name="sort_order" type="number" min="0" max="9999" value="100" required></div>
+    <div class="col-6 col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Add priority</button></div>
+  </form>
+  {% if priority_admin %}
+  <div class="table-responsive mt-3"><table class="table align-middle"><thead><tr><th>Key</th><th>Display label</th><th>Order</th><th>Availability</th><th>Action</th></tr></thead><tbody>
+  {% for priority in priority_admin %}<tr>
+    <td><code>{{ priority.priority_key }}</code></td>
+    <td colspan="4">
+      <form method="post" action="{{ url_for('service_requests.priority_update', priority_key=priority.priority_key) }}" class="row g-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+        <div class="col-12 col-md-5"><label class="visually-hidden" for="priority-label-{{ loop.index }}">Display label</label><input class="form-control form-control-sm" id="priority-label-{{ loop.index }}" name="priority_label" maxlength="60" value="{{ priority.priority_label }}" required></div>
+        <div class="col-5 col-md-2"><label class="visually-hidden" for="priority-order-{{ loop.index }}">Sort order</label><input class="form-control form-control-sm" id="priority-order-{{ loop.index }}" name="sort_order" type="number" min="0" max="9999" value="{{ priority.sort_order }}" required></div>
+        <div class="col-4 col-md-2"><label class="visually-hidden" for="priority-active-{{ loop.index }}">Availability</label><select class="form-select form-select-sm" id="priority-active-{{ loop.index }}" name="is_active"><option value="1" {% if priority.is_active %}selected{% endif %}>Active</option><option value="0" {% if not priority.is_active %}selected{% endif %}>Inactive</option></select></div>
+        <div class="col-3 col-md-3"><button class="btn btn-sm btn-outline-secondary w-100" type="submit">Save</button></div>
+      </form>
+    </td>
+  </tr>{% endfor %}
+  </tbody></table></div>
+  {% endif %}
+</section>
+{% endif %}
 <section class="panel-card mt-4">
   <div class="panel-heading"><div><h2>Request queue</h2><p>Only requests within your access scope are listed.</p></div></div>
   <form method="get" class="row g-2 mt-2">
     <div class="col-6 col-md-4"><label class="form-label" for="sr-status">Status</label><select class="form-select" id="sr-status" name="status"><option value="">All statuses</option>{% for value in ['OPEN','IN_PROGRESS','ON_HOLD','COMPLETED','CANCELLED'] %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ value|replace('_',' ') }}</option>{% endfor %}</select></div>
-    <div class="col-6 col-md-4"><label class="form-label" for="sr-priority-filter">Priority</label><select class="form-select" id="sr-priority-filter" name="priority"><option value="">All priorities</option>{% for value in ['LOW','MEDIUM','HIGH','CRITICAL'] %}<option value="{{ value }}" {% if selected_priority == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-4"><label class="form-label" for="sr-priority-filter">Priority</label><select class="form-select" id="sr-priority-filter" name="priority"><option value="">All priorities</option>{% for priority in priorities %}<option value="{{ priority.priority_key }}" {% if selected_priority == priority.priority_key %}selected{% endif %}>{{ priority.priority_label }}</option>{% endfor %}</select></div>
     <div class="col-12 col-md-4 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Apply filters</button></div>
   </form>
   {% if requests %}
