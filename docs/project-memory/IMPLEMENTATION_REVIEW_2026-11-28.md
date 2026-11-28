@@ -164,3 +164,9 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Merged PR [#9](https://github.com/crystal-qazi/itoms/pull/9) into `feature/itoms-foundation` using squash merge. Merge commit: `a67fda9cd699c8245eca1d8095d7f7b63ee2992b`.
 - The regression test forces a notification outbox insert failure after audit and inbox notification writes, then verifies request assignment, activity, audit, notification inbox and outbox persistence all roll back.
 - Test-only change; no production service code changed.
+
+
+## 17. Service Request specialist validation documentation synchronized — 2026-11-28
+- Updated `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` to include merged cross-scope, denied HTTP mutation, audit rollback and notification-outbox rollback evidence from PRs #1, #2, #4, #5, #6, #8 and #9.
+- Updated the remaining-gates statements to distinguish completed Service Request regression coverage from open broader cross-service deadlock/load, accessibility, dashboard, worker-monitoring and deployment gates.
+- Documentation-only PR [#10](https://github.com/crystal-qazi/itoms/pull/10) was squash-merged into `feature/itoms-foundation` as `7c64264e2a69dc11873d1de9b07309ad87dd1a7d`. No CI was triggered for the docs-only change.
