@@ -130,8 +130,10 @@ def create_team(*, actor_employee_id: int, team_name: str) -> int:
             [ResourceContext(department_id=department_id)],
         ):
             raise DirectoryAdministrationError("Not authorized to create teams in this department.")
+        # The unique key is the concurrency guard; avoid taking a team
+        # row/gap lock after authorization has already locked role rows.
         cur.execute(
-            "SELECT 1 FROM teams WHERE department_id=%s AND team_name=%s FOR UPDATE",
+            "SELECT 1 FROM teams WHERE department_id=%s AND team_name=%s",
             (department_id, name),
         )
         if cur.fetchone():
