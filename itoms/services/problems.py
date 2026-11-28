@@ -6,6 +6,7 @@ import secrets
 from mysql.connector import IntegrityError
 
 from itoms.db.connection import get_connection
+from itoms.services.incidents import get_incident_detail
 from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 
