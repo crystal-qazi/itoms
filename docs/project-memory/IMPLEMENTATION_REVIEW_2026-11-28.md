@@ -120,3 +120,11 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - GitHub Actions run [46123162387](https://github.com/crystal-qazi/itoms/actions/runs/46123162387) passed both `python-quality` and `mysql-migrations`, including the MySQL 8.4 integration suite.
 - PR [#5](https://github.com/crystal-qazi/itoms/pull/5) was squash-merged into `feature/itoms-foundation`; merge commit `56c94977f03207541753247d48958cd546cc294a`.
 - Test-only change; no production code or permission policy changed.
+
+
+## 12. Assignment audit rollback regression — 2026-11-28
+- Added `test_assignment_rolls_back_when_audit_write_fails` to `tests/integration/test_service_requests_mysql.py` on `feature/security-service-request-assignment-audit-rollback`.
+- A temporary MySQL trigger rejects `SERVICE_REQUEST_ASSIGNED`. The test verifies the request remains unassigned, activity history remains at its original creation row, the assignment audit row is absent, and no in-app notification was queued; trigger cleanup runs in `finally`.
+- PR [#6](https://github.com/crystal-qazi/itoms/pull/6) targets `feature/itoms-foundation`, head commit `def547dad9197d72e3cf503666f2690296270b92`.
+- No GitHub Actions workflow run was returned for the head commit at the time of this review. CI remains pending/unverified; do not merge until both `python-quality` and `mysql-migrations` pass.
+- Test-only change. No production application code was modified.
