@@ -785,3 +785,76 @@ def test_service_request_detail_hides_requests_outside_actor_own_scope(
         finally:
             cursor.close()
             cleanup.close()
+
+
+def test_service_request_creation_rolls_back_when_audit_write_fails(
+    service_request_fixture,
+):
+    """A failed business-audit insert must roll back the request and its history."""
+    from itoms.services.service_requests import create_request
+
+    data = service_request_fixture
+    title = f"Audit rollback {data['suffix']}"
+    trigger_name = f"trg_sr_audit_fail_{data['suffix']}"
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"""CREATE TRIGGER `{trigger_name}`
+                BEFORE INSERT ON audit_events
+                FOR EACH ROW
+                BEGIN
+                    IF NEW.event_key = 'SERVICE_REQUEST_CREATED' THEN
+                        SIGNAL SQLSTATE '45000'
+                            SET MESSAGE_TEXT = 'forced Service Request audit failure';
+                    END IF;
+                END"""
+        )
+    finally:
+        cursor.close()
+        connection.close()
+
+    try:
+        import pytest
+
+        with pytest.raises(Exception, match="forced Service Request audit failure"):
+            create_request(
+                actor_employee_id=data["requester_id"],
+                title=title,
+                description="The audit write is intentionally rejected by this test trigger.",
+            )
+
+        connection = _db()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                """SELECT COUNT(*) FROM service_requests
+                   WHERE requester_employee_id=%s AND title=%s""",
+                (data["requester_id"], title),
+            )
+            assert cursor.fetchone()[0] == 0
+            cursor.execute(
+                """SELECT COUNT(*) FROM service_request_activity h
+                   JOIN service_requests r ON r.request_id=h.request_id
+                   WHERE r.requester_employee_id=%s AND r.title=%s""",
+                (data["requester_id"], title),
+            )
+            assert cursor.fetchone()[0] == 0
+            cursor.execute(
+                """SELECT COUNT(*) FROM audit_events
+                   WHERE actor_employee_id=%s AND event_key='SERVICE_REQUEST_CREATED'""",
+                (data["requester_id"],),
+            )
+            assert cursor.fetchone()[0] == 0
+        finally:
+            cursor.close()
+            connection.close()
+    finally:
+        cleanup = _db()
+        cursor = cleanup.cursor()
+        try:
+            cursor.execute(f"DROP TRIGGER IF EXISTS `{trigger_name}`")
+            cleanup.commit()
+        finally:
+            cursor.close()
+            cleanup.close()
