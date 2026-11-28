@@ -59,8 +59,8 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 
 ## 5. Open release gates and next actions
 
-1. Complete denied-action and cross-scope HTTP route tests.
-2. Add representative audit rollback tests and broader cross-service deadlock/load stress where safe.
+1. Continue denied-action coverage at HTTP mutation-route level where the route boundary adds behavior beyond the service-layer authorization checks; current coverage includes the cross-scope detail HTTP 404 and service-layer comment/assignment/status mutation denials.
+2. The representative Service Request creation audit-failure rollback test is complete and CI-verified. Broader rollback coverage for other mutation types and cross-service deadlock/load stress remain open.
 3. Conduct keyboard-only, visible-focus, screen-reader, contrast, zoom/reflow, target-size, Light/Dark and narrow-mobile review; run an automated accessibility scan and record remediation.
 4. Validate deployment configuration, worker delivery/monitoring, backups/restores and smoke tests in a safe target environment.
 5. Decide whether dedicated Service Request dashboards and aggregate analytics are required in the next module increment; shared saved-report fields already exist.
@@ -79,7 +79,18 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Added `tests/integration/test_service_requests_mysql.py::test_service_request_detail_hides_requests_outside_actor_own_scope` on `feature/security-service-request-cross-scope-tests`.
 - Test provisions an outsider employee with only an OWN-scoped `service_request.read` grant and verifies the authenticated detail route returns the same generic 404 response as a missing request.
 - Added a second integration test that uses a uniquely named temporary MySQL trigger to force the `SERVICE_REQUEST_CREATED` audit insert to fail, then verifies request and activity rows are rolled back and the audit row is absent. Trigger cleanup runs in `finally`.
-- Draft PR: https://github.com/crystal-qazi/itoms/pull/1, targeting `feature/itoms-foundation` (not `main`, to avoid mixing the divergent canonical-memory and implementation branches).
-- GitHub Actions run `46122079076` completed successfully: `python-quality` (pytest, pip-audit and Bandit) and `mysql-migrations` (MySQL 8.4 migrations and integration suite) both passed. PR #1 was merged into `feature/itoms-foundation` as squash commit `6f87a69bca256e8fad5c78e61da1a4ec7350539b`.
+- PR [#1](https://github.com/crystal-qazi/itoms/pull/1), targeting `feature/itoms-foundation` (not `main`, to avoid mixing the divergent canonical-memory and implementation branches), was merged after CI passed.
+- GitHub Actions run `46122079076` completed successfully: `python-quality` (pytest, pip-audit and Bandit) and `mysql-migrations` (MySQL 8.4 migrations and integration suite) both passed. Squash commit: `6f87a69bca256e8fad5c78e61da1a4ec7350539b`.
 - An earlier intermediate commit/run failed because the test was briefly placed in a separate module while depending on a module-local fixture. The test was moved into the fixture-owning integration module and the misplaced file removed. Do not treat the intermediate failure as the final branch state; verify the latest run.
 - No application production code was modified. The only code change is an integration regression test. No production-readiness conclusion is implied.
+
+
+## 8. Follow-up cross-scope mutation regression work — 2026-11-28
+
+- Added `tests/integration/test_service_requests_mysql.py::test_own_scope_reader_cannot_mutate_another_employees_request` on branch `feature/security-service-request-mutation-scope-tests`.
+- The test creates a separate employee with only an OWN-scoped `service_request.read` grant and attempts three operations against another employee's request: add a comment, assign the request, and transition its status. Each operation must raise `ServiceRequestError`.
+- The test then verifies the request remains OPEN and unassigned, no comment was created, only the original creation activity remains, and the outsider has no audit events for that request.
+- GitHub Actions run [46122357121](https://github.com/crystal-qazi/itoms/actions/runs/46122357121) passed both `python-quality` and `mysql-migrations`, including MySQL 8.4 migrations and integration tests.
+- PR [#2](https://github.com/crystal-qazi/itoms/pull/2) was merged into `feature/itoms-foundation` as squash commit `3ec323ba8a5aaf9077d8b37f13fe51adcf0229fa`.
+- This was test-only work; production code and permission rules were not changed.
+- Remaining gates include HTTP mutation-route denial coverage where useful, broader deadlock/load stress, accessibility review/scanning, operational monitoring, deployment validation, and branch reconciliation.
