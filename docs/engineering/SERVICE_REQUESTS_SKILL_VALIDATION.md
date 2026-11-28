@@ -72,7 +72,7 @@ Comments currently use `service_request.update`; there is no separate comment pe
 
 **Remaining work**
 1. Add dedicated Service Request dashboards and aggregate analytics beyond the shared saved-report/CSV builder.
-2. Expand route-level tests for denied access paths and audit rollback behavior; all mutation routes now have CSRF rejection coverage.
+2. HTTP regression coverage now verifies cross-scope detail 404s, denied comment/assignment/status mutations, and audit rollback for request creation, comments, assignment, status and notification outbox writes; broader cross-service rollback coverage remains open.
 3. Document worker delivery expectations and operational monitoring.
 
 Request numbers now use a 64-bit random suffix and retry duplicate-key collisions up to five attempts; other database errors are not retried.
@@ -95,7 +95,7 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 **Security gate not passed**
 - The shared `has_permission` remains a separate-connection helper for read/list paths. All Service Request write paths, including priority catalogue create/update, use transaction-bound evaluation. Request assignment authorizes current and destination-team contexts together; comment/status revalidate the request's requester/team snapshot after acquiring its row lock. This is a module-bounded guarantee, not a claim that read paths are revocation-atomic.
 - MySQL 8.4 integration tests cover the request lifecycle, priority creation/deactivation/default selection, advanced keyword/category/date search, request-number collision retry, and transactional audit/notification behavior. Shared authorization tests cover role-permission revocation, TEAM membership removal, MANAGED_TEAMS manager-mapping removal and employee deactivation races.
-- Route-level HTTP tests now verify missing-CSRF rejection across every Service Request mutation endpoint, and verify priority administration/search routing. Remaining negative evidence includes denied-action/cross-scope route cases, audit rollback tests across representative service families, and broader cross-service deadlock/load stress.
+- Route-level HTTP tests now verify missing-CSRF rejection across every Service Request mutation endpoint, and verify priority administration/search routing. Service Request negative and rollback evidence now includes cross-scope HTTP 404, denied HTTP comment/assignment/status mutations, and MySQL audit/outbox failure rollback tests for create, comment, assignment, status and notification persistence. Broader cross-service deadlock/load stress remains open.
 
 **Assessment:** Mutation authorization is transaction-bound and deterministic revocation races are covered; manual security assessment and broader route-level/rollback evidence remain open.
 
@@ -127,8 +127,8 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 |---|---|---|
 | Python unit suite | Passed | CI run `46119899408`: 182 passed, 56 skipped |
 | MySQL migrations | Passed | CI run `46119899408`: 43 applied; second run idempotent |
-| Service Request MySQL integration | Passed | CI run `46119899408`: 56 passed, including priority lifecycle, advanced search, pagination and request-number collision retry |
-| Authorization negative tests | Partial | All Service Request mutation routes reject missing CSRF; cross-scope and denied-action matrix remains |
+| Service Request MySQL integration | Passed | Baseline run `46119899408` plus regression runs `46122079076`, `46122357121`, `46122892064`, `46123162387`, `46123462065`, `46123807867` and `46123997617`; rollback tests cover create/comment/assignment/status and notification outbox failures |
+| Authorization negative tests | Partial | Missing-CSRF rejection plus cross-scope HTTP 404 and denied comment/assignment/status mutation routes are covered; broader cross-module denial matrix remains |
 | Concurrency/revocation tests | Passed for deterministic shared-scope races | Role-permission, TEAM membership, MANAGED_TEAMS manager mapping and employee-deactivation races are covered; broader load/deadlock stress remains |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
 | WCAG 2.2 AA | Not tested | Automated scan plus manual checklist |
@@ -136,4 +136,21 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 
 ## 8. Release recommendation
 
-The core Section 7.4 workflow is implemented: configurable priorities, advanced search, scope-aware pagination, shared saved-report fields, collision-safe request numbers, pending reasons, comments and in-app notification enqueueing. Service Request write paths use transaction-bound authorization, and deterministic shared-scope revocation races plus mutation-route CSRF tests pass. Do not claim all specialist gates or production readiness: dedicated dashboards/aggregate analytics, manual keyboard/screen-reader and WCAG 2.2 AA verification, denied-action/audit-rollback evidence, production-like load/deadlock testing and deployment validation remain open.
+The core Section 7.4 workflow is implemented: configurable priorities, advanced search, scope-aware pagination, shared saved-report fields, collision-safe request numbers, pending reasons, comments and in-app notification enqueueing. Service Request write paths use transaction-bound authorization; deterministic shared-scope revocation races, mutation-route CSRF checks, cross-scope denials and representative audit/outbox rollback tests pass. Do not claim all specialist gates or production readiness: dedicated dashboards/aggregate analytics, manual keyboard/screen-reader and WCAG 2.2 AA verification, broader cross-service deadlock/load testing, worker monitoring and deployment validation remain open.
+
+
+## 9. Additional MySQL security/transaction regression evidence — 2026-11-28
+
+The following test-only PRs were merged into `feature/itoms-foundation` after their GitHub Actions quality and MySQL jobs passed:
+
+| PR | Regression coverage | CI run | Merge commit |
+|---|---|---|---|
+| [#1](https://github.com/crystal-qazi/itoms/pull/1) | Cross-scope read denial and request-creation audit rollback | [46122079076](https://github.com/crystal-qazi/itoms/actions/runs/46122079076) | `6f87a69bca256e8fad5c78e61da1a4ec7350539b` |
+| [#2](https://github.com/crystal-qazi/itoms/pull/2) | OWN-scope service-layer mutation denial | [46122357121](https://github.com/crystal-qazi/itoms/actions/runs/46122357121) | `3ec323ba8a5aaf9077d8b37f13fe51adcf0229fa` |
+| [#4](https://github.com/crystal-qazi/itoms/pull/4) | Cross-scope HTTP mutation denial | [46122892064](https://github.com/crystal-qazi/itoms/actions/runs/46122892064) | `3e96a62cdf52eb9dcdcad8e0a4cc9d6e716862f0` |
+| [#5](https://github.com/crystal-qazi/itoms/pull/5) | Comment audit-failure rollback | [46123162387](https://github.com/crystal-qazi/itoms/actions/runs/46123162387) | `56c94977f03207541753247d48958cd546cc294a` |
+| [#6](https://github.com/crystal-qazi/itoms/pull/6) | Assignment audit-failure rollback | [46123462065](https://github.com/crystal-qazi/itoms/actions/runs/46123462065) | `e540f3502a4da0e9a46e2c9591cc05338760adc6` |
+| [#8](https://github.com/crystal-qazi/itoms/pull/8) | Status audit-failure rollback | [46123807867](https://github.com/crystal-qazi/itoms/actions/runs/46123807867) | `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0` |
+| [#9](https://github.com/crystal-qazi/itoms/pull/9) | Assignment notification/outbox insert rollback | [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) | `a67fda9cd699c8245eca1d8095d7f7b63ee2992b` |
+
+All listed changes are test-only. PR #7 was closed as superseded after PR #6 changed the same test file; the status test was rebased and merged as PR #8. No production service or authorization logic was changed by these increments.
