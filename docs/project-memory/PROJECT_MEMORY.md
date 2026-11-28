@@ -176,3 +176,11 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - GitHub Actions run [46123162387](https://github.com/crystal-qazi/itoms/actions/runs/46123162387) completed successfully: both `python-quality` and `mysql-migrations` passed, including MySQL 8.4 integration tests.
 - Merged [PR #5](https://github.com/crystal-qazi/itoms/pull/5) into `feature/itoms-foundation` using squash merge. Merge commit: `56c94977f03207541753247d48958cd546cc294a`.
 - Test-only change; no production transaction, service, or authorization logic changed.
+
+
+### 2026-11-28 — Assignment audit-failure rollback regression (PR #6 pending)
+- Added `test_assignment_rolls_back_when_audit_write_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-assignment-audit-rollback`.
+- The test creates a request, installs a temporary MySQL trigger rejecting `SERVICE_REQUEST_ASSIGNED`, calls `assign_request`, and verifies request assignment remains empty, only the original activity remains, no assignment audit event exists, and no notification was queued. Trigger cleanup runs in `finally`.
+- Pull request [#6](https://github.com/crystal-qazi/itoms/pull/6) targets `feature/itoms-foundation`; head commit `def547dad9197d72e3cf503666f2690296270b92`.
+- At memory synchronization time, no PR workflow run was returned for the head commit. CI is therefore **not yet verified**; do not merge until `python-quality` and `mysql-migrations` pass.
+- Test-only change; no production service, authorization or transaction logic changed.
