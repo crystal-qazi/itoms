@@ -73,7 +73,26 @@ def home():
         return redirect(url_for("auth.login"))
     if session.get("must_change_password"):
         return redirect(url_for("auth.change_password_route"))
-    return render_template("dashboard.html", csrf_token_value=session.get("csrf_token", ""), summary=[{"label":"Open incidents","note":"Helpdesk module pending"},{"label":"My tasks","note":"Engineering tasks pending"},{"label":"Pending changes","note":"Change management pending"},{"label":"Service inventory","note":"Inventory module pending"}])
+    from itoms.services.service_requests import get_personal_dashboard_summary
+
+    metrics = get_personal_dashboard_summary(employee_id=g.employee_id)
+    summary = [
+        {"label": "My active requests", "value": metrics["submitted_active"],
+         "note": f'{metrics["submitted_total"]} submitted in total'},
+        {"label": "Active work assigned to me", "value": metrics["assigned_active"],
+         "note": f'{metrics["assigned_on_hold"]} currently on hold'},
+        {"label": "My requests on hold", "value": metrics["submitted_on_hold"],
+         "note": "Submitted by you"},
+        {"label": "Completed by me · 30 days", "value": metrics["assigned_completed_30d"],
+         "note": "Recently completed assigned work"},
+    ]
+    return render_template(
+        "dashboard.html", csrf_token_value=session.get("csrf_token", ""),
+        summary=summary, submitted_on_hold=metrics["submitted_on_hold"],
+        assigned_on_hold=metrics["assigned_on_hold"],
+        assigned_active=metrics["assigned_active"],
+    )
+
 
 @auth_bp.route("/change-password", methods=["GET", "POST"])
 def change_password_route():
