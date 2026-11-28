@@ -65,7 +65,7 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 4. Validate deployment configuration, worker delivery/monitoring, backups/restores and smoke tests in a safe target environment.
 5. Decide whether dedicated Service Request dashboards and aggregate analytics are required in the next module increment; shared saved-report fields already exist.
 6. Reconcile the branch divergence and move the canonical memory policy into the active implementation branch through a reviewed merge/cherry-pick plan. Do not overwrite or merge automatically.
-7. Resolve the migration-count documentation discrepancy: README says 42 numbered migrations while the Service Request validation records 43 applied (including migration 043).
+7. Migration-count discrepancy is resolved: the complete implementation-branch Git tree contains exactly 43 SQL files under `itoms/db/migrations/versions/`, numbered consecutively `001`–`043`. README was corrected through PR [#3](https://github.com/crystal-qazi/itoms/pull/3), merged as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`. The change was documentation-only; no CI workflow was triggered.
 
 ## 6. Honest completion status
 
@@ -94,3 +94,12 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - PR [#2](https://github.com/crystal-qazi/itoms/pull/2) was merged into `feature/itoms-foundation` as squash commit `3ec323ba8a5aaf9077d8b37f13fe51adcf0229fa`.
 - This was test-only work; production code and permission rules were not changed.
 - Remaining gates include HTTP mutation-route denial coverage where useful, broader deadlock/load stress, accessibility review/scanning, operational monitoring, deployment validation, and branch reconciliation.
+
+
+## 9. Migration count documentation correction — 2026-11-28
+
+- Enumerated the complete Git tree of `feature/itoms-foundation`; the tree response was not truncated.
+- Confirmed exactly 43 SQL migration files exist under `itoms/db/migrations/versions/`, with a consecutive numbered range from `001` to `043`.
+- Updated the root README to state: 43 numbered SQL migrations (`001`–`043`).
+- Merged PR [#3](https://github.com/crystal-qazi/itoms/pull/3) into `feature/itoms-foundation` as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`.
+- This was a documentation-only change; no migration SQL or application code changed. No CI workflow was triggered for the docs-only branch.
