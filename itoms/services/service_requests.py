@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 import secrets
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import (
+    ResourceContext, has_permission, has_permission_in_transaction,
+)
 
 
 class ServiceRequestError(ValueError):
@@ -78,19 +80,27 @@ def add_comment(*, actor_employee_id: int, request_id: int, body: str) -> int:
     conn = get_connection()
     cur = conn.cursor()
     try:
-        context = _context(cur, request_id, lock=True)
+        # Read a scope snapshot without taking resource locks. Authorization
+        # locks are acquired first; the request row is locked afterwards and
+        # its requester/team snapshot is revalidated before the write.
+        context = _context(cur, request_id)
         if not context:
             raise ServiceRequestError("Service request was not found.")
-        if not has_permission(actor_employee_id, "service_request.update", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.update", context
+        ):
             raise ServiceRequestError("Not authorized to comment on this service request.")
         cur.execute(
-            "SELECT assigned_employee_id FROM service_requests WHERE request_id=%s",
+            """SELECT requester_employee_id,assigned_team_id,assigned_employee_id
+               FROM service_requests WHERE request_id=%s FOR UPDATE""",
             (request_id,),
         )
         row = cur.fetchone()
         if not row:
             raise ServiceRequestError("Service request was not found.")
-        assigned_employee_id = row[0]
+        if row[0] != context.owner_employee_id or row[1] != context.team_id:
+            raise ServiceRequestError("Service request scope changed; retry the operation.")
+        assigned_employee_id = row[2]
         cur.execute(
             """INSERT INTO service_request_comments
                (request_id,author_employee_id,body) VALUES (%s,%s,%s)""",
