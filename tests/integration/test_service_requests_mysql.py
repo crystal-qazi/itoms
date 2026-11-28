@@ -1308,3 +1308,80 @@ def test_assignment_rolls_back_when_audit_write_fails(service_request_fixture):
         finally:
             cursor.close()
             cleanup.close()
+def test_status_transition_rolls_back_when_audit_write_fails(service_request_fixture):
+    """A failed status audit insert must roll back status, activity and notifications."""
+    import pytest
+
+    from itoms.services.service_requests import create_request, transition_request
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Status audit rollback",
+        description="Verify status, activity and notifications share one transaction.",
+    )
+    trigger_name = f"trg_sr_status_audit_fail_{data['suffix']}"
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"""CREATE TRIGGER `{trigger_name}`
+                BEFORE INSERT ON audit_events
+                FOR EACH ROW
+                BEGIN
+                    IF NEW.event_key = 'SERVICE_REQUEST_STATUS_CHANGED' THEN
+                        SIGNAL SQLSTATE '45000'
+                            SET MESSAGE_TEXT = 'forced Service Request status audit failure';
+                    END IF;
+                END"""
+        )
+    finally:
+        cursor.close()
+        connection.close()
+
+    try:
+        with pytest.raises(Exception, match="forced Service Request status audit failure"):
+            transition_request(
+                actor_employee_id=data["requester_id"],
+                request_id=request_id,
+                new_status="IN_PROGRESS",
+            )
+
+        connection = _db()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT status FROM service_requests WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == "OPEN"
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_activity WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                """SELECT COUNT(*) FROM audit_events
+                   WHERE target_type='service_request' AND target_id=%s
+                     AND event_key='SERVICE_REQUEST_STATUS_CHANGED'""",
+                (str(request_id),),
+            )
+            assert cursor.fetchone()[0] == 0
+            cursor.execute(
+                """SELECT COUNT(*) FROM notifications
+                   WHERE target_type='service_request' AND target_id=%s""",
+                (str(request_id),),
+            )
+            assert cursor.fetchone()[0] == 0
+        finally:
+            cursor.close()
+            connection.close()
+    finally:
+        cleanup = _db()
+        cursor = cleanup.cursor()
+        try:
+            cursor.execute(f"DROP TRIGGER IF EXISTS `{trigger_name}`")
+            cleanup.commit()
+        finally:
+            cursor.close()
+            cleanup.close()
