@@ -87,46 +87,49 @@ def create_employee_account(*, actor_employee_id: int, employee_code: str,
 def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
                 scope_type: str, scope_reference: str | None = None,
                 expires_at=None) -> int:
-    """Assign a role only when the actor has the dedicated administration permission."""
+    """Assign a role after transaction-bound authorization of the target scope."""
+    if (not isinstance(actor_employee_id, int) or isinstance(actor_employee_id, bool)
+            or actor_employee_id <= 0 or not isinstance(employee_id, int)
+            or isinstance(employee_id, bool) or employee_id <= 0
+            or not isinstance(role_id, int) or isinstance(role_id, bool) or role_id <= 0):
+        raise IdentityAdministrationError("Actor, employee and role IDs must be positive integers.")
     if employee_id == actor_employee_id:
         raise IdentityAdministrationError("Self-assignment of roles is not permitted.")
-    if scope_type not in {"OWN","TEAM","MANAGED_TEAMS","DEPARTMENT","RESOURCE"}:
+    if scope_type not in {"OWN", "TEAM", "MANAGED_TEAMS", "DEPARTMENT", "RESOURCE"}:
         raise IdentityAdministrationError("Invalid authorization scope.")
+
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Serialize scope validation with directory membership writers. The shared
-        # parent-first order is employee -> team -> membership -> role.
+        # Read only enough to construct trusted contexts. The transaction-bound
+        # evaluator then locks actor + target employees in sorted order and
+        # serializes actor authorization before any target-scope writes.
         cur.execute(
-            "SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE FOR UPDATE",
+            "SELECT department_id FROM employees WHERE employee_id=%s AND is_active=TRUE",
             (employee_id,),
         )
-        employee = cur.fetchone()
-        if not employee:
+        target = cur.fetchone()
+        if not target:
             raise IdentityAdministrationError("Employee does not exist or is inactive.")
-        employee_department_id = employee[0]
+        employee_department_id = target[0]
         team_id = None
+        managed_teams: list[tuple[int, int | None]] = []
+
         if scope_type == "TEAM":
-            if not scope_reference or not scope_reference.isdigit() or int(scope_reference) <= 0:
+            if not scope_reference or not str(scope_reference).isdigit() or int(scope_reference) <= 0:
                 raise IdentityAdministrationError("TEAM scope requires a valid team ID reference.")
             team_id = int(scope_reference)
             cur.execute(
-                "SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE FOR UPDATE",
+                "SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE",
                 (team_id,),
             )
             team = cur.fetchone()
             if not team:
                 raise IdentityAdministrationError("The team does not exist or is inactive.")
-            cur.execute(
-                """SELECT 1 FROM employee_team_memberships
-                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
-                (employee_id, team_id),
-            )
-            if not cur.fetchone():
-                raise IdentityAdministrationError("The employee must belong to the active team in the assignment scope.")
             if employee_department_id is not None and team[0] != employee_department_id:
                 raise IdentityAdministrationError("The team must belong to the employee department.")
             employee_department_id = team[0]
+            context = ResourceContext(team_id=team_id, department_id=employee_department_id)
         elif scope_type == "DEPARTMENT":
             if employee_department_id is None:
                 raise IdentityAdministrationError("Department scope requires an employee department.")
@@ -134,51 +137,129 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
             if scope_reference not in (None, "", expected):
                 raise IdentityAdministrationError("Department scope must match the employee department.")
             scope_reference = expected
+            context = ResourceContext(department_id=employee_department_id)
         elif scope_type == "OWN":
             if scope_reference not in (None, ""):
                 raise IdentityAdministrationError("OWN scope cannot have a scope reference.")
             scope_reference = None
+            context = ResourceContext(
+                owner_employee_id=employee_id, department_id=employee_department_id
+            )
         elif scope_type == "MANAGED_TEAMS":
             if scope_reference not in (None, ""):
                 raise IdentityAdministrationError("MANAGED_TEAMS scope does not accept a reference.")
             scope_reference = None
-            cur.execute("""SELECT t.team_id,t.department_id
-                FROM team_management_assignments m JOIN teams t ON t.team_id=m.team_id
-                WHERE m.manager_employee_id=%s AND t.is_active=TRUE""", (employee_id,))
-            managed = cur.fetchall()
-            if not managed:
+            cur.execute(
+                """SELECT t.team_id,t.department_id
+                   FROM team_management_assignments m JOIN teams t ON t.team_id=m.team_id
+                   WHERE m.manager_employee_id=%s AND t.is_active=TRUE
+                   ORDER BY t.team_id""",
+                (employee_id,),
+            )
+            managed_teams = [(int(row[0]), row[1]) for row in cur.fetchall()]
+            if not managed_teams:
                 raise IdentityAdministrationError("The employee has no active managed teams.")
-            for managed_team_id, managed_department_id in managed:
-                if not has_permission(actor_employee_id, "identity.roles.assign",
-                    ResourceContext(team_id=managed_team_id, department_id=managed_department_id)):
-                    raise IdentityAdministrationError("Not authorized to assign roles for every managed team.")
-        elif scope_type == "RESOURCE":
+            contexts = [
+                ResourceContext(team_id=managed_team_id, department_id=department_id)
+                for managed_team_id, department_id in managed_teams
+            ]
+            context = None
+        else:  # RESOURCE
             if not scope_reference or ":" not in scope_reference or len(scope_reference) > 255:
                 raise IdentityAdministrationError("RESOURCE scope requires a resource_type:resource_id reference.")
-        context = ResourceContext(
-            owner_employee_id=employee_id if scope_type in {"OWN", "RESOURCE"} else None,
-            team_id=team_id,
-            department_id=employee_department_id,
-            resource_type=scope_reference.split(":", 1)[0] if scope_type == "RESOURCE" else None,
-            resource_id=scope_reference.split(":", 1)[1] if scope_type == "RESOURCE" else None,
-        )
-        if scope_type != "MANAGED_TEAMS" and not has_permission(
-            actor_employee_id, "identity.roles.assign", context
+            resource_type, resource_id = scope_reference.split(":", 1)
+            if not resource_type or not resource_id:
+                raise IdentityAdministrationError("RESOURCE scope reference is invalid.")
+            context = ResourceContext(
+                owner_employee_id=employee_id, department_id=employee_department_id,
+                resource_type=resource_type, resource_id=resource_id,
+            )
+
+        resources = contexts if scope_type == "MANAGED_TEAMS" else [context]
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.roles.assign", resources,
+            lock_employee_ids=[employee_id],
         ):
-            raise IdentityAdministrationError("Not authorized to assign roles within this employee scope.")
-        cur.execute("SELECT 1 FROM application_roles WHERE role_id=%s AND is_active=TRUE FOR UPDATE", (role_id,))
+            raise IdentityAdministrationError(
+                "Not authorized to assign roles within this employee scope."
+            )
+
+        # Employee rows are already locked by the evaluator. Revalidate target
+        # department and scope relationships before writing.
+        cur.execute(
+            "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+            (employee_id,),
+        )
+        locked_target = cur.fetchone()
+        if (not locked_target or not locked_target[1]
+                or locked_target[0] != target[0]):
+            raise IdentityAdministrationError("Employee scope changed; retry role assignment.")
+
+        if scope_type == "TEAM":
+            cur.execute(
+                "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+                (team_id,),
+            )
+            locked_team = cur.fetchone()
+            if (not locked_team or not locked_team[1]
+                    or locked_team[0] != employee_department_id):
+                raise IdentityAdministrationError("The assigned team changed; retry role assignment.")
+            cur.execute(
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
+                (employee_id, team_id),
+            )
+            if not cur.fetchone():
+                raise IdentityAdministrationError(
+                    "The employee must belong to the active team in the assignment scope."
+                )
+        elif scope_type == "MANAGED_TEAMS":
+            for managed_team_id, managed_department_id in managed_teams:
+                cur.execute(
+                    "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+                    (managed_team_id,),
+                )
+                locked_team = cur.fetchone()
+                if (not locked_team or not locked_team[1]
+                        or locked_team[0] != managed_department_id):
+                    raise IdentityAdministrationError("Managed-team scope changed; retry role assignment.")
+                cur.execute(
+                    """SELECT 1 FROM employee_team_memberships
+                       WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
+                    (employee_id, managed_team_id),
+                )
+                if not cur.fetchone():
+                    raise IdentityAdministrationError("The employee must belong to every managed team.")
+                cur.execute(
+                    """SELECT 1 FROM team_management_assignments
+                       WHERE manager_employee_id=%s AND team_id=%s FOR UPDATE""",
+                    (employee_id, managed_team_id),
+                )
+                if not cur.fetchone():
+                    raise IdentityAdministrationError("Managed-team scope changed; retry role assignment.")
+
+        # Role state is read without taking a role lock after authorization
+        # locks (role-permission administration locks roles before assignments).
+        cur.execute(
+            "SELECT 1 FROM application_roles WHERE role_id=%s AND is_active=TRUE",
+            (role_id,),
+        )
         if not cur.fetchone():
             raise IdentityAdministrationError("Role does not exist or is inactive.")
-        cur.execute("""INSERT INTO employee_role_assignments
-            (employee_id,role_id,scope_type,scope_reference,assigned_by,expires_at)
-            VALUES (%s,%s,%s,%s,%s,%s)""",
-            (employee_id,role_id,scope_type,scope_reference,actor_employee_id,expires_at))
+        cur.execute(
+            """INSERT INTO employee_role_assignments
+               (employee_id,role_id,scope_type,scope_reference,assigned_by,expires_at)
+               VALUES (%s,%s,%s,%s,%s,%s)""",
+            (employee_id, role_id, scope_type, scope_reference, actor_employee_id, expires_at),
+        )
         assignment_id = cur.lastrowid
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome,details)
-            VALUES (%s,'IDENTITY_ROLE_ASSIGNED','employee_role_assignment',%s,'SUCCESS',
-            JSON_OBJECT('employee_id',%s,'role_id',%s,'scope_type',%s))""",
-            (actor_employee_id,str(assignment_id),employee_id,role_id,scope_type))
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'IDENTITY_ROLE_ASSIGNED','employee_role_assignment',%s,'SUCCESS',
+                       JSON_OBJECT('employee_id',%s,'role_id',%s,'scope_type',%s))""",
+            (actor_employee_id, str(assignment_id), employee_id, role_id, scope_type),
+        )
         conn.commit()
         return int(assignment_id)
     except Exception:
@@ -189,16 +270,18 @@ def assign_role(*, actor_employee_id: int, employee_id: int, role_id: int,
         conn.close()
 
 
-
 def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> bool:
-    """Deactivate one scoped role assignment and audit the revocation."""
+    """Revoke one role assignment using transaction-bound scope authorization."""
     if (not isinstance(actor_employee_id, int) or isinstance(actor_employee_id, bool)
             or actor_employee_id <= 0 or not isinstance(assignment_id, int)
             or isinstance(assignment_id, bool) or assignment_id <= 0):
         raise IdentityAdministrationError("Actor and assignment IDs must be positive integers.")
+
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Snapshot only; the assignment is re-read under lock after the
+        # transaction-bound actor/target/scope authorization sequence.
         cur.execute(
             """SELECT employee_id,role_id,scope_type,scope_reference,is_active
                FROM employee_role_assignments WHERE assignment_id=%s""",
@@ -209,8 +292,13 @@ def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> boo
             conn.commit()
             return False
         target_employee_id, role_id, scope_type, scope_reference, is_active = assignment
-        if int(target_employee_id) == actor_employee_id:
+        target_employee_id = int(target_employee_id)
+        if target_employee_id == actor_employee_id:
             raise IdentityAdministrationError("Self-revocation of roles is not permitted.")
+        if not is_active:
+            conn.commit()
+            return False
+
         cur.execute(
             "SELECT department_id FROM employees WHERE employee_id=%s",
             (target_employee_id,),
@@ -219,20 +307,21 @@ def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> boo
         if not target:
             raise IdentityAdministrationError("Assigned employee no longer exists.")
         target_department_id = target[0]
+        managed_teams: list[tuple[int, int | None]] = []
+        team_id = None
 
-        managed_team_ids = []
         if scope_type == "TEAM":
             if not scope_reference or not str(scope_reference).isdigit():
                 raise IdentityAdministrationError("Stored TEAM scope reference is invalid.")
             team_id = int(scope_reference)
             cur.execute(
-                "SELECT department_id FROM teams WHERE team_id=%s AND is_active=TRUE",
+                "SELECT department_id FROM teams WHERE team_id=%s",
                 (team_id,),
             )
             team = cur.fetchone()
             if not team:
-                raise IdentityAdministrationError("The assigned team is no longer active.")
-            context = ResourceContext(team_id=team_id, department_id=team[0])
+                raise IdentityAdministrationError("The assigned team no longer exists.")
+            resources = [ResourceContext(team_id=team_id, department_id=team[0])]
         elif scope_type == "MANAGED_TEAMS":
             cur.execute(
                 """SELECT t.team_id,t.department_id FROM team_management_assignments m
@@ -241,71 +330,55 @@ def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> boo
                    ORDER BY t.team_id""",
                 (target_employee_id,),
             )
-            managed_team_rows = cur.fetchall()
-            managed_team_ids = [(int(row[0]), row[1]) for row in managed_team_rows]
-            context = None
+            managed_teams = [(int(row[0]), row[1]) for row in cur.fetchall()]
+            if managed_teams:
+                resources = [
+                    ResourceContext(team_id=managed_team_id, department_id=department_id)
+                    for managed_team_id, department_id in managed_teams
+                ]
+            else:
+                resources = [ResourceContext(department_id=target_department_id)]
         elif scope_type == "DEPARTMENT":
             if not scope_reference or not str(scope_reference).isdigit():
                 raise IdentityAdministrationError("Stored DEPARTMENT scope reference is invalid.")
-            context = ResourceContext(department_id=int(scope_reference))
+            resources = [ResourceContext(department_id=int(scope_reference))]
         elif scope_type == "OWN":
-            context = ResourceContext(
-                owner_employee_id=int(target_employee_id),
-                department_id=target_department_id,
-            )
+            resources = [ResourceContext(
+                owner_employee_id=target_employee_id, department_id=target_department_id
+            )]
         elif scope_type == "RESOURCE":
             if not scope_reference or ":" not in scope_reference:
                 raise IdentityAdministrationError("Stored RESOURCE scope reference is invalid.")
             resource_type, resource_id = scope_reference.split(":", 1)
-            context = ResourceContext(
-                owner_employee_id=int(target_employee_id),
-                department_id=target_department_id,
-                resource_type=resource_type,
-                resource_id=resource_id,
-            )
+            resources = [ResourceContext(
+                owner_employee_id=target_employee_id, department_id=target_department_id,
+                resource_type=resource_type, resource_id=resource_id,
+            )]
         else:
             raise IdentityAdministrationError("Stored authorization scope is invalid.")
 
-        if scope_type == "MANAGED_TEAMS":
-            if managed_team_ids:
-                authorized = all(
-                    has_permission(
-                        actor_employee_id, "identity.roles.assign",
-                        ResourceContext(team_id=team_id, department_id=department_id),
-                    )
-                    for team_id, department_id in managed_team_ids
-                )
-            else:
-                authorized = target_department_id is not None and has_permission(
-                    actor_employee_id, "identity.roles.assign",
-                    ResourceContext(department_id=target_department_id),
-                )
-        else:
-            authorized = has_permission(
-                actor_employee_id, "identity.roles.assign", context
-            )
-        if not authorized:
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.roles.assign", resources,
+            lock_employee_ids=[target_employee_id],
+        ):
             raise IdentityAdministrationError("Not authorized to revoke this role assignment.")
 
-        # Keep the same parent-first ordering as assign_role and directory writers.
         cur.execute(
-            "SELECT department_id FROM employees WHERE employee_id=%s FOR UPDATE",
+            "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
             (target_employee_id,),
         )
-        locked_employee = cur.fetchone()
-        if not locked_employee:
-            raise IdentityAdministrationError("Assigned employee no longer exists.")
-        if locked_employee[0] != target_department_id:
-            raise IdentityAdministrationError("Employee department changed; retry the revocation.")
-        if scope_type == "DEPARTMENT" and str(locked_employee[0]) != str(scope_reference):
-            raise IdentityAdministrationError("Department scope changed; retry the revocation.")
+        locked_target = cur.fetchone()
+        if not locked_target or locked_target[0] != target_department_id:
+            raise IdentityAdministrationError("Employee scope changed; retry the revocation.")
+
         if scope_type == "TEAM":
             cur.execute(
-                "SELECT team_id,department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+                "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
                 (team_id,),
             )
             locked_team = cur.fetchone()
-            if not locked_team or not locked_team[2] or locked_team[1] != team[0]:
+            if (not locked_team or not locked_team[1]
+                    or locked_team[0] != resources[0].department_id):
                 raise IdentityAdministrationError("The assigned team changed; retry the revocation.")
             cur.execute(
                 """SELECT 1 FROM employee_team_memberships
@@ -315,15 +388,14 @@ def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> boo
             if not cur.fetchone():
                 raise IdentityAdministrationError("The employee's team membership no longer exists.")
         elif scope_type == "MANAGED_TEAMS":
-            for managed_team_id, _department_id in managed_team_ids:
+            for managed_team_id, managed_department_id in managed_teams:
                 cur.execute(
-                    """SELECT team_id,department_id,is_active FROM teams
-                       WHERE team_id=%s FOR UPDATE""",
+                    "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
                     (managed_team_id,),
                 )
                 locked_team = cur.fetchone()
-                if (not locked_team or not locked_team[2]
-                        or locked_team[1] != _department_id):
+                if (not locked_team or not locked_team[1]
+                        or locked_team[0] != managed_department_id):
                     raise IdentityAdministrationError("Managed-team scope changed; retry the revocation.")
                 cur.execute(
                     """SELECT 1 FROM employee_team_memberships
@@ -339,20 +411,28 @@ def revoke_role_assignment(*, actor_employee_id: int, assignment_id: int) -> boo
                 )
                 if not cur.fetchone():
                     raise IdentityAdministrationError("Managed-team scope changed; retry the revocation.")
+
+        # Lock/revalidate the exact assignment only after the actor's
+        # authorization locks; role state is a non-locking read to avoid a
+        # role -> employee/assignment lock inversion.
         cur.execute(
-            "SELECT role_id FROM application_roles WHERE role_id=%s FOR UPDATE",
+            """SELECT employee_id,role_id,scope_type,scope_reference,is_active
+               FROM employee_role_assignments WHERE assignment_id=%s FOR UPDATE""",
+            (assignment_id,),
+        )
+        current = cur.fetchone()
+        if not current or not current[4]:
+            conn.commit()
+            return False
+        if (int(current[0]) != target_employee_id or int(current[1]) != int(role_id)
+                or current[2] != scope_type or current[3] != scope_reference):
+            raise IdentityAdministrationError("Role assignment changed; retry the revocation.")
+        cur.execute(
+            "SELECT 1 FROM application_roles WHERE role_id=%s",
             (role_id,),
         )
         if not cur.fetchone():
             raise IdentityAdministrationError("Assigned role no longer exists.")
-        cur.execute(
-            "SELECT is_active FROM employee_role_assignments WHERE assignment_id=%s FOR UPDATE",
-            (assignment_id,),
-        )
-        current = cur.fetchone()
-        if not current or not current[0]:
-            conn.commit()
-            return False
         cur.execute(
             "UPDATE employee_role_assignments SET is_active=FALSE WHERE assignment_id=%s",
             (assignment_id,),
