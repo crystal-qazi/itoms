@@ -68,6 +68,14 @@ def role_assignment_fixture():
                 "INSERT INTO team_management_assignments (manager_employee_id,team_id,assigned_by) VALUES (%s,%s,%s)",
                 (target_employee_id, team_id, assigner_id),
             )
+        cursor.execute(
+            "INSERT INTO employee_team_memberships (employee_id,team_id,is_primary) VALUES (%s,%s,TRUE)",
+            (managed_only_id, team_ids[0]),
+        )
+        cursor.execute(
+            "INSERT INTO team_management_assignments (manager_employee_id,team_id,assigned_by) VALUES (%s,%s,%s)",
+            (managed_only_id, team_ids[0], assigner_id),
+        )
 
         role_ids = []
         for label in ("assigner", "revoker", "target"):
