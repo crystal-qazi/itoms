@@ -50,6 +50,56 @@ def _queue_request_notification(
     )
 
 
+def get_personal_dashboard_summary(*, employee_id: int) -> dict:
+    """Return aggregate Service Request counts limited to the signed-in employee.
+
+    This deliberately counts only requests the employee submitted or to which
+    they are assigned. It does not infer or expand team/department permissions.
+    """
+    if type(employee_id) is not int or employee_id <= 0:
+        raise ServiceRequestError("A valid employee identity is required.")
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """SELECT
+                   COALESCE(SUM(CASE WHEN requester_employee_id=%s THEN 1 ELSE 0 END),0)
+                       AS submitted_total,
+                   COALESCE(SUM(CASE WHEN requester_employee_id=%s
+                       AND status IN ('OPEN','IN_PROGRESS','ON_HOLD') THEN 1 ELSE 0 END),0)
+                       AS submitted_active,
+                   COALESCE(SUM(CASE WHEN requester_employee_id=%s
+                       AND status='ON_HOLD' THEN 1 ELSE 0 END),0)
+                       AS submitted_on_hold,
+                   COALESCE(SUM(CASE WHEN assigned_employee_id=%s
+                       AND status IN ('OPEN','IN_PROGRESS','ON_HOLD') THEN 1 ELSE 0 END),0)
+                       AS assigned_active,
+                   COALESCE(SUM(CASE WHEN assigned_employee_id=%s
+                       AND status='ON_HOLD' THEN 1 ELSE 0 END),0)
+                       AS assigned_on_hold,
+                   COALESCE(SUM(CASE WHEN assigned_employee_id=%s
+                       AND status='COMPLETED'
+                       AND completed_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)
+                       THEN 1 ELSE 0 END),0) AS assigned_completed_30d
+               FROM service_requests
+               WHERE requester_employee_id=%s OR assigned_employee_id=%s""",
+            (employee_id, employee_id, employee_id, employee_id,
+             employee_id, employee_id, employee_id, employee_id),
+        )
+        row = cur.fetchone() or {}
+        return {
+            key: int(row.get(key) or 0)
+            for key in (
+                "submitted_total", "submitted_active", "submitted_on_hold",
+                "assigned_active", "assigned_on_hold", "assigned_completed_30d",
+            )
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 def list_comments(*, actor_employee_id: int, request_id: int) -> list[dict]:
     """List comments only after verifying the actor can read the request."""
     conn = get_connection()
