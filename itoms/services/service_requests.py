@@ -1,7 +1,7 @@
 """Basic service request workflow with scoped access and audited history."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import secrets
 
 from itoms.db.connection import get_connection
@@ -490,14 +490,40 @@ def create_request(
 
 def list_requests(
     *, actor_employee_id: int, status: str | None = None, priority: str | None = None,
+    search: str | None = None, category_id: int | None = None,
+    created_from: str | date | None = None, created_to: str | date | None = None,
     limit: int = 100,
 ) -> list[dict]:
-    """Return only requests readable by the actor; apply scope before the result limit."""
+    """Return scoped requests with bounded keyword, category and date filters."""
     limit = max(1, min(int(limit), 200))
     if status and status not in TRANSITIONS:
         raise ServiceRequestError("Invalid service request status filter.")
     if priority and (len(priority) > 30 or not priority.isascii()):
         raise ServiceRequestError("Invalid service request priority filter.")
+    search_text = (search or "").strip()
+    if len(search_text) > 120:
+        raise ServiceRequestError("Service Request search text must be at most 120 characters.")
+    if category_id is not None and (type(category_id) is not int or category_id <= 0):
+        raise ServiceRequestError("Invalid Service Request category filter.")
+
+    def parse_date(value: str | date | None, label: str) -> date | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        try:
+            return date.fromisoformat(str(value))
+        except ValueError as exc:
+            raise ServiceRequestError(f"Invalid {label} date filter.") from exc
+
+    start_date = parse_date(created_from, "start")
+    end_date = parse_date(created_to, "end")
+    if start_date and end_date and start_date > end_date:
+        raise ServiceRequestError("Start date must not be later than end date.")
+
+    search_pattern = f"%{search_text}%" if search_text else None
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     visible: list[dict] = []
@@ -513,16 +539,32 @@ def list_requests(
         while len(visible) < limit:
             cur.execute(
                 """SELECT r.request_id,r.request_number,r.title,r.priority,r.status,
-                          r.requester_employee_id,r.assigned_team_id,r.created_at,
+                          r.requester_employee_id,e.full_name AS requester_name,
+                          r.assigned_team_id,t.team_name,r.assigned_employee_id,
+                          a.full_name AS assignee_name,c.category_id,c.category_name,
+                          r.created_at,
                           COALESCE(t.department_id,e.department_id) AS department_id
                    FROM service_requests r
                    JOIN employees e ON e.employee_id=r.requester_employee_id
                    LEFT JOIN teams t ON t.team_id=r.assigned_team_id
+                   LEFT JOIN employees a ON a.employee_id=r.assigned_employee_id
+                   LEFT JOIN service_request_categories c ON c.category_id=r.category_id
                    WHERE (%s IS NULL OR r.status=%s)
                      AND (%s IS NULL OR r.priority=%s)
+                     AND (%s IS NULL OR r.category_id=%s)
+                     AND (%s IS NULL OR r.created_at >= %s)
+                     AND (%s IS NULL OR r.created_at < DATE_ADD(%s, INTERVAL 1 DAY))
+                     AND (%s IS NULL OR r.request_number LIKE %s
+                          OR r.title LIKE %s OR r.description LIKE %s)
                    ORDER BY r.created_at DESC,r.request_id DESC
                    LIMIT 200 OFFSET %s""",
-                (status, status, priority, priority, offset),
+                (
+                    status, status, priority, priority,
+                    category_id, category_id,
+                    start_date, start_date, end_date, end_date,
+                    search_pattern, search_pattern, search_pattern, search_pattern,
+                    offset,
+                ),
             )
             batch = cur.fetchall()
             for row in batch:
