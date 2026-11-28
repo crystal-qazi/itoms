@@ -1,47 +1,41 @@
 # Representative Vertical Slice — IT Service Request Management
 
-**Status:** Selected for skill validation; implementation not started.  
+**Status:** Design complete; implementation blocked pending application foundation.  
 **Authority:** Master Requirements & System Blueprint v1.0, Section 7.4.
 
 ## Why this slice
-IT Service Request Management is a bounded operational module that exercises the core engineering skills without requiring an unapproved architecture or an overly broad first build. The Blueprint defines a basic request lifecycle, dynamic categories, automatic unique IDs, team/employee assignment, configurable priorities, status tracking, pending reasons, comments, basic notifications, search and reporting. It explicitly excludes an advanced service catalog and custom approval workflows.
+IT Service Request Management is a bounded operational module that exercises the core engineering skills without requiring unapproved architecture. The Blueprint defines a basic request lifecycle, dynamic categories, unique IDs, team/employee assignment, configurable priorities, status tracking, pending reasons, comments, basic notifications, search and reporting. Advanced service catalog and custom approval workflows are excluded.
 
 ## Validation scope
-The first validation increment will cover:
-1. Create and view a service request.
-2. Generate a unique request identifier.
-3. Validate required request data on the server.
-4. Apply configured category, priority and status values.
-5. Assign a request to a team and responsible employee where the approved employee/team model permits it.
-6. Change status and require a pending reason when entering a pending state.
-7. Add comments and preserve their author/time relationship.
-8. Enforce server-side authorization on list, detail, create, update, assignment and comment actions.
-9. Provide a Bootstrap/Jinja2 interface with loading, empty, validation, success, error and access-denied states.
-10. Provide a documented API contract and focused search/list behavior.
+1. Create and view service requests with a unique immutable request key.
+2. Server-side validation and configured category/priority/status values.
+3. Assign team and responsible employee through canonical organization services.
+4. Enforce configured status transitions; require a reason when entering pending.
+5. Preserve comments and status history with server-derived author and timestamp.
+6. Enforce server-side authorization on list, detail, create, update, assignment, status and comment actions.
+7. Provide responsive accessible Bootstrap/Jinja2 UI states.
+8. Provide documented API contract and bounded server-side search/list behavior.
 
-Basic notifications, reporting, and advanced search filters may be represented by explicit extension points or follow-up acceptance criteria if they would make the first vertical slice unreasonably broad. They must not be falsely reported as implemented.
+## Completed design artefacts
+- [Service Request design pack](service-requests-design-pack.md): requirement traceability, workflow, permission matrix, domain model, integration boundaries, STRIDE threat model, UX specification and implementation sequence.
+- [MySQL schema proposal](../database/proposals/001_service_requests.sql): module-owned tables, constraints and indexes. Not applied.
+- [OpenAPI contract](../api/openapi/service-requests.yaml): list/create/detail/update/assignment/status/comments operations.
+- [Acceptance and security test plan](service-requests-test-plan.md): 30 test cases, including negative authorization, IDOR, CSRF, injection, XSS, concurrency, accessibility and migration.
 
-## Out of scope for this validation increment
-- Advanced service catalog.
-- Custom approval workflows.
-- SLA automation beyond existing shared-service integration contracts.
-- New roles, organizational rules or permission semantics not established in the Blueprint.
-- New frontend framework, ORM, Docker, microservices or public-facing deployment.
-- AI features or integrations not in current scope.
-
-## Required design artefacts before implementation
-- Request workflow/state transition table, using only Blueprint-defined statuses or approved configurable-status behavior.
-- Permission matrix for each action and resource scope, mapped to the shared authorization model.
-- Data model and native MySQL migration plan, including uniqueness, foreign keys, indexes and transaction boundaries.
-- API contract: endpoints, request/response schemas, errors, authentication and authorization.
-- STRIDE threat model and negative authorization test matrix.
-- UX component/page specification for desktop, tablet and mobile, both Light and Dark themes.
-- Test plan mapped to each acceptance criterion.
+## Out of scope
+- Advanced service catalog and custom approval workflows.
+- SLA automation beyond shared-service integration contracts.
+- Invented roles, organization rules, employee/team schema or permission semantics.
+- New frontend framework, ORM, Docker, microservices or public deployment.
+- AI features.
 
 ## Skill acceptance gates
-- **Full-Stack:** architecture, native MySQL, API/frontend integration, unit/integration/API tests, documentation and deployment-readiness review.
-- **Security:** deny-by-default access, object/team-scope checks, CSRF, validation, SQL parameterization, audit behavior, safe errors and negative tests.
-- **UI/UX:** English UI, Bootstrap/Jinja2, responsive layout, keyboard/focus, WCAG 2.2 AA checks, accessible forms/tables/statuses and theme behavior.
+- **Full-Stack:** integrate with the actual Flask app, native MySQL, API/frontend, tests, docs and deployment practices.
+- **Security:** deny-by-default capabilities, object/team scope, CSRF, validation, parameterized SQL, audit and negative tests.
+- **UI/UX:** English UI, Bootstrap/Jinja2, responsive behavior, keyboard/focus, WCAG 2.2 AA and retained Light/Dark preference.
+
+## Current implementation blocker
+The inspected repository branch currently contains the Blueprint, documentation and skill packages but no Flask application source, migration framework, MySQL config, auth/RBAC service, audit service, or canonical employee/team schema. These shared contracts must be inspected before integration. The design avoids inventing duplicate identity and authorization models. The schema is a proposal and no application implementation or tests are claimed.
 
 ## Evidence and release decision
-For each gate, record Passed, Failed, Not Tested, Not Applicable or Blocked with command/output or reproducible manual steps. No test, scan, accessibility review or deployment check is passed until actually run. The slice is a skills-validation exercise, not a declaration that the full Service Request module is complete.
+All test cases are currently **Not Run**. After the application foundation is present, execute the test plan and record Passed/Failed/Not Tested/Not Applicable/Blocked with command output or reproducible manual steps. This slice is a skill-validation exercise, not a claim that the full Service Request module is production complete.
