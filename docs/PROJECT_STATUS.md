@@ -9,12 +9,12 @@ Production branch: `main` (not modified)
 
 - Flask modular monolith, MySQL migration runner, CLI, health route, configuration and structured logging.
 - Local authentication, password lifecycle, session revocation/idle expiry, CSRF, TOTP MFA, recovery codes and first-Administrator bootstrap.
-- Dynamic role/permission authorization with OWN, TEAM, MANAGED_TEAMS, DEPARTMENT and RESOURCE scope support; identity and directory administration. Directory membership/manager writes, team create/activation, employee deactivation and employee/account creation now authorize in the same transaction as their mutations.
+- Dynamic role/permission authorization with OWN, TEAM, MANAGED_TEAMS, DEPARTMENT and RESOURCE scope support; identity and directory administration. Directory membership/manager writes, team create/activation, employee deactivation, employee/account creation and role assignment/revocation now authorize in the same transaction as their mutations.
 - Approval workflow, Change Management and Release Management with SQA release gates.
-- Helpdesk Incident Management, public/internal comments, Grafana webhook ingestion and 24x7 read-time SLA indicators.
+- Helpdesk Incident Management, public/internal comments, Grafana webhook ingestion and 24x7 read-time SLA indicators. Incident create, assignment, status and comment mutations use transaction-bound authorization.
 - Service Requests lifecycle, dynamic categories, team/employee assignment, pending reasons, comments, audit history and transactional in-app notification enqueueing; create/assign/status/category/comment mutations use transaction-bound permission authorization.
-- Service and Software Inventory.
-- Engineering Task Management.
+- Service and Software Inventory; service registration and lifecycle mutations use transaction-bound authorization.
+- Engineering Task Management; task creation and status transitions use transaction-bound authorization.
 - SQA plans, cases, executions, defects and release signoffs.
 - Project Management and milestones.
 - Asset register and basic repair tickets; repair completion restores the asset's prior IN_USE/IN_STOCK state.
@@ -43,7 +43,7 @@ Production branch: `main` (not modified)
 - KBS integration/redesign.
 - Business-hour calendars and pause conditions for SLA.
 - Recurring-incident detection and richer Problem Management analytics.
-- Full transaction-bound authorization consistency across all mutation services; the existing design audit identifies remaining TOCTOU and lock-order work.
+- Full transaction-bound authorization consistency across all mutation services; Service Request, identity/directory, Incident, Service Inventory and Engineering Task mutation slices are migrated, while Change, Release, SQA, Operations/Oracle Inventory, Problem, Project, Asset, Document and other service families remain open. The design audit also tracks outstanding race tests and MySQL lock/isolation/query-plan evidence.
 - Full security assessment, accessibility audit, browser-based end-to-end QA, production configuration validation, deployment rehearsal and restore drill.
 - AI/RAG is intentionally deferred from the initial release.
 
@@ -55,4 +55,4 @@ Production branch: `main` (not modified)
 
 ## Release status
 
-The feature branch has automated Python and MySQL 8.4 CI. The latest verified implementation run (commit `2824abf`) reported 166 Python tests passed (43 skipped), 43 MySQL 8.4 integration tests passed, and 42 migrations applied with an idempotent second run. This run includes the Service Request pending-reason/comment/notification changes and test-fixture cleanup. This is not a production-readiness certification: required external configuration, remaining engineering scope and deployment verification must be completed before production use.
+The feature branch has automated Python and MySQL 8.4 CI. Latest verified run: [46114721760](https://github.com/crystal-qazi/itoms/actions/runs/46114721760), commit `85647e36f25a7d4c93b8532b83b12a8f4ad30b48`: 166 Python tests passed, 45 skipped, 45 MySQL 8.4 integration tests passed, and all 42 migrations applied with an idempotent second run. This run includes transaction-bound authorization for role assignment/revocation, Incident mutations, Service Inventory mutations and Engineering Task mutations, in addition to the previously verified Service Request and directory/identity slices. This is not a production-readiness certification: remaining service-family authorization work, outstanding race/query-plan evidence, required external configuration and deployment verification must be completed before production use.
