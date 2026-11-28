@@ -4,6 +4,38 @@ import pytest
 from itoms.services import change_management
 
 
+class Cursor:
+    def __init__(self, rows):
+        self.rows = iter(rows)
+
+    def execute(self, *_args, **_kwargs):
+        pass
+
+    def fetchone(self):
+        return next(self.rows)
+
+    def close(self):
+        pass
+
+
+class Connection:
+    def __init__(self, rows):
+        self.cur = Cursor(rows)
+        self.rolled_back = False
+
+    def cursor(self):
+        return self.cur
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        pass
+
+
 def test_change_submission_requires_at_least_one_approver(monkeypatch):
     monkeypatch.setattr(change_management, "has_permission", lambda *_: True)
     monkeypatch.setattr(change_management, "get_connection", lambda: pytest.fail("database must not be opened"))
@@ -34,8 +66,12 @@ def test_change_submission_requires_approval_creation_permission(monkeypatch):
     def permission(_actor, key, *_context):
         return key != "approvals.create"
 
-    monkeypatch.setattr(change_management, "has_permission", permission)
-    monkeypatch.setattr(change_management, "get_connection", lambda: pytest.fail("database must not be opened"))
+    connection = Connection([(25, 10, None, "DRAFT", 1, None)])
+    monkeypatch.setattr(change_management, "get_connection", lambda: connection)
+    monkeypatch.setattr(
+        change_management, "has_permission_in_transaction",
+        lambda cur, actor, key, resource=None, **kwargs: key != "approvals.create",
+    )
 
     with pytest.raises(change_management.ChangeError, match="not authorized to submit"):
         change_management.transition_change(
