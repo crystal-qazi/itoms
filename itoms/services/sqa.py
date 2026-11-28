@@ -287,51 +287,92 @@ def complete_test_plan(*, actor_employee_id: int, plan_id: int):
 
 
 def record_release_signoff(*, actor_employee_id: int, release_key: str, decision: str, comments: str):
-    release_key=release_key.strip().upper(); decision=decision.strip().upper()
+    release_key = release_key.strip().upper()
+    decision = decision.strip().upper()
     if decision not in SIGNOFF_DECISIONS or not release_key:
         raise SQAError("A release and valid sign-off decision are required.")
-    conn=get_connection(); cur=conn.cursor(dictionary=True)
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
     try:
-        # Lock release first, matching the release lifecycle's locking order.
-        cur.execute("""SELECT r.release_id,r.created_by,r.status,e.department_id,s.owner_team_id
-            FROM software_releases r JOIN employees e ON e.employee_id=r.created_by
-            LEFT JOIN service_records s ON s.service_id=r.service_id
-            WHERE r.release_key=%s FOR UPDATE""",(release_key,))
-        release=cur.fetchone()
+        # Snapshot only. Authorization locks are acquired before the release row.
+        cur.execute(
+            """SELECT r.release_id,r.created_by,r.status,e.department_id,
+                      s.owner_team_id,st.department_id AS service_department_id
+               FROM software_releases r
+               JOIN employees e ON e.employee_id=r.created_by
+               LEFT JOIN service_records s ON s.service_id=r.service_id
+               LEFT JOIN teams st ON st.team_id=s.owner_team_id
+               WHERE r.release_key=%s""",
+            (release_key,),
+        )
+        release = cur.fetchone()
         if not release:
             raise SQAError("Release record not found.")
-        cur.execute("SELECT is_active FROM employees WHERE employee_id=%s",(actor_employee_id,))
-        actor=cur.fetchone()
-        if not actor or not actor["is_active"]:
-            raise SQAError("An active employee account is required for SQA sign-off.")
-        if release["status"] not in {"IN_TEST", "READY", "APPROVED"}:
-            raise SQAError("SQA sign-off is closed for this release lifecycle stage.")
-        release_context=ResourceContext(owner_employee_id=release["created_by"],
-            team_id=release["owner_team_id"],department_id=release["department_id"],
-            resource_type="release",resource_id=str(release["release_id"]))
-        if not has_permission(actor_employee_id,"release.read",release_context):
+        release_team_id = (
+            release["owner_team_id"]
+            if release["service_department_id"] == release["department_id"]
+            else None
+        )
+        release_context = ResourceContext(
+            owner_employee_id=release["created_by"],
+            team_id=release_team_id,
+            department_id=release["department_id"],
+            resource_type="release",
+            resource_id=str(release["release_id"]),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "release.read", release_context,
+            lock_employee_ids=[release["created_by"]],
+        ):
             raise SQAError("Not authorized to sign off this release.")
-        if not has_permission(actor_employee_id,"sqa.signoff.create",release_context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "sqa.signoff.create", release_context,
+            lock_employee_ids=[release["created_by"]],
+        ):
             raise SQAError("Not authorized to record SQA sign-off for this release.")
-        if decision=="APPROVED":
-            cur.execute("SELECT test_plan_id FROM sqa_test_plans WHERE release_key=%s AND status='COMPLETED'",(release_key,))
-            plans=cur.fetchall()
+
+        cur.execute(
+            "SELECT release_id,created_by,status FROM software_releases WHERE release_id=%s FOR UPDATE",
+            (release["release_id"],),
+        )
+        locked_release = cur.fetchone()
+        if (not locked_release
+                or locked_release["created_by"] != release["created_by"]
+                or locked_release["status"] != release["status"]):
+            raise SQAError("Release changed; reload and try again.")
+        if locked_release["status"] not in {"IN_TEST", "READY", "APPROVED"}:
+            raise SQAError("SQA sign-off is closed for this release lifecycle stage.")
+
+        if decision == "APPROVED":
+            cur.execute(
+                """SELECT test_plan_id FROM sqa_test_plans
+                   WHERE release_key=%s AND status='COMPLETED'""",
+                (release_key,),
+            )
+            plans = cur.fetchall()
             if not plans:
                 raise SQAError("Complete at least one linked SQA test plan before approval.")
             for plan in plans:
-                _assert_plan_ready(cur,plan["test_plan_id"])
-        cur.execute("""INSERT INTO sqa_release_signoffs (release_key,signed_by,decision,comments)
-            VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE decision=VALUES(decision),
-            comments=VALUES(comments),signed_at=UTC_TIMESTAMP()""",
-            (release_key,actor_employee_id,decision,comments.strip() or None))
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome)
-            VALUES (%s,'SQA_RELEASE_SIGNOFF','release',%s,'SUCCESS')""",(actor_employee_id,release_key))
+                _assert_plan_ready(cur, plan["test_plan_id"])
+        cur.execute(
+            """INSERT INTO sqa_release_signoffs (release_key,signed_by,decision,comments)
+               VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE decision=VALUES(decision),
+               comments=VALUES(comments),signed_at=UTC_TIMESTAMP()""",
+            (release_key, actor_employee_id, decision, comments.strip() or None),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'SQA_RELEASE_SIGNOFF','release',%s,'SUCCESS')""",
+            (actor_employee_id, release_key),
+        )
         conn.commit()
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
 def list_sqa_release_signoffs(*, actor_employee_id: int, release_key: str):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
