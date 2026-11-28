@@ -1,6 +1,7 @@
 """Server-side permission and data-scope evaluation."""
 from __future__ import annotations
 from dataclasses import dataclass
+from collections.abc import Mapping
 from itoms.db.connection import get_connection
 
 @dataclass(frozen=True)
@@ -87,6 +88,9 @@ def has_permissions_in_transaction(
             or employee_id <= 0 or not permission_key or not resources):
         return False
 
+    def row_value(row, key: str, index: int):
+        return row[key] if isinstance(row, Mapping) else row[index]
+
     employee_ids = sorted({
         employee_id,
         *(int(value) for value in (lock_employee_ids or [])),
@@ -101,12 +105,13 @@ def has_permissions_in_transaction(
         tuple(employee_ids),
     )
     locked_employees = {
-        int(row[0]): row for row in cur.fetchall()
+        int(row_value(row, "employee_id", 0)): row for row in cur.fetchall()
     }
     actor = locked_employees.get(employee_id)
-    if not actor or not actor[2] or len(locked_employees) != len(employee_ids):
+    if (not actor or not row_value(actor, "is_active", 2)
+            or len(locked_employees) != len(employee_ids)):
         return False
-    actor_department_id = actor[1]
+    actor_department_id = row_value(actor, "department_id", 1)
 
     # Lock all team scopes in a single deterministic order. This matters for
     # mutations such as assignment that authorize both the existing request
@@ -125,7 +130,7 @@ def has_permissions_in_transaction(
             (team_id,),
         )
         team = cur.fetchone()
-        if team and team[0]:
+        if team and row_value(team, "is_active", 0):
             active_team_ids.add(team_id)
             cur.execute(
                 """SELECT 1 FROM employee_team_memberships
@@ -148,7 +153,9 @@ def has_permissions_in_transaction(
              AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())""",
         (employee_id,),
     )
-    candidate_role_ids = sorted({int(row[0]) for row in cur.fetchall()})
+    candidate_role_ids = sorted({
+        int(row_value(row, "role_id", 0)) for row in cur.fetchall()
+    })
     active_role_ids: set[int] = set()
     for role_id in candidate_role_ids:
         cur.execute(
@@ -156,7 +163,7 @@ def has_permissions_in_transaction(
             (role_id,),
         )
         role = cur.fetchone()
-        if role and role[0]:
+        if role and row_value(role, "is_active", 0):
             active_role_ids.add(role_id)
 
     cur.execute(
@@ -168,7 +175,9 @@ def has_permissions_in_transaction(
         (employee_id,),
     )
     assignments = cur.fetchall()
-    locked_role_ids = {int(row[1]) for row in assignments}
+    locked_role_ids = {
+        int(row_value(row, "role_id", 1)) for row in assignments
+    }
     if locked_role_ids != set(candidate_role_ids):
         return False
 
@@ -179,7 +188,7 @@ def has_permissions_in_transaction(
     permission = cur.fetchone()
     if not permission:
         return False
-    permission_id = int(permission[0])
+    permission_id = int(row_value(permission, "permission_id", 0))
 
     granted_role_ids: set[int] = set()
     for role_id in sorted(active_role_ids):
@@ -194,8 +203,10 @@ def has_permissions_in_transaction(
     def resource_is_authorized(resource: ResourceContext | None) -> bool:
         if resource is None:
             return bool(granted_role_ids)
-        for _assignment_id, raw_role_id, scope_type, scope_reference in assignments:
-            role_id = int(raw_role_id)
+        for assignment in assignments:
+            scope_type = row_value(assignment, "scope_type", 2)
+            scope_reference = row_value(assignment, "scope_reference", 3)
+            role_id = int(row_value(assignment, "role_id", 1))
             if role_id not in granted_role_ids:
                 continue
             in_scope = False
