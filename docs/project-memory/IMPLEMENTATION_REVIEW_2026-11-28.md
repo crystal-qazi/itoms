@@ -57,17 +57,19 @@ Positive evidence visible in source:
 
 No claim of a completed manual UI or security assessment is made. This was source inspection only; no browser session, local runtime, screen reader, axe scan, MySQL instance or production-like environment was available in this review.
 
-## 5. Open release gates and next actions
+## 5. Open release gates and next actions (updated after PRs #1–#14)
 
-1. Continue denied-action coverage at HTTP mutation-route level where the route boundary adds behavior beyond the service-layer authorization checks; current coverage includes the cross-scope detail HTTP 404 and service-layer comment/assignment/status mutation denials.
-2. The representative Service Request creation audit-failure rollback test is complete and CI-verified. Broader rollback coverage for other mutation types and cross-service deadlock/load stress remain open.
-3. Conduct keyboard-only, visible-focus, screen-reader, contrast, zoom/reflow, target-size, Light/Dark and narrow-mobile review; run an automated accessibility scan and record remediation.
-4. Validate deployment configuration, worker delivery/monitoring, backups/restores and smoke tests in a safe target environment.
-5. Decide whether dedicated Service Request dashboards and aggregate analytics are required in the next module increment; shared saved-report fields already exist.
-6. Reconcile the branch divergence and move the canonical memory policy into the active implementation branch through a reviewed merge/cherry-pick plan. Do not overwrite or merge automatically.
-7. Migration-count discrepancy is resolved: the complete implementation-branch Git tree contains exactly 43 SQL files under `itoms/db/migrations/versions/`, numbered consecutively `001`–`043`. README was corrected through PR [#3](https://github.com/crystal-qazi/itoms/pull/3), merged as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`. The change was documentation-only; no CI workflow was triggered.
+1. **Service Request access and mutation denials — completed:** cross-scope detail HTTP 404, service-layer OWN-scope mutation denials, and HTTP comment/assignment/status mutation denials are covered by PRs #1, #2 and #4; all required CI jobs passed.
+2. **Service Request transaction rollback — completed for tested writes:** request creation, comments, assignment, status transitions and notification/outbox persistence are covered by trigger-injected MySQL rollback tests (PRs #1, #5, #6, #8 and #9); all required CI jobs passed.
+3. **Focused concurrency regressions — completed:** competing OPEN → IN_PROGRESS transitions are serialized with one stale transition rejected (PR #11); two outbox workers claim disjoint batches with MySQL `SKIP LOCKED` (PR #13). Both code PRs passed `python-quality` and `mysql-migrations`.
+4. **Broader concurrency/performance — open:** add cross-module contention scenarios and sustained load/deadlock testing under a representative MySQL workload; the two focused race tests are not a load certification.
+5. **Accessibility — open:** conduct keyboard-only, visible-focus, screen-reader, contrast, zoom/reflow, target-size, Light/Dark and narrow-mobile review; run an automated accessibility scan and record remediation. Source inspection is not a substitute for manual testing.
+6. **Operations/deployment — open:** validate worker scheduling/supervision, stale-claim and backlog alerting, SMTP approval, deployment configuration, backups/restores and smoke tests in a safe target environment.
+7. **Reporting — open decision/follow-up:** shared saved-report fields already exist; decide whether dedicated Service Request dashboards and aggregate analytics are required in the next module increment.
+8. **Branch reconciliation — open:** recheck current `main` versus `feature/itoms-foundation` divergence and prepare a reviewed merge/cherry-pick plan for canonical memory policy. Do not overwrite, force-push or merge automatically.
+9. **Migration count — resolved:** the complete implementation-branch Git tree contains exactly 43 SQL files under `itoms/db/migrations/versions/`, numbered consecutively `001`–`043`. README was corrected through PR [#3](https://github.com/crystal-qazi/itoms/pull/3), merged as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`. The change was documentation-only; no CI workflow was triggered.
 
-## 6. Honest completion status
+## 6. Honest completion status at initial review (historical snapshot)
 
 **Completed in this review:** GitHub memory review, branch comparison, blueprint/skill discovery, Service Request documentation and source inspection, and recording of the next evidence gates.
 
@@ -192,3 +194,24 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - GitHub Actions run [46124841345](https://github.com/crystal-qazi/itoms/actions/runs/46124841345) passed both `python-quality` and `mysql-migrations`. PR [#13](https://github.com/crystal-qazi/itoms/pull/13) squash-merged into `feature/itoms-foundation` as `b8d4123f5a484df669982fe171713b652f85da14`.
 - Documentation-only PR [#14](https://github.com/crystal-qazi/itoms/pull/14) synchronized `docs/architecture/NOTIFICATIONS.md` with this evidence and explicitly left sustained throughput, worker supervision, alert delivery and broad cross-service deadlock testing open. Merged as `6f2aa1d7cd836122779bbd2aa709d1b178295194`; no CI triggered.
 - No production worker code changed.
+
+
+## 21. Consolidated release-gate status after PRs #11–#14 — 2026-11-28
+
+### Completed and CI-verified
+- Cross-scope detail denial, service-layer mutation denial and HTTP mutation-route denial (PRs #1, #2, #4).
+- Transaction rollback for request creation, comment, assignment, status transition and notification/outbox writes (PRs #1, #5, #6, #8, #9).
+- Deterministic two-connection Service Request status-transition race (PR #11; run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722)).
+- Two-worker notification outbox claim isolation with disjoint batches using MySQL `FOR UPDATE SKIP LOCKED` (PR #13; run [46124841345](https://github.com/crystal-qazi/itoms/actions/runs/46124841345)).
+- Specialist validation and notification architecture docs updated through docs-only PRs #10, #12 and #14.
+
+### Still open
+- Broad cross-service contention, sustained throughput and deadlock/load testing.
+- Manual and automated accessibility verification against WCAG 2.2 AA.
+- Worker supervision, backlog/stale-claim alerting, operational ownership and production SMTP approval.
+- Deployment acceptance, least-privilege runtime/migration credentials, backup/restore drill and production smoke testing.
+- Decision on dedicated dashboards and aggregate analytics beyond shared saved reports.
+- Safe branch reconciliation and migration of canonical memory policy into the active implementation branch.
+- Historical Q1–Q275 decision backfill and local specialist-skill installation verification.
+
+No production application or notification-worker code was changed in PRs #11–#14; these increments add tests and documentation only. Passing CI for these test PRs does not establish production readiness.
