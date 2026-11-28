@@ -4,7 +4,7 @@
 **Implementation branch:** `feature/itoms-foundation`  
 **Module:** IT Service Request Management  
 **Authority:** `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md`, Section 7.4  
-**Review status:** Targeted code and MySQL validation passed; full Security and UI/UX gates remain open.
+**Review status:** Core Section 7.4 workflow, configurable priorities, advanced search and shared reporting are implemented and MySQL-tested. Manual Security and UI/UX release gates remain open.
 
 ## 1. Actual implementation inspected
 
@@ -17,7 +17,7 @@ The validation uses the real application branch, not the documentation-only engi
 | Templates | `itoms/templates/service_requests/index.html`, `detail.html` |
 | Base schema | `itoms/db/migrations/versions/027_service_requests.sql` |
 | Blueprint-required completion | `itoms/db/migrations/versions/042_service_request_comments_pending.sql` |
-| Unit tests | `tests/test_service_requests.py` |
+| Configurable priorities | `itoms/db/migrations/versions/043_service_request_priorities.sql` |\n| Unit tests | `tests/test_service_requests.py` |
 | MySQL integration tests | `tests/integration/test_service_requests_mysql.py` |
 | Shared services | Authorization, audit events, notifications/outbox, employee/team directory |
 
@@ -29,13 +29,13 @@ The validation uses the real application branch, not the documentation-only engi
 | Dynamic categories | Category CRUD/activation permission and migration-backed table | Implemented |
 | Automatic unique IDs | Date-prefixed random request number plus UNIQUE constraint | Implemented; collision handling should be reviewed |
 | Team/employee assignment | Active team and active team-membership validation; scoped assign permission | Implemented |
-| Configurable priority levels | LOW/MEDIUM/HIGH/CRITICAL enum | Partially implemented: values are fixed in schema, not Admin-configurable |
+| Configurable priority levels | Migration 043 creates an Admin-managed priority catalogue with stable keys, labels, ordering and active state; the request column uses a foreign key and retains the four defaults | Implemented; writes use transaction-bound authorization and audit |
 | Status tracking | OPEN, IN_PROGRESS, ON_HOLD, COMPLETED, CANCELLED with explicit transition map | Implemented |
 | Pending reasons | ON_HOLD requires reason; current reason and activity history stored | Implemented in migration 042 |
 | Comments | Authenticated, scoped, length-limited plain-text comments with author/time | Implemented in migration 042 |
 | Basic notifications | In-app notification and outbox rows queued transactionally for assignment, status and comment events | Implemented; delivery depends on configured worker |
-| Advanced search | Current list filters by status and priority; no full-text query, date/assignee/category combination or pagination UI | Incomplete |
-| Reporting | No Service Request-specific reporting/dashboard found in this slice | Incomplete |
+| Advanced search | Keyword search across request number/title/description, category, status, configured priority and created-date range; scope filtering occurs before the result limit | Implemented; pagination controls remain a follow-up |
+| Reporting | Shared saved-report dataset includes request number, title, category, requester, team, priority, status and created date; priority/category filters use active catalogues | Implemented through shared reporting; dedicated dashboards and aggregate analytics remain follow-up work |
 
 ## 3. Permission and workflow mapping
 
@@ -44,7 +44,7 @@ The validation uses the real application branch, not the documentation-only engi
 - `service_request.read`
 - `service_request.update`
 - `service_request.assign`
-- `service_request.categories.manage`
+- `service_request.categories.manage`\n- `service_request.priorities.manage`
 
 Comments currently use `service_request.update`; there is no separate comment permission. Role grants remain dynamic and administrator-controlled. Resource scope is evaluated using trusted requester/team/department context from the service layer.
 
@@ -69,21 +69,21 @@ Comments currently use `service_request.update`; there is no separate comment pe
 - In-app notification/outbox persistence is performed in the request transaction.
 
 **Remaining work**
-1. Add free-text and combined filters with bounded pagination and stable ordering.
-2. Add Service Request reporting or explicitly map it to the shared reporting module.
-3. Decide whether priority levels must be Admin-configurable (Blueprint wording says configurable; current ENUM is fixed).
-4. Add request-number collision retry or a database-backed sequence/key strategy; the unique constraint prevents duplicate persistence but a collision currently surfaces as an insert error.
-5. Add route-level tests for every form action and denied access path.
-6. Document worker delivery expectations and operational monitoring.
+1. Add bounded pagination controls and stable next/previous navigation.
+2. Add dedicated Service Request dashboards and aggregate analytics beyond the shared saved-report/CSV builder.
+3. Expand route-level tests for every form action, CSRF failure and denied access path.
+4. Document worker delivery expectations and operational monitoring.
 
-**Assessment:** Partially passed for current basic workflow; not complete against all Section 7.4 capabilities.
+Request numbers now use a 64-bit random suffix and retry duplicate-key collisions up to five attempts; other database errors are not retried.
+
+**Assessment:** Core Section 7.4 functional capabilities are implemented. Pagination, dedicated dashboards and some route/UI evidence remain incomplete.
 
 ## 5. Security Engineer assessment
 
 **Controls observed**
 - All module routes require authenticated login.
 - Mutating forms validate the session CSRF token with constant-time comparison.
-- Every request read/action performs server-side permission and resource-scope checks. Request creation, assignment, status transition, category create/activation and comment creation now use transaction-bound permission evaluation in the same MySQL transaction as the protected write.
+- Every request read/action performs server-side permission and resource-scope checks. Request creation, assignment, status transition, category create/activation, comment creation and priority catalogue mutations use transaction-bound permission evaluation in the same MySQL transaction as the protected write.
 - Requester identity defaults to the authenticated employee; web form does not accept a requester ID.
 - Team and assignee selections are validated against active records and membership.
 - SQL values are parameterized; comments are plain text and Jinja autoescaping is retained.
@@ -92,12 +92,11 @@ Comments currently use `service_request.update`; there is no separate comment pe
 - Notification delivery is queued through the existing outbox; no synchronous external network call is made in the request transaction.
 
 **Security gate not passed**
-- The shared `has_permission` remains a separate-connection helper for read/list paths. Service Request create, assignment, status transition, category create/activation and comment mutations now use transaction-bound evaluation. The lock order is actor employee → sorted resource teams → membership/manager mapping rows → sorted roles → actor assignments → exact permission grants → protected request/category write. Assignment authorizes current and destination-team contexts together; comment/status revalidate the request's requester/team snapshot after acquiring its row lock. This is a module-bounded guarantee, not a global application protocol.
-- A MySQL two-connection race test proves that an in-flight authorized comment holds its permission state until commit; a concurrent role-permission revocation then succeeds and subsequent comment access is denied. Team-membership/manager-scope revocation, department change and employee deactivation race tests remain outstanding.
-- Request-number collision behavior needs a controlled retry or equivalent strategy.
-- Negative tests should cover cross-scope comment access, assignment to an unauthorized team, stale/inactive employee membership, CSRF failure for every mutation route and audit rollback.
+- The shared `has_permission` remains a separate-connection helper for read/list paths. All Service Request write paths, including priority catalogue create/update, use transaction-bound evaluation. Request assignment authorizes current and destination-team contexts together; comment/status revalidate the request's requester/team snapshot after acquiring its row lock. This is a module-bounded guarantee, not a claim that read paths are revocation-atomic.
+- MySQL 8.4 integration tests cover the request lifecycle, priority creation/deactivation/default selection, advanced keyword/category/date search, request-number collision retry, and transactional audit/notification behavior. Shared authorization tests cover role-permission revocation, TEAM membership removal, MANAGED_TEAMS manager-mapping removal and employee deactivation races.
+- Remaining negative evidence includes route-level CSRF/denied-action coverage for every mutation route, audit rollback tests across representative service families, and broader cross-service deadlock/load stress.
 
-**Assessment:** Foundational controls present; transaction-bound authorization consistency and negative concurrency coverage remain blockers for a security pass.
+**Assessment:** Mutation authorization is transaction-bound and deterministic revocation races are covered; manual security assessment and broader route-level/rollback evidence remain open.
 
 ## 6. UI/UX Engineer assessment
 
