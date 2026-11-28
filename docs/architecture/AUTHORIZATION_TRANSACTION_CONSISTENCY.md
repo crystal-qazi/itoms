@@ -193,7 +193,7 @@ A focused source review was performed before starting the next transaction-bound
 - **Role assignment (`identity_admin.assign_role`)** locks the target employee, then (for TEAM scope) team and membership, and only then the role. The actor's `identity.roles.assign` check uses a separate connection. This does not yet serialize actor revocation with the assignment write, and it does not match a simple actor → roles → scope → resource order.
 - **Role-assignment revocation (`identity_admin.revoke_role_assignment`)** initially reads the assignment and target department without locks, performs actor authorization on a separate connection, then locks the target employee and scope rows before role and assignment rows. It needs a defined actor/target employee lock order and a current-state revalidation protocol; the initial unlocked lookup must not become the authority for the final write.
 - **Employee deactivation (`directory_admin.deactivate_employee`)** locks actor and target employee rows together in ascending employee ID order, but its authorization check is separate-connection and occurs before those locks. Any global protocol must preserve this deterministic multi-employee ordering while making actor authorization current inside the transaction.
-- **Service Request mutations** are not ready for an isolated helper swap. `add_comment` locks the request context (a joined request/requester/team read) before checking permission through another connection. Assignment and status paths also use separate-connection checks around resource locking. The lock footprint of `_context(..., lock=True)` must be made explicit before it can participate in a global ordering; a joined `FOR UPDATE` must not be assumed to lock only the request row.
+- **Service Request mutations** had separate-connection authorization. `add_comment` has now been migrated to a transaction-bound evaluator and no longer uses `_context(..., lock=True)`; it reads a scope snapshot, locks actor/scope/authorization state, then locks only the request row and revalidates requester/team IDs. Assignment, status transition, category administration and request creation still use separate-connection checks and remain outside this targeted guarantee.
 - **Directory membership writers** share employee → team → membership ordering for their protected data, but actor authorization is pre-checked on another connection. Manager mapping writers and membership removal also touch membership/manager rows, so their shared ordering must remain explicit.
 - **Role-permission administration** has a proven bounded order (actor employee → sorted role rows → actor assignment rows → exact role-permission rows). Any global design must retain that guarantee and avoid introducing a reverse edge from role/permission locks back to employee locks.
 
@@ -206,4 +206,27 @@ A focused source review was performed before starting the next transaction-bound
 5. Inspect actual MySQL 8.4 isolation, indexes, and `EXPLAIN` plans; verify locking-read behavior on the exact queries used.
 6. Only after the above is agreed, implement the transaction-bound evaluator and migrate one mutation path with deterministic two-connection tests for both race winners.
 
-**No transaction-bound authorization helper or Service Request mutation migration is claimed by this audit.** The next safe deliverable is the reviewed lock graph and a test matrix; implementation must follow that design rather than infer a global order from the current candidate list.
+**The implementation below is a bounded Service Request comment slice, not a global authorization consistency claim.** The original global candidate order remains unapproved for the whole application; each service family must reconcile its own lock graph before migration.
+
+
+## Targeted transaction-bound evaluator — Service Request comments
+
+Implemented on `feature/itoms-foundation`:
+
+- Added `authorization.has_permission_in_transaction(cur, ...)`; it uses the caller's transaction and does not open a second connection.
+- Lock order for this evaluator: actor employee → trusted resource team → exact employee-team membership and manager-team mapping → sorted active role rows → actor role-assignment rows → exact role-permission rows.
+- This order is compatible with the existing directory membership/manager writers for the same actor because they serialize on the employee row and then use team → membership/mapping. Runtime role-assignment writers also lock the affected employee before role rows.
+- `service_requests.add_comment` now reads a non-locking resource snapshot, performs the transaction-bound authorization, locks the request row only after authorization, and rejects if requester/team identifiers changed while authorization locks were acquired. Comment, activity, audit, notification and outbox writes remain in the same transaction.
+- The evaluator fails closed if the actor is inactive, role assignments change between discovery and locking, the team is inactive/membership is absent for TEAM scope, the manager mapping is absent for MANAGED_TEAMS scope, or the exact permission grant is absent.
+- The bounded race test holds the authorization/request locks while a second connection attempts to revoke the relevant permission. The revocation waits; after the first transaction commits, the revocation succeeds and a subsequent comment attempt is denied.
+
+### Verification
+
+CI run [46112814997](https://github.com/crystal-qazi/itoms/actions/runs/46112814997), commit `d38f6d990c4b569a70c02a9865362ec740618018`:
+- Python quality: 166 passed, 44 skipped.
+- MySQL 8.4 integration: 44 passed.
+- Migrations: 42 applied; second migration run was idempotent.
+
+### Explicit remaining gaps
+
+This helper is currently used by `add_comment` only. Do not infer that request assignment/status/category administration or any other ITOMS mutation is revocation-atomic. Remaining work includes both race orderings for team-membership and manager-scope revocation, department/employee deactivation races, assignment/status/category/create mutation migrations, and the broader services listed above. Global MySQL isolation/query-plan evidence and a complete lock graph are still required before a repository-wide security pass.
