@@ -520,6 +520,17 @@ def assign_request(
             cur, actor_employee_id, "service_request.assign", resources
         ):
             raise ServiceRequestError("Not authorized to assign this service request or selected team.")
+        if assigned_team_id is not None:
+            cur.execute(
+                """SELECT t.department_id,t.is_active,d.is_active
+                   FROM teams t JOIN departments d ON d.department_id=t.department_id
+                   WHERE t.team_id=%s FOR UPDATE""",
+                (assigned_team_id,),
+            )
+            locked_team = cur.fetchone()
+            if (not locked_team or not locked_team[1] or not locked_team[2]
+                    or locked_team[0] != team_department_id):
+                raise ServiceRequestError("Assigned team or department changed; retry the operation.")
         if assigned_employee_id is not None:
             if assigned_team_id is None:
                 raise ServiceRequestError("An individual assignee must belong to an assigned team.")
