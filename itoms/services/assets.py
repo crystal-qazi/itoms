@@ -5,7 +5,7 @@ import re
 from mysql.connector import IntegrityError
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 
 class AssetError(ValueError):
@@ -125,6 +125,11 @@ def create_asset(
             raise AssetError("Acquired date must be a valid ISO date.") from None
     if type(owner_team_id) is not int or owner_team_id <= 0:
         raise AssetError("Select a valid owner team.")
+    if assigned_employee_id is not None and (
+        type(assigned_employee_id) is not int or assigned_employee_id <= 0
+    ):
+        raise AssetError("Select a valid assignee.")
+
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -138,13 +143,36 @@ def create_asset(
         if not team:
             raise AssetError("Owner team is inactive or unavailable.")
         context = ResourceContext(team_id=owner_team_id, department_id=team[0])
-        if not has_permission(actor_employee_id, "asset.create", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "asset.create", context,
+            lock_employee_ids=[assigned_employee_id] if assigned_employee_id is not None else None,
+        ):
             raise AssetError("Not authorized to register assets for this team.")
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (owner_team_id,),
+        )
+        locked_team = cur.fetchone()
+        if not locked_team or not locked_team[1] or locked_team[0] != team[0]:
+            raise AssetError("Owner team changed; retry asset registration.")
+        cur.execute(
+            "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+            (team[0],),
+        )
+        department = cur.fetchone()
+        if not department or not department[0]:
+            raise AssetError("Owner department is inactive or unavailable.")
         if assigned_employee_id is not None:
             cur.execute(
-                """SELECT 1 FROM employees e JOIN employee_team_memberships m
-                   ON m.employee_id=e.employee_id
-                   WHERE e.employee_id=%s AND e.is_active=TRUE AND m.team_id=%s""",
+                "SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+                (assigned_employee_id,),
+            )
+            assignee = cur.fetchone()
+            if not assignee or not assignee[0]:
+                raise AssetError("Assignee must be an active member of the owner team.")
+            cur.execute(
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
                 (assigned_employee_id, owner_team_id),
             )
             if not cur.fetchone():
@@ -180,31 +208,39 @@ def create_asset(
         cur.close()
         conn.close()
 
-
 def update_asset_status(*, actor_employee_id: int, asset_id: int, new_status: str) -> None:
     if new_status not in ASSET_STATUSES:
         raise AssetError("Invalid asset status.")
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        row = _asset_context(cur, asset_id)
-        if not row:
+        snapshot = _asset_context(cur, asset_id)
+        if not snapshot:
             raise AssetError("Asset was not found.")
-        team_id = _context_value(row, "owner_team_id", 2)
-        department_id = _context_value(row, "department_id", 3)
+        team_id = _context_value(snapshot, "owner_team_id", 2)
+        department_id = _context_value(snapshot, "department_id", 3)
+        old_status = _context_value(snapshot, "asset_status", 1)
         context = ResourceContext(
             team_id=team_id, department_id=department_id,
             resource_type="asset", resource_id=str(asset_id),
         )
-        if not has_permission(actor_employee_id, "asset.update", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "asset.update", context
+        ):
             raise AssetError("Not authorized to update this asset.")
-        old_status = _context_value(row, "asset_status", 1)
-        cur.execute("SELECT asset_status FROM asset_records WHERE asset_id=%s FOR UPDATE", (asset_id,))
+        cur.execute(
+            "SELECT asset_status,owner_team_id FROM asset_records WHERE asset_id=%s FOR UPDATE",
+            (asset_id,),
+        )
         current = cur.fetchone()
         current_status = current["asset_status"] if isinstance(current, dict) else current[0]
-        if current_status != old_status:
+        current_team = current["owner_team_id"] if isinstance(current, dict) else current[1]
+        if current_status != old_status or current_team != team_id:
             raise AssetError("Asset changed; reload and try again.")
-        cur.execute("UPDATE asset_records SET asset_status=%s WHERE asset_id=%s", (new_status, asset_id))
+        cur.execute(
+            "UPDATE asset_records SET asset_status=%s WHERE asset_id=%s",
+            (new_status, asset_id),
+        )
         cur.execute(
             """INSERT INTO audit_events
                (actor_employee_id,event_key,target_type,target_id,outcome,details)
@@ -219,7 +255,6 @@ def update_asset_status(*, actor_employee_id: int, asset_id: int, new_status: st
     finally:
         cur.close()
         conn.close()
-
 
 def list_maintenance(*, actor_employee_id: int) -> list[dict]:
     conn = get_connection()
@@ -262,15 +297,35 @@ def create_maintenance(
     detail = (issue_description or "").strip()
     if not detail or len(detail) > 20000:
         raise AssetError("Repair issue description is required (maximum 20,000 characters).")
+    if assigned_to is not None and (type(assigned_to) is not int or assigned_to <= 0):
+        raise AssetError("Select a valid maintenance assignee.")
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        row = _asset_context(cur, asset_id, lock=True)
-        if not row:
+        snapshot = _asset_context(cur, asset_id)
+        if not snapshot:
             raise AssetError("Asset was not found.")
-        team_id = _context_value(row, "owner_team_id", 2)
-        department_id = _context_value(row, "department_id", 3)
-        previous_status = _context_value(row, "asset_status", 1)
+        team_id = _context_value(snapshot, "owner_team_id", 2)
+        department_id = _context_value(snapshot, "department_id", 3)
+        previous_status = _context_value(snapshot, "asset_status", 1)
+        context = ResourceContext(
+            team_id=team_id, department_id=department_id,
+            resource_type="asset", resource_id=str(asset_id),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "asset.maintenance.create", context,
+            lock_employee_ids=[assigned_to] if assigned_to is not None else None,
+        ):
+            raise AssetError("Not authorized to report maintenance for this asset.")
+        cur.execute(
+            "SELECT asset_status,owner_team_id FROM asset_records WHERE asset_id=%s FOR UPDATE",
+            (asset_id,),
+        )
+        current_asset = cur.fetchone()
+        current_status = _context_value(current_asset, "asset_status", 0) if current_asset else None
+        current_team = _context_value(current_asset, "owner_team_id", 1) if current_asset else None
+        if current_status != previous_status or current_team != team_id:
+            raise AssetError("Asset changed; reload and try again.")
         if previous_status not in {"IN_USE", "IN_STOCK"}:
             raise AssetError("Only IN_USE or IN_STOCK assets can enter maintenance.")
         cur.execute(
@@ -281,17 +336,17 @@ def create_maintenance(
         )
         if cur.fetchone():
             raise AssetError("This asset already has an active maintenance ticket.")
-        context = ResourceContext(
-            team_id=team_id, department_id=department_id,
-            resource_type="asset", resource_id=str(asset_id),
-        )
-        if not has_permission(actor_employee_id, "asset.maintenance.create", context):
-            raise AssetError("Not authorized to report maintenance for this asset.")
         if assigned_to is not None:
             cur.execute(
-                """SELECT 1 FROM employees e JOIN employee_team_memberships m
-                   ON m.employee_id=e.employee_id
-                   WHERE e.employee_id=%s AND e.is_active=TRUE AND m.team_id=%s""",
+                "SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+                (assigned_to,),
+            )
+            assignee = cur.fetchone()
+            if not assignee or not _context_value(assignee, "is_active", 0):
+                raise AssetError("Maintenance assignee must be an active member of the owner team.")
+            cur.execute(
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
                 (assigned_to, team_id),
             )
             if not cur.fetchone():
@@ -303,7 +358,10 @@ def create_maintenance(
             (asset_id, actor_employee_id, assigned_to, detail, previous_status),
         )
         maintenance_id = int(cur.lastrowid)
-        cur.execute("UPDATE asset_records SET asset_status='UNDER_REPAIR' WHERE asset_id=%s", (asset_id,))
+        cur.execute(
+            "UPDATE asset_records SET asset_status='UNDER_REPAIR' WHERE asset_id=%s",
+            (asset_id,),
+        )
         cur.execute(
             """INSERT INTO audit_events
                (actor_employee_id,event_key,target_type,target_id,outcome)
@@ -319,7 +377,6 @@ def create_maintenance(
         cur.close()
         conn.close()
 
-
 def update_maintenance_status(
     *, actor_employee_id: int, maintenance_id: int, new_status: str,
 ) -> None:
@@ -333,18 +390,38 @@ def update_maintenance_status(
                       a.owner_team_id,t.department_id
                FROM asset_maintenance m JOIN asset_records a ON a.asset_id=m.asset_id
                JOIN teams t ON t.team_id=a.owner_team_id
-               WHERE m.maintenance_id=%s FOR UPDATE""",
+               WHERE m.maintenance_id=%s""",
+            (maintenance_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise AssetError("Maintenance ticket was not found.")
+        context = ResourceContext(
+            team_id=snapshot["owner_team_id"], department_id=snapshot["department_id"],
+            resource_type="asset", resource_id=str(snapshot["asset_id"]),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "asset.maintenance.update", context
+        ):
+            raise AssetError("Not authorized to update this maintenance ticket.")
+        # Keep asset -> maintenance lock ordering consistent with maintenance creation.
+        cur.execute(
+            "SELECT owner_team_id FROM asset_records WHERE asset_id=%s FOR UPDATE",
+            (snapshot["asset_id"],),
+        )
+        asset = cur.fetchone()
+        asset_team = _context_value(asset, "owner_team_id", 0) if asset else None
+        if asset_team != snapshot["owner_team_id"]:
+            raise AssetError("Asset scope changed; reload and try again.")
+        cur.execute(
+            """SELECT asset_id,status,previous_asset_status FROM asset_maintenance
+               WHERE maintenance_id=%s FOR UPDATE""",
             (maintenance_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise AssetError("Maintenance ticket was not found.")
-        context = ResourceContext(
-            team_id=row["owner_team_id"], department_id=row["department_id"],
-            resource_type="asset", resource_id=str(row["asset_id"]),
-        )
-        if not has_permission(actor_employee_id, "asset.maintenance.update", context):
-            raise AssetError("Not authorized to update this maintenance ticket.")
+        if (not row or row["asset_id"] != snapshot["asset_id"]
+                or row["status"] != snapshot["status"]):
+            raise AssetError("Maintenance ticket changed; reload and try again.")
         old_status = row["status"]
         if new_status not in MAINTENANCE_TRANSITIONS[old_status]:
             raise AssetError(f"Cannot move maintenance from {old_status} to {new_status}.")
