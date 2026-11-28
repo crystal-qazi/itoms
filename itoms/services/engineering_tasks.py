@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import secrets
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 class TaskError(ValueError):
     """Task operation is invalid or unauthorized."""
@@ -17,93 +17,160 @@ TASK_TRANSITIONS={
  "DONE":set(),"CANCELLED":set()
 }
 
-def create_task(*,actor_employee_id:int,team_id:int,title:str,description:str="",
-                assigned_to:int|None=None,priority:str="MEDIUM",due_at=None)->int:
-    if not isinstance(team_id, int) or team_id <= 0:
+def create_task(*, actor_employee_id: int, team_id: int, title: str, description: str = "",
+                assigned_to: int | None = None, priority: str = "MEDIUM", due_at=None) -> int:
+    if not isinstance(team_id, int) or isinstance(team_id, bool) or team_id <= 0:
         raise TaskError("Select a valid task team.")
-    title=title.strip()
-    if not title or len(title)>240: raise TaskError("Task title is required (maximum 240 characters).")
-    priority=priority.strip().upper()
-    description=description.strip()
-    if priority not in {"LOW","MEDIUM","HIGH","CRITICAL"}: raise TaskError("Invalid priority.")
-    if len(description)>20000: raise TaskError("Task description must be 20,000 characters or fewer.")
-    conn=get_connection();cur=conn.cursor()
-    try:
-        cur.execute("""SELECT t.department_id FROM teams t
-            JOIN departments d ON d.department_id=t.department_id
-            WHERE t.team_id=%s AND t.is_active=TRUE AND d.is_active=TRUE""",(team_id,))
-        team=cur.fetchone()
-        if not team: raise TaskError("Team is inactive or unavailable.")
-        context=ResourceContext(team_id=team_id,department_id=team[0])
-        if not has_permission(actor_employee_id,"engineering.tasks.create",context):
-            raise TaskError("Not authorized to create tasks for this team.")
-        if assigned_to is not None:
-            cur.execute("""SELECT 1 FROM employee_team_memberships m
-                JOIN employees e ON e.employee_id=m.employee_id AND e.is_active=TRUE
-                WHERE m.employee_id=%s AND m.team_id=%s""",(assigned_to,team_id))
-            if not cur.fetchone(): raise TaskError("Assignee must be a member of the task team.")
-        number="TASK-"+datetime.now(timezone.utc).strftime("%Y%m%d")+"-"+secrets.token_hex(3).upper()
-        cur.execute("""INSERT INTO engineering_tasks
-            (task_number,title,description,team_id,created_by,assigned_to,priority,due_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (number,title,description,team_id,actor_employee_id,assigned_to,priority,due_at))
-        task_id=int(cur.lastrowid)
-        cur.execute("""INSERT INTO engineering_task_activity
-            (task_id,actor_employee_id,action_key,new_value)
-            VALUES (%s,%s,'TASK_CREATED',%s)""",(task_id,actor_employee_id,number))
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome)
-            VALUES (%s,'ENGINEERING_TASK_CREATED','engineering_task',%s,'SUCCESS')""",
-            (actor_employee_id,str(task_id)))
-        conn.commit();return task_id
-    except Exception:
-        conn.rollback();raise
-    finally:
-        cur.close();conn.close()
+    if assigned_to is not None and (
+        not isinstance(assigned_to, int) or isinstance(assigned_to, bool) or assigned_to <= 0
+    ):
+        raise TaskError("Select a valid task assignee.")
+    title = title.strip()
+    if not title or len(title) > 240:
+        raise TaskError("Task title is required (maximum 240 characters).")
+    priority = priority.strip().upper()
+    description = description.strip()
+    if priority not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        raise TaskError("Invalid priority.")
+    if len(description) > 20000:
+        raise TaskError("Task description must be 20,000 characters or fewer.")
 
-def change_task_status(*,actor_employee_id:int,task_id:int,new_status:str)->None:
-    # Resolve the trusted team scope before permission evaluation; do not hold
-    # the task row lock while the authorization service opens its own connection.
-    conn=get_connection();cur=conn.cursor()
+    conn = get_connection()
+    cur = conn.cursor()
     try:
-        cur.execute("""SELECT t.team_id,tm.department_id
-            FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id
-            WHERE t.task_id=%s""",(task_id,))
-        snapshot=cur.fetchone()
+        cur.execute(
+            """SELECT t.department_id FROM teams t
+               JOIN departments d ON d.department_id=t.department_id
+               WHERE t.team_id=%s AND t.is_active=TRUE AND d.is_active=TRUE""",
+            (team_id,),
+        )
+        team = cur.fetchone()
+        if not team:
+            raise TaskError("Team is inactive or unavailable.")
+        context = ResourceContext(team_id=team_id, department_id=team[0])
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "engineering.tasks.create", context,
+            lock_employee_ids=[assigned_to] if assigned_to is not None else None,
+        ):
+            raise TaskError("Not authorized to create tasks for this team.")
+
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (team_id,),
+        )
+        locked_team = cur.fetchone()
+        if not locked_team or not locked_team[1] or locked_team[0] != team[0]:
+            raise TaskError("Team changed; retry task creation.")
+        cur.execute(
+            "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+            (team[0],),
+        )
+        department = cur.fetchone()
+        if not department or not department[0]:
+            raise TaskError("Team department is inactive or unavailable.")
+
+        if assigned_to is not None:
+            cur.execute(
+                "SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+                (assigned_to,),
+            )
+            assignee = cur.fetchone()
+            if not assignee or not assignee[0]:
+                raise TaskError("Assignee must be an active member of the task team.")
+            cur.execute(
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
+                (assigned_to, team_id),
+            )
+            if not cur.fetchone():
+                raise TaskError("Assignee must be a member of the task team.")
+
+        number = "TASK-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper()
+        cur.execute(
+            """INSERT INTO engineering_tasks
+               (task_number,title,description,team_id,created_by,assigned_to,priority,due_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (number, title, description, team_id, actor_employee_id, assigned_to, priority, due_at),
+        )
+        task_id = int(cur.lastrowid)
+        cur.execute(
+            """INSERT INTO engineering_task_activity
+               (task_id,actor_employee_id,action_key,new_value)
+               VALUES (%s,%s,'TASK_CREATED',%s)""",
+            (task_id, actor_employee_id, number),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'ENGINEERING_TASK_CREATED','engineering_task',%s,'SUCCESS')""",
+            (actor_employee_id, str(task_id)),
+        )
+        conn.commit()
+        return task_id
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        cur.close();conn.close()
-    if not snapshot: raise TaskError("Task not found.")
-    team_id,department_id=snapshot
-    context=ResourceContext(team_id=team_id,department_id=department_id)
-    if not has_permission(actor_employee_id,"engineering.tasks.update",context):
-        raise TaskError("Not authorized to update this task.")
-    conn=get_connection();cur=conn.cursor()
+        cur.close()
+        conn.close()
+
+
+def change_task_status(*, actor_employee_id: int, task_id: int, new_status: str) -> None:
+    conn = get_connection()
+    cur = conn.cursor()
     try:
-        cur.execute("""SELECT t.status,t.team_id,tm.department_id
-            FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id
-            WHERE t.task_id=%s FOR UPDATE""",(task_id,))
-        row=cur.fetchone()
-        if not row or row[1]!=team_id or row[2]!=department_id:
-            raise TaskError("Task changed; reload and try again.")
-        if not has_permission(actor_employee_id,"engineering.tasks.update",context):
+        cur.execute(
+            """SELECT t.team_id,tm.department_id
+               FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id
+               WHERE t.task_id=%s""",
+            (task_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise TaskError("Task not found.")
+        team_id, department_id = snapshot
+        context = ResourceContext(team_id=team_id, department_id=department_id)
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "engineering.tasks.update", context
+        ):
             raise TaskError("Not authorized to update this task.")
-        old_status=row[0]
-        if new_status not in TASK_TRANSITIONS.get(old_status,set()):
+
+        # Lock the task only after actor, team and authorization state.
+        cur.execute(
+            """SELECT t.status,t.team_id,tm.department_id
+               FROM engineering_tasks t JOIN teams tm ON tm.team_id=t.team_id
+               WHERE t.task_id=%s FOR UPDATE""",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[1] != team_id or row[2] != department_id:
+            raise TaskError("Task changed; reload and try again.")
+        old_status = row[0]
+        if new_status not in TASK_TRANSITIONS.get(old_status, set()):
             raise TaskError(f"Transition from {old_status} to {new_status} is not allowed.")
-        cur.execute("UPDATE engineering_tasks SET status=%s WHERE task_id=%s",(new_status,task_id))
-        cur.execute("""INSERT INTO engineering_task_activity
-            (task_id,actor_employee_id,action_key,old_value,new_value)
-            VALUES (%s,%s,'STATUS_CHANGED',%s,%s)""",(task_id,actor_employee_id,old_status,new_status))
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome)
-            VALUES (%s,'ENGINEERING_TASK_STATUS_CHANGED','engineering_task',%s,'SUCCESS')""",
-            (actor_employee_id,str(task_id)))
+        cur.execute(
+            "UPDATE engineering_tasks SET status=%s WHERE task_id=%s",
+            (new_status, task_id),
+        )
+        cur.execute(
+            """INSERT INTO engineering_task_activity
+               (task_id,actor_employee_id,action_key,old_value,new_value)
+               VALUES (%s,%s,'STATUS_CHANGED',%s,%s)""",
+            (task_id, actor_employee_id, old_status, new_status),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'ENGINEERING_TASK_STATUS_CHANGED','engineering_task',%s,'SUCCESS')""",
+            (actor_employee_id, str(task_id)),
+        )
         conn.commit()
     except Exception:
-        conn.rollback();raise
+        conn.rollback()
+        raise
     finally:
-        cur.close();conn.close()
-
+        cur.close()
+        conn.close()
 
 def list_accessible_task_teams(*, actor_employee_id: int, permission_key: str = "engineering.tasks.read") -> list[dict]:
     """Return active teams visible to the actor for a specific task permission."""
