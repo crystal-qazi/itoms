@@ -3,50 +3,56 @@
 ## Repository baseline
 - Repository: crystal-qazi/itoms
 - Integration branch: foundation/engineering-skills-baseline
-- Default branch remains `main`; no merge performed.
+- `main` has not been changed or merged.
 - Authoritative requirements baseline: `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md` (ITOMS v1.0, Planning Finalized).
 
-## Skill entry points committed
-- `skills/itoms-ui-ux-engineer/SKILL.md` — v1.0.0 project-specific UI/UX standard.
-- `skills/itoms-fullstack-engineer/SKILL.md` — v1.0.0 full-stack standard.
-- `skills/itoms-security-engineer/SKILL.md` — v1.0.0 security standard.
+## Specialist skill packages
+### UI/UX Engineer v1.0.0
+- Entry point: `skills/itoms-ui-ux-engineer/SKILL.md`
+- Added README, design-system reference, frontend-engineering reference, WCAG 2.2 AA reference, UX review checklist, component-spec template and UI review-report template.
 
-## Full-Stack references
-- `skills/itoms-fullstack-engineer/references/engineering-playbook.md`
-- `skills/itoms-fullstack-engineer/references/validation-checklist.md`
-- `skills/itoms-fullstack-engineer/references/decision-baseline.md`
+### Full-Stack Engineer v1.0.0
+- Entry point: `skills/itoms-fullstack-engineer/SKILL.md`
+- References committed: engineering playbook, validation checklist and decision baseline.
 
-## Blueprint cross-check
-- Added `docs/requirements-to-specialist-skills-crosswalk.md`.
-- Initial assessment: the three skill entry points collectively align with the Blueprint's main architecture, module, platform, security, accessibility, documentation and deployment requirements.
-- No direct architecture conflict was identified in the inspected entry points.
-- The crosswalk records specific gaps and the evidence expected from a representative vertical slice.
-- This is a standards alignment review, not implementation validation or a compliance audit.
+### Security Engineer v1.0.0
+- Entry point: `skills/itoms-security-engineer/SKILL.md`
+- Added README, security-architecture reference, secure-coding checklist, incident-response guide, security-testing strategy, threat-modelling guide, threat-model template and security-assessment-report template.
 
-## Original package integration
-The complete UI/UX and Security v1.0.0 source ZIP packages are available in the user's ChatGPT Library and have been retrieved for integration.
-- UI/UX package reference/template expansion: pending.
-- Security package reference/template expansion: pending.
-- Full-Stack reference set: already committed.
+The UI/UX and Security supporting files are repository-integrated reference/template documents based on the original package contents and project-specific requirements. Keep these canonical repository files synchronized with any local agent installations.
+
+## Blueprint alignment
+- `docs/requirements-to-specialist-skills-crosswalk.md` records the initial requirements-to-skills review.
+- The three skills collectively cover the major architecture, module, shared-service, security, accessibility, documentation and deployment concerns.
+- This is a standards alignment review, not implementation validation, security certification, WCAG conformance or production-readiness evidence.
+
+## Representative validation slice
+- Selected: IT Service Request Management.
+- Plan: `docs/representative-slice-service-requests.md`.
+- The plan defines initial functional scope, exclusions, required design artefacts and Full-Stack/Security/UI-UX acceptance gates.
+- Implementation has not started; no application tests have been run or passed.
 
 ## Decision traceability
 - Full-Stack Decisions 27–29 are represented.
 - Decisions 1–26 are not reconstructed or guessed.
-- Per the user's instruction, their absence does not block continuing the specialist-skill work against the committed, finalized Blueprint and available skill packages. Add the original decision record later if it is supplied.
+- Their absence does not block continuing against the committed finalized Blueprint and available skill standards.
 
 ## Current status
-- Repository foundation and Blueprint: committed on the integration branch.
-- Three specialist skill entry points: committed.
-- Full-Stack reference set: committed.
-- Blueprint-to-skill crosswalk: committed.
-- Complete UI/UX reference/template expansion: pending.
-- Complete Security reference/template expansion: pending.
-- Representative-module validation: pending.
-- No application module implementation or test execution is claimed.
+- [x] Repository foundation and Blueprint committed on integration branch.
+- [x] Three specialist skill entry points committed.
+- [x] Full-Stack references committed.
+- [x] UI/UX supporting references/templates integrated.
+- [x] Security supporting references/templates integrated.
+- [x] Initial Blueprint-to-skills crosswalk committed.
+- [x] Representative validation slice selected and scoped.
+- [ ] Build requirement traceability, permission matrix, workflow, schema and API design for the selected slice.
+- [ ] Implement the representative slice.
+- [ ] Execute automated/manual tests and record evidence.
+- [ ] Complete skill validation report and remediation.
+- [ ] User review and explicit authorization before merge to main.
 
 ## Next actions
-1. Commit the complete original UI/UX reference/template files.
-2. Commit the complete original Security reference/template files.
-3. Select a representative vertical slice strictly from the Blueprint.
-4. Implement and validate it end-to-end using the Full-Stack checklist and UI/UX/Security gates.
-5. Record actual test output, limitations and unresolved risks; do not claim checks that were not run.
+1. Prepare the Service Request slice's permission matrix, workflow/state model, data model, API contract, threat model and UX specification from the Blueprint.
+2. Implement the smallest complete end-to-end slice using the approved stack and existing repository conventions.
+3. Run and record the Full-Stack, Security and UI/UX acceptance checks; report unrun checks honestly.
+4. Keep all work on this branch until the user explicitly authorizes merge.
