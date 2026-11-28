@@ -226,3 +226,10 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Updated `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` with the merged Service Request cross-scope, denied-mutation and audit/notification-outbox rollback evidence from PRs #1, #2, #4, #5, #6, #8 and #9.
 - Corrected the remaining-gates section: these Service Request regression cases are complete; broader cross-service deadlock/load testing, dashboards, accessibility evidence, worker monitoring and deployment validation remain open.
 - Documentation-only PR [#10](https://github.com/crystal-qazi/itoms/pull/10) was squash-merged into `feature/itoms-foundation` as `7c64264e2a69dc11873d1de9b07309ad87dd1a7d`. No CI was triggered for the docs-only change.
+
+
+### 2026-11-28 — Concurrent Service Request transition regression (PR #11 pending)
+- Added `test_concurrent_status_transitions_serialize_and_reject_stale_transition` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-concurrent-transitions`.
+- The MySQL integration test opens two independent connections, synchronizes both workers before their concurrent transition, and verifies only one OPEN → IN_PROGRESS transition succeeds; the stale competing transition is rejected and only one activity/audit status event is persisted.
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11), head `a293af7fb252330d627b89d3de7f94fcd71cf76e`, targets `feature/itoms-foundation`. `python-quality` passed; `mysql-migrations` was still in progress at this update. Do not merge until both pass.
+- Test-only change; no production service or authorization code changed.
