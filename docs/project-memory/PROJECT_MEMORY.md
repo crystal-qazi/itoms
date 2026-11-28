@@ -168,3 +168,11 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - GitHub Actions run [46122892064](https://github.com/crystal-qazi/itoms/actions/runs/46122892064) completed successfully. Both `python-quality` (compileall, full pytest suite, pip-audit, Bandit) and `mysql-migrations` (all migrations twice on MySQL 8.4 and MySQL integration suite) passed.
 - Merged [PR #4](https://github.com/crystal-qazi/itoms/pull/4) into `feature/itoms-foundation` using squash merge. Merge commit: `3e96a62cdf52eb9dcdcad8e0a4cc9d6e716862f0`.
 - Test-only change; no production code or authorization policy changed.
+
+
+### 2026-11-28 — Service Request comment audit rollback regression test
+- Added `test_comment_creation_rolls_back_when_audit_write_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-comment-audit-rollback`.
+- The test creates a request, installs a temporary MySQL trigger that rejects `SERVICE_REQUEST_COMMENTED`, invokes `add_comment`, and verifies that no comment or comment activity/audit record remains. Trigger cleanup runs in `finally`.
+- Open PR [#5](https://github.com/crystal-qazi/itoms/pull/5) targets `feature/itoms-foundation`; head commit `3705fe22c47b219ad3041a3fd62c2c7b7937c93e`.
+- GitHub Actions run [46123162387](https://github.com/crystal-qazi/itoms/actions/runs/46123162387) was in progress at memory update time. Do not claim test success or merge until both CI jobs pass.
+- Test-only change; no production transaction, service, or authorization logic changed.
