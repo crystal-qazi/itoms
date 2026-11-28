@@ -185,3 +185,10 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - PR #11 was squash-merged into `feature/itoms-foundation` as `544853f84846ceadf15fe126b0ab4df34228d131`.
 - Documentation-only PR [#12](https://github.com/crystal-qazi/itoms/pull/12) records the evidence and states that broad cross-service load/deadlock testing remains open. Merged as `15d04848d93b764deb142ff94db19fc543c06110`; no CI triggered.
 - No production code changed.
+
+
+## 20. Notification outbox concurrent-claim regression — 2026-11-28
+- Added `test_concurrent_outbox_claimers_receive_disjoint_batches` in `tests/integration/test_notifications_outbox_mysql.py`. Two synchronized independent MySQL connections each claim five of ten due IN_APP outbox rows; test asserts disjoint IDs and all ten rows in PROCESSING.
+- GitHub Actions run [46124841345](https://github.com/crystal-qazi/itoms/actions/runs/46124841345) passed both `python-quality` and `mysql-migrations`. PR [#13](https://github.com/crystal-qazi/itoms/pull/13) squash-merged into `feature/itoms-foundation` as `b8d4123f5a484df669982fe171713b652f85da14`.
+- Documentation-only PR [#14](https://github.com/crystal-qazi/itoms/pull/14) synchronized `docs/architecture/NOTIFICATIONS.md` with this evidence and explicitly left sustained throughput, worker supervision, alert delivery and broad cross-service deadlock testing open. Merged as `6f2aa1d7cd836122779bbd2aa709d1b178295194`; no CI triggered.
+- No production worker code changed.
