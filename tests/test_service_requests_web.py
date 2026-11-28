@@ -143,7 +143,7 @@ def test_every_service_request_mutation_route_rejects_missing_csrf(monkeypatch):
     ):
         monkeypatch.setattr(
             web, name,
-            lambda **_: pytest.fail(f"{name} must not run without CSRF"),
+            lambda _name=name, **_: pytest.fail(f"{_name} must not run without CSRF"),
         )
     client = app.test_client()
     paths = (
