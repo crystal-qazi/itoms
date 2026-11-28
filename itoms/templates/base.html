@@ -33,6 +33,7 @@
       <a class="app-nav-link" href="{{ url_for('approvals.inbox') }}">Approval Inbox</a>
       <div class="nav-section-label mt-4">OPERATIONS</div>
       <a class="app-nav-link" href="{{ url_for('incidents.index') }}">Helpdesk &amp; Incidents</a>
+      <a class="app-nav-link" href="{{ url_for('service_requests.index') }}">Service Requests</a>
       <a class="app-nav-link" href="{{ url_for('problems.index') }}">Problem Management</a>
       <a class="app-nav-link" href="{{ url_for('engineering_tasks.index') }}">Engineering Tasks</a>
       <a class="app-nav-link" href="{{ url_for('service_inventory.index') }}">Service Inventory</a>
@@ -49,12 +50,11 @@
       <div class="nav-section-label mt-4">ADMINISTRATION</div>
       <a class="app-nav-link" href="{{ url_for('directory_admin.index') }}">Employee Directory</a>
       <a class="app-nav-link" href="{{ url_for('role_permissions.index') }}">Role Permissions</a>
-      <a class="app-nav-link" href="{{ url_for('directory_admin.index') }}">Employee Directory</a>
       <a class="app-nav-link disabled" href="#" aria-disabled="true">System Settings</a>
     </aside>
     <main id="main-content" class="app-main" tabindex="-1">
       {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for category, message in messages %}<div class="alert alert-{{ category if category in ['success','warning','danger','info'] else 'info' }}" role="status">{{ message }}</div>{% endfor %}
+        {% for category, message in messages %}<div class="alert alert-{{ category if category in ['success','warning','danger','info'] else 'info' }}" role="{{ 'alert' if category == 'danger' else 'status' }}" aria-live="{{ 'assertive' if category == 'danger' else 'polite' }}">{{ message }}</div>{% endfor %}
       {% endwith %}
       {% block content %}{% endblock %}
     </main>
