@@ -4,7 +4,7 @@ from __future__ import annotations
 import secrets
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 
 class SQAError(ValueError):
@@ -45,6 +45,25 @@ def _load_plan(cur, plan_id: int, *, lock: bool = False):
 def _require_plan_permission(actor_employee_id: int, permission: str, plan):
     if not plan or not has_permission(actor_employee_id, permission, _plan_context(plan)):
         raise SQAError("SQA plan not found or not authorized.")
+
+
+def _load_authorized_plan(cur, actor_employee_id: int, permission: str, plan_id: int):
+    """Authorize against a trusted plan snapshot before locking the plan row."""
+    snapshot = _load_plan(cur, plan_id, lock=False)
+    if not snapshot:
+        raise SQAError("SQA plan not found or not authorized.")
+    if not has_permission_in_transaction(
+        cur, actor_employee_id, permission, _plan_context(snapshot),
+        lock_employee_ids=[snapshot["created_by"]],
+    ):
+        raise SQAError("SQA plan not found or not authorized.")
+    plan = _load_plan(cur, plan_id, lock=True)
+    if not plan:
+        raise SQAError("SQA plan changed; reload and try again.")
+    for key in ("plan_key", "release_key", "created_by", "department_id", "team_id"):
+        if plan.get(key) != snapshot.get(key):
+            raise SQAError("SQA plan scope changed; reload and try again.")
+    return plan
 
 
 def list_test_plans(*, actor_employee_id: int):
@@ -152,8 +171,7 @@ def add_test_case(*, actor_employee_id: int, plan_id: int, case_key: str, title:
                   preconditions: str, steps: str, expected_result: str):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id,lock=True)
-        _require_plan_permission(actor_employee_id,"sqa.case.create",plan)
+        plan=_load_authorized_plan(cur,actor_employee_id,"sqa.case.create",plan_id)
         if plan["status"]!="ACTIVE":
             raise SQAError("Test cases can only be added to active plans.")
         case_key=case_key.strip().upper(); title=title.strip(); steps=steps.strip(); expected_result=expected_result.strip()
@@ -180,8 +198,7 @@ def record_execution(*, actor_employee_id: int, plan_id: int, case_id: int, resu
         raise SQAError("Choose a valid test execution result.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id,lock=True)
-        _require_plan_permission(actor_employee_id,"sqa.execution.create",plan)
+        plan=_load_authorized_plan(cur,actor_employee_id,"sqa.execution.create",plan_id)
         if plan["status"]!="ACTIVE":
             raise SQAError("Executions can only be recorded against active plans.")
         cur.execute("SELECT test_case_id FROM sqa_test_cases WHERE test_case_id=%s AND test_plan_id=%s",(case_id,plan_id))
@@ -208,8 +225,7 @@ def create_defect(*, actor_employee_id: int, plan_id: int, execution_id: int,
         raise SQAError("Provide a valid defect title, description and severity.")
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id,lock=True)
-        _require_plan_permission(actor_employee_id,"sqa.defect.create",plan)
+        plan=_load_authorized_plan(cur,actor_employee_id,"sqa.defect.create",plan_id)
         cur.execute("""SELECT x.execution_id,x.result FROM sqa_test_executions x
             JOIN sqa_test_cases c ON c.test_case_id=x.test_case_id
             WHERE x.execution_id=%s AND c.test_plan_id=%s""",(execution_id,plan_id))
@@ -255,8 +271,7 @@ def _assert_plan_ready(cur, plan_id: int):
 def complete_test_plan(*, actor_employee_id: int, plan_id: int):
     conn=get_connection(); cur=conn.cursor(dictionary=True)
     try:
-        plan=_load_plan(cur,plan_id,lock=True)
-        _require_plan_permission(actor_employee_id,"sqa.plan.update",plan)
+        plan=_load_authorized_plan(cur,actor_employee_id,"sqa.plan.update",plan_id)
         if plan["status"]!="ACTIVE":
             raise SQAError("Only active plans can be completed.")
         _assert_plan_ready(cur,plan_id)
@@ -364,7 +379,10 @@ def update_defect_status(*, actor_employee_id: int, plan_id: int, defect_id: int
         context=ResourceContext(owner_employee_id=snapshot["created_by"],
             team_id=snapshot["team_id"],department_id=snapshot["department_id"],
             resource_type="sqa_plan",resource_id=str(snapshot["test_plan_id"]))
-        if not has_permission(actor_employee_id,"sqa.defect.update",context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "sqa.defect.update", context,
+            lock_employee_ids=[snapshot["created_by"]],
+        ):
             raise SQAError("Not authorized to update this defect.")
         if new_status not in DEFECT_TRANSITIONS.get(snapshot["status"],set()):
             raise SQAError("This defect status transition is not allowed.")
