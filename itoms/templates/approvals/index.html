@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% block title %}Approval Inbox · ITOMS{% endblock %}
-{% block content %}
-<div class="page-heading"><h1>Approval Inbox</h1><p class="text-secondary">Sequential approvals assigned to you at the current step.</p></div>
-{% if items %}<div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>Request</th><th>Resource</th><th>Requester</th><th>Reason</th><th>Submitted</th><th>Decision</th></tr></thead><tbody>
-{% for item in items %}<tr><td><strong>{{ item.request_type }}</strong><div class="small text-secondary">#{{ item.approval_request_id }}</div></td><td>{{ item.resource_type }} · {{ item.resource_id }}</td><td>{{ item.requester_name }}</td><td>{{ item.request_reason or '—' }}</td><td>{{ item.created_at }}</td><td><form method="post" action="{{ url_for('approvals.decision',request_id=item.approval_request_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token_value }}"><label class="visually-hidden" for="comment-{{ item.approval_request_id }}">Decision comment</label><input class="form-control form-control-sm mb-2" id="comment-{{ item.approval_request_id }}" name="comment" maxlength="2000" placeholder="Optional comment"><div class="d-flex gap-2"><button class="btn btn-sm btn-success" name="decision" value="APPROVED" type="submit">Approve</button><button class="btn btn-sm btn-outline-danger" name="decision" value="REJECTED" type="submit">Reject</button></div></form></td></tr>{% endfor %}
-</tbody></table></div>{% else %}<div class="card p-4"><p class="mb-0">No approvals currently assigned to you.</p></div>{% endif %}
-{% endblock %}
