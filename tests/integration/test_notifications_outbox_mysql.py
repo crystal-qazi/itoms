@@ -242,6 +242,7 @@ def test_concurrent_outbox_claimers_receive_disjoint_batches(notification_fixtur
         connection.close()
 
 
+
 def test_concurrent_stale_outbox_recovery_processes_each_claim_once(
     notification_fixture, monkeypatch,
 ):
@@ -317,12 +318,8 @@ def test_concurrent_stale_outbox_recovery_processes_each_claim_once(
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(recover_batch) for _ in range(4)]
             results = [future.result(timeout=60) for future in futures]
-    finally:
-        monkeypatch.setattr(notifications, "get_connection", original_get_connection)
+        assert results == [{"recovered": 10, "dead_lettered": 0}] * 4
 
-    assert results == [{"recovered": 10, "dead_lettered": 0}] * 4
-
-    try:
         connection = get_connection()
         cursor = connection.cursor()
         try:
@@ -354,16 +351,18 @@ def test_concurrent_stale_outbox_recovery_processes_each_claim_once(
             cursor.close()
             connection.close()
     finally:
-        # Recovery audit rows have a NULL actor; remove them explicitly so the
-        # shared fixture can safely clean up its employee and notification data.
-        cleanup = get_connection()
+        monkeypatch.setattr(notifications, "get_connection", original_get_connection)
+        # Recovery audit rows have a NULL actor; remove them even if a worker
+        # or assertion fails so the shared fixture leaves no persistent data.
+        cleanup = original_get_connection()
         cursor = cleanup.cursor()
         try:
+            placeholders = ",".join(["%s"] * len(outbox_ids))
             cursor.execute(
                 f"""DELETE FROM audit_events
                     WHERE event_key='NOTIFICATION_OUTBOX_RECOVERED'
                       AND target_type='notification_outbox'
-                      AND target_id IN ({",".join(["%s"] * len(outbox_ids))})""",
+                      AND target_id IN ({placeholders})""",
                 tuple(str(outbox_id) for outbox_id in outbox_ids),
             )
             cleanup.commit()
