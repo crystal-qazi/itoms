@@ -131,7 +131,11 @@ def test_advanced_search_route_passes_filters_and_visible_page_offset(monkeypatc
         "search": "VPN", "category_id": 7, "created_from": "2026-11-01",
         "created_to": "2026-11-28", "visible_offset": 25, "limit": 26,
     }]
-    assert "Page 2" in response.get_data(as_text=True)
+    body = response.get_data(as_text=True)
+    assert "Page 2" in body
+    assert 'aria-label="Service request pages"' in body
+    assert 'aria-current="page"' in body
+    assert '<th scope="col">Request</th>' in body
 
 def test_every_service_request_mutation_route_rejects_missing_csrf(monkeypatch):
     from itoms.web import service_requests as web
