@@ -7,7 +7,7 @@ import json
 from datetime import date, datetime
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import has_permission, has_permission_in_transaction
 from itoms.services import (
     operations, projects, service_inventory, service_requests, assets, training,
 )
@@ -78,8 +78,6 @@ def create_report(
     *, employee_id: int, report_name: str, dataset_key: str,
     columns: list[str], filters: dict | None = None,
 ) -> int:
-    if not has_permission(employee_id, "reports.create"):
-        raise ReportingError("Not authorized to create saved reports.")
     name = (report_name or "").strip()
     if not name or len(name) > 150:
         raise ReportingError("Report name is required (maximum 150 characters).")
@@ -102,6 +100,8 @@ def create_report(
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(cur, employee_id, "reports.create", None):
+            raise ReportingError("Not authorized to create saved reports.")
         cur.execute(
             """INSERT INTO saved_reports
                (report_name,dataset_key,definition,created_by)
@@ -189,6 +189,10 @@ def run_report(*, employee_id: int, report_id: int) -> tuple[str, list[str], lis
     audit = get_connection()
     audit_cur = audit.cursor()
     try:
+        if not has_permission_in_transaction(
+            audit_cur, employee_id, "reports.run", None
+        ):
+            raise ReportingError("Not authorized to run reports.")
         audit_cur.execute(
             """INSERT INTO audit_events
                (actor_employee_id,event_key,target_type,target_id,outcome,details)
