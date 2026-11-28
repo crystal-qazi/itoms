@@ -235,8 +235,15 @@ def has_permissions_in_transaction(
 def has_permission_in_transaction(
     cur, employee_id: int, permission_key: str,
     resource: ResourceContext | None = None,
+    *, lock_employee_ids: list[int] | None = None,
 ) -> bool:
-    """Transaction-bound permission check for one trusted resource/action."""
+    """Transaction-bound permission check for one trusted resource/action.
+
+    Additional employee rows are locked in the same sorted employee-first
+    phase when the protected mutation also changes a target employee (for
+    example, assigning a task to another employee).
+    """
     return has_permissions_in_transaction(
-        cur, employee_id, permission_key, [resource]
+        cur, employee_id, permission_key, [resource],
+        lock_employee_ids=lock_employee_ids,
     )
