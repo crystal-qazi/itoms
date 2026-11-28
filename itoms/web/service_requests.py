@@ -7,9 +7,11 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from itoms.security.decorators import login_required
 from itoms.services.authorization import ResourceContext, has_permission
 from itoms.services.service_requests import (
-    ServiceRequestError, add_comment, assign_request, create_category, create_request,
-    get_request_detail, list_categories, list_category_admin, list_requests, list_comments,
-    set_category_active, transition_request, list_assignable_teams, list_assignable_members,
+    ServiceRequestError, add_comment, assign_request, create_category, create_priority,
+    create_request, get_request_detail, list_categories, list_category_admin,
+    list_priority_admin, list_priorities, list_requests, list_comments,
+    set_category_active, transition_request, update_priority,
+    list_assignable_teams, list_assignable_members,
 )
 
 service_requests_bp = Blueprint("service_requests", __name__, url_prefix="/service-requests")
@@ -32,12 +34,17 @@ def index():
         abort(400)
     can_create = has_permission(g.employee_id, "service_request.create")
     can_manage_categories = has_permission(g.employee_id, "service_request.categories.manage")
+    can_manage_priorities = has_permission(g.employee_id, "service_request.priorities.manage")
     categories = list_categories()
+    priorities = list_priorities()
     category_admin = list_category_admin(actor_employee_id=g.employee_id) if can_manage_categories else []
+    priority_admin = list_priority_admin(actor_employee_id=g.employee_id) if can_manage_priorities else []
     return render_template(
         "service_requests/index.html", requests=rows, categories=categories,
-        category_admin=category_admin, can_create=can_create,
-        can_manage_categories=can_manage_categories,
+        priorities=priorities, default_priority=priorities[0]["priority_key"] if priorities else "",
+        category_admin=category_admin, priority_admin=priority_admin,
+        can_create=can_create, can_manage_categories=can_manage_categories,
+        can_manage_priorities=can_manage_priorities,
         csrf_token_value=session.get("csrf_token", ""),
         selected_status=status or "", selected_priority=priority or "",
     )
@@ -158,6 +165,43 @@ def category_active(category_id: int):
         flash(str(exc), "danger")
     return redirect(url_for("service_requests.index"))
 
+
+
+@service_requests_bp.post("/priorities")
+@login_required
+def priority_create():
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        create_priority(
+            actor_employee_id=g.employee_id,
+            priority_key=request.form.get("priority_key", ""),
+            priority_label=request.form.get("priority_label", ""),
+            sort_order=int(request.form.get("sort_order", "100")),
+        )
+        flash("Service Request priority created.", "success")
+    except (ServiceRequestError, ValueError, TypeError) as exc:
+        flash(str(exc) or "Invalid priority configuration.", "danger")
+    return redirect(url_for("service_requests.index"))
+
+
+@service_requests_bp.post("/priorities/<priority_key>/update")
+@login_required
+def priority_update(priority_key: str):
+    if not _valid_csrf():
+        return "Invalid request token", 400
+    try:
+        update_priority(
+            actor_employee_id=g.employee_id,
+            priority_key=priority_key,
+            priority_label=request.form.get("priority_label", ""),
+            sort_order=int(request.form.get("sort_order", "100")),
+            is_active=request.form.get("is_active") == "1",
+        )
+        flash("Service Request priority updated.", "success")
+    except (ServiceRequestError, ValueError, TypeError) as exc:
+        flash(str(exc) or "Invalid priority configuration.", "danger")
+    return redirect(url_for("service_requests.index"))
 
 
 @service_requests_bp.post("/<int:request_id>/comments")
