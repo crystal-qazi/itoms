@@ -104,3 +104,25 @@ def test_decision_rejects_oversized_comment_before_database(monkeypatch):
             decision="APPROVED",
             comment="x" * 4001,
         )
+
+
+
+def test_cancel_approval_checks_non_requester_permission_in_transaction(monkeypatch):
+    connection = FakeConnection()
+    connection.fake_cursor.rows = iter([
+        (10, "PENDING", "GENERAL", "document", "123"),
+        (10, "PENDING", "GENERAL", "document", "123"),
+    ])
+    checks = []
+    monkeypatch.setattr(
+        approvals, "has_permission_in_transaction",
+        lambda cur, actor, key, resource=None, **kwargs:
+            checks.append((actor, key, resource, kwargs.get("lock_employee_ids"))) or True,
+    )
+    monkeypatch.setattr(approvals, "get_connection", lambda: connection)
+
+    approvals.cancel_approval(actor_employee_id=99, request_id=42)
+
+    assert checks == [(99, "approvals.cancel", None, [10])]
+    assert connection.committed
+    assert any("APPROVAL_CANCELLED" in sql for sql, _ in connection.fake_cursor.statements)
