@@ -1153,3 +1153,77 @@ def test_own_scope_reader_http_mutations_are_denied_without_side_effects(
         finally:
             cursor.close()
             cleanup.close()
+
+
+
+def test_comment_creation_rolls_back_when_audit_write_fails(service_request_fixture):
+    """A failed comment audit insert must roll back comment and activity writes."""
+    from itoms.services.service_requests import add_comment, create_request
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Comment audit rollback",
+        description="Verify comment, activity and audit writes share one transaction.",
+    )
+    trigger_name = f"trg_sr_comment_audit_fail_{data['suffix']}"
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"""CREATE TRIGGER `{trigger_name}`
+                BEFORE INSERT ON audit_events
+                FOR EACH ROW
+                BEGIN
+                    IF NEW.event_key = 'SERVICE_REQUEST_COMMENTED' THEN
+                        SIGNAL SQLSTATE '45000'
+                            SET MESSAGE_TEXT = 'forced Service Request comment audit failure';
+                    END IF;
+                END"""
+        )
+    finally:
+        cursor.close()
+        connection.close()
+
+    try:
+        import pytest
+
+        with pytest.raises(Exception, match="forced Service Request comment audit failure"):
+            add_comment(
+                actor_employee_id=data["requester_id"],
+                request_id=request_id,
+                body="This comment must be rolled back with its failed audit write.",
+            )
+
+        connection = _db()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_comments WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 0
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_activity WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                """SELECT COUNT(*) FROM audit_events
+                   WHERE target_type='service_request' AND target_id=%s
+                     AND event_key='SERVICE_REQUEST_COMMENTED'""",
+                (str(request_id),),
+            )
+            assert cursor.fetchone()[0] == 0
+        finally:
+            cursor.close()
+            connection.close()
+    finally:
+        cleanup = _db()
+        cursor = cleanup.cursor()
+        try:
+            cursor.execute(f"DROP TRIGGER IF EXISTS `{trigger_name}`")
+            cleanup.commit()
+        finally:
+            cursor.close()
+            cleanup.close()
