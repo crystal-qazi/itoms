@@ -79,6 +79,6 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Added `tests/integration/test_service_requests_mysql.py::test_service_request_detail_hides_requests_outside_actor_own_scope` on `feature/security-service-request-cross-scope-tests`.
 - Test provisions an outsider employee with only an OWN-scoped `service_request.read` grant and verifies the authenticated detail route returns the same generic 404 response as a missing request.
 - Draft PR: https://github.com/crystal-qazi/itoms/pull/1, targeting `feature/itoms-foundation` (not `main`, to avoid mixing the divergent canonical-memory and implementation branches).
-- Latest GitHub Actions run at this update: `46121953722`; Python test suite passed, while dependency/security checks and MySQL migration/integration job were still running. Overall CI result is pending.
+- Latest GitHub Actions run `46121953722` completed successfully. Both `python-quality` and `mysql-migrations` jobs passed, including the MySQL integration suite.
 - An earlier intermediate commit/run failed because the test was briefly placed in a separate module while depending on a module-local fixture. The test was moved into the fixture-owning integration module and the misplaced file removed. Do not treat the intermediate failure as the final branch state; verify the latest run.
 - No application production code was modified. The only code change is an integration regression test. No production-readiness conclusion is implied.
