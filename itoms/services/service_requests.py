@@ -199,8 +199,6 @@ def list_category_admin(*, actor_employee_id: int) -> list[dict]:
 
 def create_category(*, actor_employee_id: int, category_name: str, description: str = "") -> int:
     """Create an Admin-managed request category and audit the change."""
-    if not has_permission(actor_employee_id, "service_request.categories.manage"):
-        raise ServiceRequestError("Not authorized to manage service request categories.")
     name = (category_name or "").strip()
     detail = (description or "").strip()
     if not 2 <= len(name) <= 120 or len(detail) > 500:
@@ -208,6 +206,10 @@ def create_category(*, actor_employee_id: int, category_name: str, description: 
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.categories.manage"
+        ):
+            raise ServiceRequestError("Not authorized to manage service request categories.")
         cur.execute(
             """INSERT INTO service_request_categories
                (category_name,description,created_by) VALUES (%s,%s,%s)""",
@@ -233,11 +235,13 @@ def create_category(*, actor_employee_id: int, category_name: str, description: 
 
 def set_category_active(*, actor_employee_id: int, category_id: int, is_active: bool) -> bool:
     """Activate/deactivate a category; existing requests retain their category reference."""
-    if not has_permission(actor_employee_id, "service_request.categories.manage"):
-        raise ServiceRequestError("Not authorized to manage service request categories.")
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.categories.manage"
+        ):
+            raise ServiceRequestError("Not authorized to manage service request categories.")
         cur.execute(
             "SELECT category_name,is_active FROM service_request_categories WHERE category_id=%s FOR UPDATE",
             (category_id,),
@@ -596,16 +600,21 @@ def transition_request(
         context = _context(cur, request_id)
         if not context:
             raise ServiceRequestError("Service request was not found.")
-        if not has_permission(actor_employee_id, "service_request.update", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service_request.update", context
+        ):
             raise ServiceRequestError("Not authorized to update this service request.")
         cur.execute(
-            "SELECT status,pending_reason,requester_employee_id FROM service_requests WHERE request_id=%s FOR UPDATE",
+            """SELECT status,pending_reason,requester_employee_id,assigned_team_id
+               FROM service_requests WHERE request_id=%s FOR UPDATE""",
             (request_id,),
         )
         row = cur.fetchone()
         if not row:
             raise ServiceRequestError("Service request was not found.")
-        old_status, current_pending_reason, requester_employee_id = row
+        if row[2] != context.owner_employee_id or row[3] != context.team_id:
+            raise ServiceRequestError("Service request scope changed; retry the operation.")
+        old_status, current_pending_reason, requester_employee_id, _assigned_team_id = row
         next_pending_reason = (
             hold_reason if new_status == "ON_HOLD"
             else (None if old_status == "ON_HOLD" else current_pending_reason)
