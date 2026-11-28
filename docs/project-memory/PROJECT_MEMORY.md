@@ -198,5 +198,12 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Merged PR #6 into `feature/itoms-foundation` using squash merge. Merge commit: `e540f3502a4da0e9a46e2c9591cc05338760adc6`.
 - Original PR [#7](https://github.com/crystal-qazi/itoms/pull/7) had both checks pass on its original head (`python-quality` and `mysql-migrations`, run [46123617945](https://github.com/crystal-qazi/itoms/actions/runs/46123617945)), but became unmergeable after PR #6 changed the same integration-test file. It was closed as superseded, not merged.
 - Carried the status rollback test forward onto the latest implementation head without force-pushing: new branch `feature/security-service-request-status-audit-rollback-rebased`, commit `229e160273adc2f784ebe51f465472eb6c1678eb`, PR [#8](https://github.com/crystal-qazi/itoms/pull/8).
-- PR #8 contains both the already-merged assignment test in its base and the status rollback test. Its fresh `python-quality` check passed; `mysql-migrations` was still in progress at this memory update. Do not merge until both fresh checks pass.
+- PR #8 contains both the already-merged assignment test in its base and the status rollback test. Its fresh `python-quality` and `mysql-migrations` checks both passed (run [46123807867](https://github.com/crystal-qazi/itoms/actions/runs/46123807867)). PR #8 was squash-merged into `feature/itoms-foundation` as `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0`.
 - Test-only work; no production service or authorization logic changed.
+
+
+### 2026-11-28 — Status audit rollback regression merged
+- Fresh GitHub Actions run [46123807867](https://github.com/crystal-qazi/itoms/actions/runs/46123807867) for PR #8 passed both `python-quality` and `mysql-migrations`.
+- PR [#8](https://github.com/crystal-qazi/itoms/pull/8) was squash-merged into `feature/itoms-foundation` as `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0`.
+- The status rollback test now sits after the merged assignment rollback test. PR #7 remains closed as superseded; no force-push was used.
+- PRs #6 and #8 add test-only rollback coverage. No production code was modified.
