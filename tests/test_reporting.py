@@ -35,3 +35,22 @@ def test_csv_export_formats_dates_and_lists():
     )
     assert "2027-01-02" in csv_text
     assert "Network, Oracle" in csv_text
+
+def test_service_request_report_priority_filter_uses_active_configured_catalogue(monkeypatch):
+    monkeypatch.setattr(reporting, "has_permission", lambda *_: True)
+    monkeypatch.setattr(
+        reporting.service_requests, "list_priorities",
+        lambda: [{"priority_key": "URGENT"}, {"priority_key": "NORMAL"}],
+    )
+    monkeypatch.setattr(
+        reporting, "get_connection",
+        lambda: pytest.fail("invalid priority filters must be rejected before database writes"),
+    )
+    with pytest.raises(reporting.ReportingError, match="Invalid priority filter"):
+        reporting.create_report(
+            employee_id=1, report_name="Inactive priority",
+            dataset_key="service_requests",
+            columns=["request_number", "priority"],
+            filters={"priority": "CRITICAL"},
+        )
+
