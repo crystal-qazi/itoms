@@ -42,7 +42,7 @@ def role_assignment_fixture():
         )
         department_id = int(cursor.lastrowid)
         employee_ids = []
-        for label in ("assigner", "revoker", "target"):
+        for label in ("assigner", "revoker", "target", "managed-only"):
             cursor.execute(
                 """INSERT INTO employees
                    (employee_code,full_name,department_id,is_active)
@@ -50,7 +50,7 @@ def role_assignment_fixture():
                 (f"RAC-{suffix}-{label}", f"Role assignment {label}", department_id),
             )
             employee_ids.append(int(cursor.lastrowid))
-        assigner_id, revoker_id, target_employee_id = employee_ids
+        assigner_id, revoker_id, target_employee_id, managed_only_id = employee_ids
 
         team_ids = []
         for label in ("managed-a", "managed-b"):
@@ -131,6 +131,7 @@ def role_assignment_fixture():
         "assigner_id": assigner_id,
         "revoker_id": revoker_id,
         "target_employee_id": target_employee_id,
+        "managed_only_id": managed_only_id,
         "assigner_role_id": assigner_role_id,
         "revoker_role_id": revoker_role_id,
         "target_role_id": target_role_id,
@@ -142,15 +143,15 @@ def role_assignment_fixture():
     cleanup = get_connection()
     cursor = cleanup.cursor()
     try:
-        actor_ids = (assigner_id, revoker_id, target_employee_id)
+        actor_ids = (assigner_id, revoker_id, target_employee_id, managed_only_id)
         marks = ",".join(["%s"] * len(actor_ids))
         cursor.execute(
             f"DELETE FROM audit_events WHERE actor_employee_id IN ({marks})",
             actor_ids,
         )
         cursor.execute(
-            "DELETE FROM team_management_assignments WHERE manager_employee_id=%s",
-            (target_employee_id,),
+            f"DELETE FROM team_management_assignments WHERE manager_employee_id IN ({marks})",
+            actor_ids,
         )
         cursor.execute(
             f"DELETE FROM employee_team_memberships WHERE employee_id IN ({marks})",
@@ -614,3 +615,61 @@ def test_authorization_locking_queries_use_indexes_under_repeatable_read(
     finally:
         cursor.close()
         connection.close()
+
+
+
+def test_managed_team_mapping_revocation_wins_before_role_assignment(
+    role_assignment_fixture, monkeypatch
+):
+    from itoms.services import directory_admin, identity_admin
+
+    data = role_assignment_fixture
+    original_check = directory_admin.has_permissions_in_transaction
+    revocation_locked = threading.Event()
+    assignment_check_started = threading.Event()
+    allow_revocation = threading.Event()
+    original_assignment_check = identity_admin.has_permissions_in_transaction
+
+    def coordinated_revocation(cur, actor_employee_id, permission_key, resources, **kwargs):
+        result = original_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+        if actor_employee_id == data["revoker_id"] and permission_key == "identity.directory.manage":
+            revocation_locked.set()
+            if not allow_revocation.wait(timeout=15):
+                raise TimeoutError("test did not release manager mapping revocation")
+        return result
+
+    def track_assignment(cur, actor_employee_id, permission_key, resources, **kwargs):
+        if actor_employee_id == data["assigner_id"]:
+            assignment_check_started.set()
+        return original_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+
+    monkeypatch.setattr(directory_admin, "has_permissions_in_transaction", coordinated_revocation)
+    monkeypatch.setattr(identity_admin, "has_permissions_in_transaction", track_assignment)
+
+    def remove_manager():
+        with data["app"].app_context():
+            return directory_admin.remove_team_manager(
+                actor_employee_id=data["revoker_id"],
+                manager_employee_id=data["managed_only_id"],
+                team_id=data["team_ids"][0],
+            )
+
+    def assign_managed_scope():
+        with data["app"].app_context():
+            return identity_admin.assign_role(
+                actor_employee_id=data["assigner_id"],
+                employee_id=data["managed_only_id"],
+                role_id=data["target_role_id"],
+                scope_type="MANAGED_TEAMS",
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        removal_future = pool.submit(remove_manager)
+        assert revocation_locked.wait(timeout=10), "manager mapping removal did not acquire its locks"
+        assignment_future = pool.submit(assign_managed_scope)
+        assert assignment_check_started.wait(timeout=10), "MANAGED_TEAMS assignment did not start authorization"
+        assert not assignment_future.done(), "assignment passed while manager mapping removal held locks"
+        allow_revocation.set()
+        assert removal_future.result(timeout=15) is True
+        with pytest.raises(identity_admin.IdentityAdministrationError, match="Managed-team scope changed"):
+            assignment_future.result(timeout=15)
