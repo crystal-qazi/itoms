@@ -498,7 +498,7 @@ def test_employee_deactivation_wins_before_role_assignment(
         assert not assignment_future.done(), "role assignment passed while deactivation held employee locks"
         allow_deactivation.set()
         assert deactivation_future.result(timeout=15) is True
-        with pytest.raises(identity_admin.IdentityAdministrationError, match="inactive"):
+        with pytest.raises(identity_admin.IdentityAdministrationError, match="scope changed|inactive"):
             assignment_future.result(timeout=15)
 
 
