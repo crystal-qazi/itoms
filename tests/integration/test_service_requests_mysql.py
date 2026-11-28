@@ -432,11 +432,12 @@ def test_comment_authorization_and_role_permission_revocation_share_transaction_
     def revoke():
         started.set()
         try:
-            outcome["removed"] = revoke_role_permission(
-                actor_employee_id=data["administrator_id"],
-                role_id=data["requester_role_id"],
-                permission_key="service_request.update",
-            )
+            with data["app"].app_context():
+                outcome["removed"] = revoke_role_permission(
+                    actor_employee_id=data["administrator_id"],
+                    role_id=data["requester_role_id"],
+                    permission_key="service_request.update",
+                )
         except Exception as exc:  # surfaced in the main test thread
             outcome["error"] = exc
         finally:
