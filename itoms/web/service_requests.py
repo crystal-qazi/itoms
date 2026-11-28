@@ -28,9 +28,18 @@ def _valid_csrf() -> bool:
 def index():
     status = request.args.get("status", "").strip().upper() or None
     priority = request.args.get("priority", "").strip().upper() or None
+    search = request.args.get("search", "").strip() or None
+    raw_category = request.args.get("category_id", "").strip()
     try:
-        rows = list_requests(actor_employee_id=g.employee_id, status=status, priority=priority)
-    except ServiceRequestError:
+        category_id = int(raw_category) if raw_category else None
+        created_from = request.args.get("created_from", "").strip() or None
+        created_to = request.args.get("created_to", "").strip() or None
+        rows = list_requests(
+            actor_employee_id=g.employee_id, status=status, priority=priority,
+            search=search, category_id=category_id,
+            created_from=created_from, created_to=created_to,
+        )
+    except (ServiceRequestError, ValueError):
         abort(400)
     can_create = has_permission(g.employee_id, "service_request.create")
     can_manage_categories = has_permission(g.employee_id, "service_request.categories.manage")
@@ -47,6 +56,8 @@ def index():
         can_manage_priorities=can_manage_priorities,
         csrf_token_value=session.get("csrf_token", ""),
         selected_status=status or "", selected_priority=priority or "",
+        selected_category=raw_category, search=search or "",
+        created_from=created_from or "", created_to=created_to or "",
     )
 
 
