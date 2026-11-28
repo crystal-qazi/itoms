@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permissions_in_transaction
 
 
 class DirectoryError(ValueError):
@@ -10,33 +10,29 @@ class DirectoryError(ValueError):
 
 
 def _authorize_membership_change(
-    *, actor_employee_id: int, employee_id: int, team_id: int
+    cur, *, actor_employee_id: int, employee_id: int, team_id: int
 ) -> int:
-    """Check department/team-scoped directory authority before a membership write."""
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """SELECT e.department_id,t.department_id
-               FROM employees e CROSS JOIN teams t
-               WHERE e.employee_id=%s AND e.is_active=TRUE
-                 AND t.team_id=%s""",
-            (employee_id, team_id),
-        )
-        row = cur.fetchone()
-    finally:
-        cur.close()
-        conn.close()
-    if not row:
+    """Authorize a membership mutation inside its owning transaction."""
+    cur.execute(
+        """SELECT e.department_id,e.is_active,t.department_id,t.is_active
+           FROM employees e CROSS JOIN teams t
+           WHERE e.employee_id=%s AND t.team_id=%s""",
+        (employee_id, team_id),
+    )
+    row = cur.fetchone()
+    if not row or not row[1] or not row[3]:
         raise DirectoryError("Employee or team does not exist or is inactive.")
-    employee_department_id, team_department_id = row
+    employee_department_id, _employee_active, team_department_id, _team_active = row
     if employee_department_id != team_department_id:
         raise DirectoryError("Employee and team must belong to the same department.")
     context = ResourceContext(
         owner_employee_id=employee_id, team_id=team_id,
         department_id=team_department_id,
     )
-    if not has_permission(actor_employee_id, "identity.directory.manage", context):
+    if not has_permissions_in_transaction(
+        cur, actor_employee_id, "identity.directory.manage", [context],
+        lock_employee_ids=[employee_id],
+    ):
         raise DirectoryError("Not authorized to manage this employee's team membership.")
     return int(team_department_id)
 
@@ -48,17 +44,20 @@ def assign_employee_to_team(
     """Assign an employee to a team; serialize membership changes on the employee row."""
     if employee_id <= 0 or team_id <= 0:
         raise DirectoryError("Employee and team IDs must be positive.")
-    authorized_department_id = None
-    if actor_employee_id is not None:
-        if actor_employee_id <= 0:
-            raise DirectoryError("Actor employee ID must be positive.")
-        authorized_department_id = _authorize_membership_change(
-            actor_employee_id=actor_employee_id, employee_id=employee_id, team_id=team_id
-        )
+    if actor_employee_id is not None and actor_employee_id <= 0:
+        raise DirectoryError("Actor employee ID must be positive.")
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Membership writers use one lock order: employee -> team -> membership rows.
+        authorized_department_id = None
+        if actor_employee_id is not None:
+            authorized_department_id = _authorize_membership_change(
+                cur, actor_employee_id=actor_employee_id,
+                employee_id=employee_id, team_id=team_id,
+            )
+        # Membership writers use one lock order: sorted actor/target employees
+        # -> team -> membership rows. The authorization helper already holds
+        # these parent locks for actor-aware operations.
         # The employee lock serializes primary-team changes across all of that employee's teams.
         cur.execute(
             "SELECT department_id, is_active FROM employees WHERE employee_id=%s FOR UPDATE",
@@ -127,18 +126,19 @@ def remove_employee_from_team(
     """Remove membership using the same employee -> team -> membership lock order."""
     if employee_id <= 0 or team_id <= 0:
         raise DirectoryError("Employee and team IDs must be positive.")
-    authorized_department_id = None
-    if actor_employee_id is not None:
-        if actor_employee_id <= 0:
-            raise DirectoryError("Actor employee ID must be positive.")
-        authorized_department_id = _authorize_membership_change(
-            actor_employee_id=actor_employee_id, employee_id=employee_id, team_id=team_id
-        )
+    if actor_employee_id is not None and actor_employee_id <= 0:
+        raise DirectoryError("Actor employee ID must be positive.")
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Do not start by locking the membership: assignment locks the employee first.
-        # A shared parent-first order prevents the assign/remove deadlock cycle.
+        authorized_department_id = None
+        if actor_employee_id is not None:
+            authorized_department_id = _authorize_membership_change(
+                cur, actor_employee_id=actor_employee_id,
+                employee_id=employee_id, team_id=team_id,
+            )
+        # Do not start by locking the membership: assignment locks sorted
+        # parent employee rows, then team, then membership.
         cur.execute(
             "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
             (employee_id,),
