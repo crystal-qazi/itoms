@@ -538,6 +538,22 @@ def assign_request(
                        JSON_OBJECT('team_id',%s,'employee_id',%s))""",
             (actor_employee_id, str(request_id), assigned_team_id, assigned_employee_id),
         )
+        _queue_request_notification(
+            cur, recipient_employee_id=context.owner_employee_id,
+            actor_employee_id=actor_employee_id,
+            notification_type="SERVICE_REQUEST_ASSIGNMENT",
+            title="Your service request was assigned",
+            body=f"Service request #{request_id} has been assigned to a team.",
+            request_id=request_id,
+        )
+        _queue_request_notification(
+            cur, recipient_employee_id=assigned_employee_id,
+            actor_employee_id=actor_employee_id,
+            notification_type="SERVICE_REQUEST_ASSIGNMENT",
+            title="A service request was assigned to you",
+            body=f"Service request #{request_id} has been assigned to you.",
+            request_id=request_id,
+        )
         conn.commit()
     except Exception:
         conn.rollback()
