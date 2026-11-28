@@ -455,17 +455,31 @@ def create_request(
         )
         if not cur.fetchone():
             raise ServiceRequestError("Service Request priority does not exist or is inactive.")
-        request_number = (
-            "SR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-"
-            + secrets.token_hex(3).upper()
-        )
-        cur.execute(
-            """INSERT INTO service_requests
-               (request_number,title,description,category_id,requester_employee_id,priority,created_by)
-               VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-            (request_number, name, detail, category_id, requester_id, priority_key, actor_employee_id),
-        )
-        request_id = int(cur.lastrowid)
+        request_id = None
+        for attempt in range(5):
+            request_number = (
+                "SR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-"
+                + secrets.token_hex(8).upper()
+            )
+            try:
+                cur.execute(
+                    """INSERT INTO service_requests
+                       (request_number,title,description,category_id,requester_employee_id,priority,created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                    (request_number, name, detail, category_id, requester_id, priority_key, actor_employee_id),
+                )
+            except Exception as exc:
+                # The only unique key on this insert is request_number. Retry
+                # that collision only; propagate every other database error.
+                if getattr(exc, "errno", None) == 1062 and attempt < 4:
+                    continue
+                if getattr(exc, "errno", None) == 1062:
+                    raise ServiceRequestError("Could not allocate a unique request number; retry the submission.") from exc
+                raise
+            request_id = int(cur.lastrowid)
+            break
+        if request_id is None:
+            raise ServiceRequestError("Could not allocate a unique request number; retry the submission.")
         cur.execute(
             """INSERT INTO service_request_activity
                (request_id,actor_employee_id,activity_key,new_value)
