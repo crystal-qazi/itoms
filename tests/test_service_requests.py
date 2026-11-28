@@ -23,7 +23,7 @@ def test_create_request_rejects_invalid_priority_before_database(monkeypatch):
     with pytest.raises(service_requests.ServiceRequestError, match="priority"):
         service_requests.create_request(
             actor_employee_id=1, title="Need access", description="Please provide access.",
-            priority="URGENT",
+            priority="X" * 31,
         )
 
 
@@ -81,3 +81,26 @@ def test_comment_validation_rejects_invalid_body_before_database(monkeypatch, bo
         service_requests.add_comment(
             actor_employee_id=1, request_id=7, body=body,
         )
+
+def test_create_priority_rejects_invalid_key_before_database(monkeypatch):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened for an invalid priority key"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match="Priority key"):
+        service_requests.create_priority(
+            actor_employee_id=1, priority_key="X", priority_label="Urgent",
+        )
+
+
+def test_update_priority_rejects_boolean_sort_order_before_database(monkeypatch):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened for an invalid sort order"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match="sort order"):
+        service_requests.update_priority(
+            actor_employee_id=1, priority_key="HIGH", priority_label="High",
+            sort_order=True, is_active=True,
+        )
+
