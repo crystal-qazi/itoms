@@ -121,10 +121,11 @@ def has_permissions_in_transaction(
     managed_team_ids: set[int] = set()
     for team_id in team_ids:
         cur.execute(
-            "SELECT team_id FROM teams WHERE team_id=%s AND is_active=TRUE FOR UPDATE",
+            "SELECT is_active FROM teams WHERE team_id=%s FOR UPDATE",
             (team_id,),
         )
-        if cur.fetchone():
+        team = cur.fetchone()
+        if team and team[0]:
             active_team_ids.add(team_id)
             cur.execute(
                 """SELECT 1 FROM employee_team_memberships
