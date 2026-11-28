@@ -66,7 +66,7 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 5. **Accessibility — open:** conduct keyboard-only, visible-focus, screen-reader, contrast, zoom/reflow, target-size, Light/Dark and narrow-mobile review; run an automated accessibility scan and record remediation. Source inspection is not a substitute for manual testing.
 6. **Operations/deployment — open:** validate worker scheduling/supervision, stale-claim and backlog alerting, SMTP approval, deployment configuration, backups/restores and smoke tests in a safe target environment.
 7. **Reporting — open decision/follow-up:** shared saved-report fields already exist; decide whether dedicated Service Request dashboards and aggregate analytics are required in the next module increment.
-8. **Branch reconciliation — open:** recheck current `main` versus `feature/itoms-foundation` divergence and prepare a reviewed merge/cherry-pick plan for canonical memory policy. Do not overwrite, force-push or merge automatically.
+8. **Branch separation — verified/intentional:** comparison shows `main` is 53 commits ahead of the implementation branch while `feature/itoms-foundation` is 627 commits ahead; the full 54-commit main-only delta from merge base consists exclusively of the four `docs/project-memory/` files. Keep canonical memory on `main` and implementation on `feature/itoms-foundation`; no merge/cherry-pick is required or recommended. Do not overwrite or force-push either branch.
 9. **Migration count — resolved:** the complete implementation-branch Git tree contains exactly 43 SQL files under `itoms/db/migrations/versions/`, numbered consecutively `001`–`043`. README was corrected through PR [#3](https://github.com/crystal-qazi/itoms/pull/3), merged as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`. The change was documentation-only; no CI workflow was triggered.
 
 ## 6. Honest completion status at initial review (historical snapshot)
@@ -211,7 +211,7 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Worker supervision, backlog/stale-claim alerting, operational ownership and production SMTP approval.
 - Deployment acceptance, least-privilege runtime/migration credentials, backup/restore drill and production smoke testing.
 - Decision on dedicated dashboards and aggregate analytics beyond shared saved reports.
-- Safe branch reconciliation and migration of canonical memory policy into the active implementation branch.
+- Branch separation was reviewed: the main-only delta consists exclusively of canonical project-memory documents. Keep these on `main`; do not merge them into the implementation branch.
 - Historical Q1–Q275 decision backfill and local specialist-skill installation verification.
 
 No production application or notification-worker code was changed in PRs #11–#14; these increments add tests and documentation only. Passing CI for these test PRs does not establish production readiness.
