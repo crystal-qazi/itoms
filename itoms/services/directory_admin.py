@@ -114,7 +114,6 @@ def create_team(*, actor_employee_id: int, team_name: str) -> int:
     name = (team_name or "").strip()
     if not name or len(name) > 150:
         raise DirectoryAdministrationError("Team name is required and must be at most 150 characters.")
-    department_id = _actor_department(actor_employee_id)
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -123,8 +122,14 @@ def create_team(*, actor_employee_id: int, team_name: str) -> int:
             (actor_employee_id,),
         )
         actor = cur.fetchone()
-        if not actor or not actor[1] or actor[0] != department_id:
-            raise DirectoryAdministrationError("Actor department changed; retry the operation.")
+        if not actor or not actor[1] or actor[0] is None:
+            raise DirectoryAdministrationError("An active department-scoped employee is required.")
+        department_id = int(actor[0])
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.directory.manage",
+            [ResourceContext(department_id=department_id)],
+        ):
+            raise DirectoryAdministrationError("Not authorized to create teams in this department.")
         cur.execute(
             "SELECT 1 FROM teams WHERE department_id=%s AND team_name=%s FOR UPDATE",
             (department_id, name),
@@ -163,10 +168,19 @@ def set_team_active(
             or actor_employee_id <= 0 or not isinstance(team_id, int)
             or isinstance(team_id, bool) or team_id <= 0 or not isinstance(is_active, bool)):
         raise DirectoryAdministrationError("Valid actor/team IDs and an active-state boolean are required.")
-    department_id = _actor_department(actor_employee_id)
     conn = get_connection()
     cur = conn.cursor()
     try:
+        cur.execute("SELECT department_id FROM teams WHERE team_id=%s", (team_id,))
+        team_snapshot = cur.fetchone()
+        if not team_snapshot or team_snapshot[0] is None:
+            raise DirectoryAdministrationError("Team does not exist in a department.")
+        department_id = int(team_snapshot[0])
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.directory.manage",
+            [ResourceContext(team_id=team_id, department_id=department_id)],
+        ):
+            raise DirectoryAdministrationError("Not authorized to manage this team.")
         cur.execute(
             "SELECT department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
             (actor_employee_id,),
@@ -246,10 +260,14 @@ def deactivate_employee(*, actor_employee_id: int, employee_id: int) -> bool:
         context = ResourceContext(
             owner_employee_id=employee_id, department_id=department_id,
         )
-        if not has_permission(actor_employee_id, "identity.directory.manage", context):
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.directory.manage", [context],
+            lock_employee_ids=[employee_id],
+        ):
             raise DirectoryAdministrationError("Not authorized to deactivate this employee.")
 
-        # Lock actor and target in deterministic employee-ID order.
+        # The evaluator already holds actor and target employees in deterministic
+        # employee-ID order; this locking read refreshes and validates their state.
         lock_ids = sorted({actor_employee_id, employee_id})
         marks = ",".join(["%s"] * len(lock_ids))
         cur.execute(
