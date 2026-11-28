@@ -1,21 +1,22 @@
 # ITOMS Engineering Baseline
 
 ## Purpose
-This is the central ITOMS repository. The finalized Master Requirements & System Blueprint and approved decisions govern implementation.
+This is the central ITOMS repository. The committed Master Requirements & System Blueprint v1.0 is the authoritative planning baseline, together with the original approved decision record when available.
 
 ## Verified repository state
 - Repository: crystal-qazi/itoms; default branch: main.
 - Working integration branch: foundation/engineering-skills-baseline.
-- Flask/Python and native MySQL are established implementation constraints.
-- Three specialist skill entry points are committed under skills/: UI/UX Engineer v1.0.0, Full-Stack Engineer v1.0.0, and Security Engineer v1.0.0.
+- Authoritative Blueprint: `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md` (v1.0, Planning Finalized).
+- Flask/Python, MySQL, Bootstrap, private hospital intranet deployment, and no Docker are explicit project constraints.
+- Three specialist skill entry points are committed under `skills/`: UI/UX Engineer v1.0.0, Full-Stack Engineer v1.0.0, and Security Engineer v1.0.0.
 - Full-Stack references include engineering playbook, validation checklist and decision provenance.
-- The original complete UI/UX and Security package references/templates have not yet been expanded into this repository.
-- Full-Stack Decisions 27–29 are recorded; Decisions 1–26 remain unverified pending the authoritative decision record.
-- The finalized Master Requirements & System Blueprint has not yet been located in the repository or accessible project files.
+- UI/UX and Security entry points are concise repository-integrated versions; their complete original package references/templates have not yet been expanded into this repository.
+- Full-Stack Decisions 27–29 are recorded; Decisions 1–26 remain unverified pending the original decision record.
+- The Blueprint identifies 19 sections, including 18 core operational modules/services plus shared platform capabilities, and explicitly lists current-scope exclusions and a future AI roadmap.
 
-## Blockers before representative validation
-1. Add the authoritative Master Blueprint and original decision record.
-2. Expand and verify complete UI/UX and Security package references/templates.
+## Remaining prerequisites before representative validation
+1. Obtain/commit the original decision record for traceability of Decisions 1–26; do not reconstruct them.
+2. Expand and verify complete UI/UX and Security package references/templates from their original v1.0.0 packages.
 3. Cross-check all skill requirements against the Blueprint and each other.
 4. Select a representative module from the Blueprint; do not invent a workflow or data model.
 
