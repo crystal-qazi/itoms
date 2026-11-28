@@ -191,3 +191,12 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - PR [#7](https://github.com/crystal-qazi/itoms/pull/7), branch `feature/security-service-request-status-audit-rollback`, head `12a68b48c34502edf12e73c304f9801625338a17`: adds MySQL test forcing `SERVICE_REQUEST_STATUS_CHANGED` audit insertion to fail and checks status, activity, audit and notification rollback.
 - Both are test-only changes against `feature/itoms-foundation`. Neither has been merged. GitHub Actions workflow runs and commit statuses were not returned by the available checks at review time; CI is **unverified**, not passed. Do not merge until required `python-quality` and `mysql-migrations` checks are confirmed passing.
 - Notification writes are queued after the audit insert in the service transaction; tests assert no notification row survives the forced audit failure.
+
+
+### 2026-11-28 — Assignment rollback CI verification and merge; status rollback rebased
+- GitHub Actions for PR [#6](https://github.com/crystal-qazi/itoms/pull/6), head `def547dad9197d72e3cf503666f2690296270b92`, completed successfully: `python-quality` and `mysql-migrations` both passed (run [46123462065](https://github.com/crystal-qazi/itoms/actions/runs/46123462065)).
+- Merged PR #6 into `feature/itoms-foundation` using squash merge. Merge commit: `e540f3502a4da0e9a46e2c9591cc05338760adc6`.
+- Original PR [#7](https://github.com/crystal-qazi/itoms/pull/7) had both checks pass on its original head (`python-quality` and `mysql-migrations`, run [46123617945](https://github.com/crystal-qazi/itoms/actions/runs/46123617945)), but became unmergeable after PR #6 changed the same integration-test file. It was closed as superseded, not merged.
+- Carried the status rollback test forward onto the latest implementation head without force-pushing: new branch `feature/security-service-request-status-audit-rollback-rebased`, commit `229e160273adc2f784ebe51f465472eb6c1678eb`, PR [#8](https://github.com/crystal-qazi/itoms/pull/8).
+- PR #8 contains both the already-merged assignment test in its base and the status rollback test. Its fresh `python-quality` check passed; `mysql-migrations` was still in progress at this memory update. Do not merge until both fresh checks pass.
+- Test-only work; no production service or authorization logic changed.
