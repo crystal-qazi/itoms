@@ -220,3 +220,9 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) completed successfully: `python-quality` and `mysql-migrations` both passed.
 - PR [#9](https://github.com/crystal-qazi/itoms/pull/9) was squash-merged into `feature/itoms-foundation` as `a67fda9cd699c8245eca1d8095d7f7b63ee2992b`.
 - The new MySQL test forces the notification outbox insert to fail after the audit and inbox notification writes, and verifies the complete assignment transaction rolls back. Test-only; no production code changed.
+
+
+### 2026-11-28 — Service Request specialist validation documentation synchronized
+- Updated `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` with the merged Service Request cross-scope, denied-mutation and audit/notification-outbox rollback evidence from PRs #1, #2, #4, #5, #6, #8 and #9.
+- Corrected the remaining-gates section: these Service Request regression cases are complete; broader cross-service deadlock/load testing, dashboards, accessibility evidence, worker monitoring and deployment validation remain open.
+- Documentation-only PR [#10](https://github.com/crystal-qazi/itoms/pull/10) was squash-merged into `feature/itoms-foundation` as `7c64264e2a69dc11873d1de9b07309ad87dd1a7d`. No CI was triggered for the docs-only change.
