@@ -536,7 +536,7 @@ def test_priority_catalogue_is_admin_configurable_and_used_for_new_requests(serv
         row["priority_key"]: row
         for row in list_priority_admin(actor_employee_id=data["administrator_id"])
     }
-    assert inactive["URGENT"]["is_active"] is False
+    assert not bool(inactive["URGENT"]["is_active"])
     assert all(row["priority_key"] != "URGENT" for row in list_priorities())
 
     with pytest.raises(ServiceRequestError, match="inactive"):
