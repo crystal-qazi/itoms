@@ -7,6 +7,7 @@ This directory is the version-controlled project memory for ITOMS.
 - Default branch: `main`
 - Primary memory: [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)
 - Operating protocol: [MEMORY_POLICY.md](./MEMORY_POLICY.md)
+- Latest repository/implementation review: [IMPLEMENTATION_REVIEW_2026-11-28.md](./IMPLEMENTATION_REVIEW_2026-11-28.md)
 
 ## How to use this memory
 Before any ITOMS task, review the current files in this directory and any linked requirements, architecture, decision, skill, and implementation documents. After the task, update the relevant records and commit/push the changes.
