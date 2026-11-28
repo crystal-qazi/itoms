@@ -14,12 +14,15 @@ The first ITOMS release provides a deliberately basic Service Requests workflow:
 - Request history and audit events record submission, assignment, comments, category administration and status transitions.
 - In-app notifications are queued through the shared notification/outbox tables for assignment, status and comment events.
 - Categories are dynamically administered by users with `service_request.categories.manage`.
+- Priority keys, labels, display order and active/inactive state are Admin-configurable through `service_request.priorities.manage`; built-in LOW/MEDIUM/HIGH/CRITICAL levels are seeded defaults, not a fixed enum.
+- The queue supports keyword search across request number/title/description, category, status, configured priority and created-date range; results remain authorization-filtered before the result limit.
+- The shared saved-report builder exposes Service Request category, requester, team, priority, status and creation fields with active configured-priority/category filters.
 
 ## Explicit exclusions and remaining capability work
 
 This module does not implement a service catalog, configurable request forms, approval workflows, service-request SLA tracking, or automated fulfillment.
 
-The current list provides status and priority filters with a bounded service result count. Full-text/combined advanced search, pagination controls and Service Request-specific reports/dashboard remain outstanding. Priority is currently a fixed MySQL ENUM (LOW, MEDIUM, HIGH, CRITICAL), not an Admin-managed configuration list; align this with the Blueprint's configurable-priority requirement before calling Section 7.4 complete.
+Keyword/category/date/status/priority search and Service Request fields in the shared saved-report builder are implemented. Pagination controls, dedicated Service Request dashboards, richer aggregate analytics and exports beyond the shared CSV report builder remain future enhancements.
 
 ## Authorization
 
@@ -30,6 +33,7 @@ The module uses the shared permission service and trusted resource context:
 - `service_request.update`
 - `service_request.assign`
 - `service_request.categories.manage`
+- `service_request.priorities.manage`
 
 Role grants remain explicit administrator decisions. Request reads and mutations are scoped by requester, team or department according to the actor's grants. Comments use `service_request.update` in the current implementation; no separate comment permission is defined. Category changes and request mutations write audit events in the same database transaction as their changes.
 
@@ -52,6 +56,7 @@ Assignment, status and comment events enqueue IN_APP notification and outbox row
 
 - Migration 027 creates the original request, category and activity tables.
 - Migration 042 adds the current pending reason, reason history on activity and the comment table.
+- Migration 043 creates the configurable priority catalogue, converts the request priority column from ENUM to a foreign-key-backed string, and grants priority administration to roles already managing categories.
 - Notification persistence reuses the shared notification/outbox schema from migration 007.
 
 ## Validation
