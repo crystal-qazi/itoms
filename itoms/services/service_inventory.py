@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from mysql.connector import IntegrityError
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 class ServiceInventoryError(ValueError):
     """Invalid or unauthorized service inventory operation."""
@@ -57,72 +57,144 @@ def list_service_records(*, actor_employee_id: int, lifecycle_status: str | None
     return visible
 
 def create_service_record(*, actor_employee_id: int, service_key: str, service_name: str, service_type: str, owner_team_id: int, criticality: str = "MEDIUM", description: str = "") -> int:
-    if not isinstance(owner_team_id, int) or owner_team_id <= 0:
+    if not isinstance(owner_team_id, int) or isinstance(owner_team_id, bool) or owner_team_id <= 0:
         raise ServiceInventoryError("Select a valid owner team.")
     service_key = service_key.strip().upper()
     service_name = service_name.strip()
     service_type = service_type.strip().upper()
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9._-]{1,79}", service_key):
         raise ServiceInventoryError("Service key must be 2-80 characters using letters, numbers, dot, underscore or hyphen.")
-    if not service_name or len(service_name) > 200: raise ServiceInventoryError("Service name is required (maximum 200 characters).")
-    if service_type not in SERVICE_TYPES: raise ServiceInventoryError("Select a valid service type.")
+    if not service_name or len(service_name) > 200:
+        raise ServiceInventoryError("Service name is required (maximum 200 characters).")
+    if service_type not in SERVICE_TYPES:
+        raise ServiceInventoryError("Select a valid service type.")
     criticality = criticality.strip().upper()
     description = description.strip()
-    if criticality not in SERVICE_CRITICALITIES: raise ServiceInventoryError("Select a valid criticality.")
-    if len(description) > 10000: raise ServiceInventoryError("Description must be 10,000 characters or fewer.")
-    conn = get_connection(); cur = conn.cursor()
+    if criticality not in SERVICE_CRITICALITIES:
+        raise ServiceInventoryError("Select a valid criticality.")
+    if len(description) > 10000:
+        raise ServiceInventoryError("Description must be 10,000 characters or fewer.")
+
+    conn = get_connection()
+    cur = conn.cursor()
     try:
-        cur.execute("""SELECT t.department_id FROM teams t
-            JOIN departments d ON d.department_id=t.department_id
-            WHERE t.team_id=%s AND t.is_active=TRUE AND d.is_active=TRUE""", (owner_team_id,))
+        # Snapshot the team department, then let the transaction-bound evaluator
+        # lock actor/team/scope rows before the inventory write.
+        cur.execute(
+            """SELECT t.department_id FROM teams t
+               JOIN departments d ON d.department_id=t.department_id
+               WHERE t.team_id=%s AND t.is_active=TRUE AND d.is_active=TRUE""",
+            (owner_team_id,),
+        )
         team = cur.fetchone()
-        if not team: raise ServiceInventoryError("Owner team is inactive or unavailable.")
+        if not team:
+            raise ServiceInventoryError("Owner team is inactive or unavailable.")
         context = ResourceContext(team_id=owner_team_id, department_id=team[0])
-        if not has_permission(actor_employee_id, "service.inventory.create", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service.inventory.create", context
+        ):
             raise ServiceInventoryError("Not authorized to register services for this team.")
-        cur.execute("INSERT INTO service_records (service_key,service_name,service_type,description,owner_team_id,criticality) VALUES (%s,%s,%s,%s,%s,%s)", (service_key,service_name,service_type,description,owner_team_id,criticality))
+
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (owner_team_id,),
+        )
+        locked_team = cur.fetchone()
+        if (not locked_team or not locked_team[1] or locked_team[0] != team[0]):
+            raise ServiceInventoryError("Owner team changed; retry service registration.")
+        cur.execute(
+            "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+            (team[0],),
+        )
+        department = cur.fetchone()
+        if not department or not department[0]:
+            raise ServiceInventoryError("Owner department is inactive or unavailable.")
+
+        cur.execute(
+            """INSERT INTO service_records
+               (service_key,service_name,service_type,description,owner_team_id,criticality)
+               VALUES (%s,%s,%s,%s,%s,%s)""",
+            (service_key, service_name, service_type, description, owner_team_id, criticality),
+        )
         service_id = int(cur.lastrowid)
-        cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'SERVICE_RECORD_CREATED','service_record',%s,'SUCCESS')", (actor_employee_id,str(service_id)))
-        conn.commit(); return service_id
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'SERVICE_RECORD_CREATED','service_record',%s,'SUCCESS')""",
+            (actor_employee_id, str(service_id)),
+        )
+        conn.commit()
+        return service_id
     except IntegrityError as exc:
         conn.rollback()
         if getattr(exc, "errno", None) == 1062:
             raise ServiceInventoryError("A service with this key already exists.") from None
         raise
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
+
 
 def update_service_lifecycle(*, actor_employee_id: int, service_id: int, lifecycle_status: str) -> None:
-    if lifecycle_status not in SERVICE_STATUSES: raise ServiceInventoryError("Invalid lifecycle status.")
-    conn = get_connection(); cur = conn.cursor()
+    if lifecycle_status not in SERVICE_STATUSES:
+        raise ServiceInventoryError("Invalid lifecycle status.")
+    conn = get_connection()
+    cur = conn.cursor()
     try:
-        cur.execute("""SELECT s.owner_team_id,s.lifecycle_status,t.department_id
-            FROM service_records s LEFT JOIN teams t ON t.team_id=s.owner_team_id
-            WHERE s.service_id=%s""", (service_id,))
+        cur.execute(
+            """SELECT s.owner_team_id,s.lifecycle_status,t.department_id
+               FROM service_records s LEFT JOIN teams t ON t.team_id=s.owner_team_id
+               WHERE s.service_id=%s""",
+            (service_id,),
+        )
         snapshot = cur.fetchone()
-    finally:
-        cur.close(); conn.close()
-    if not snapshot: raise ServiceInventoryError("Service record not found.")
-    team_id, old_status, department_id = snapshot
-    context = ResourceContext(team_id=team_id, department_id=department_id,
-        resource_type="service", resource_id=str(service_id))
-    if not has_permission(actor_employee_id, "service.inventory.update", context): raise ServiceInventoryError("Not authorized to update this service.")
-    conn = get_connection(); cur = conn.cursor()
-    try:
-        cur.execute("""SELECT s.lifecycle_status,s.owner_team_id,t.department_id
-            FROM service_records s LEFT JOIN teams t ON t.team_id=s.owner_team_id
-            WHERE s.service_id=%s FOR UPDATE""", (service_id,))
-        row = cur.fetchone()
-        if not row or row[0] != old_status or row[1] != team_id or row[2] != department_id:
-            raise ServiceInventoryError("Service record changed; reload and try again.")
-        if not has_permission(actor_employee_id, "service.inventory.update", context):
+        if not snapshot:
+            raise ServiceInventoryError("Service record not found.")
+        team_id, old_status, department_id = snapshot
+        context = ResourceContext(
+            team_id=team_id, department_id=department_id,
+            resource_type="service", resource_id=str(service_id),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "service.inventory.update", context
+        ):
             raise ServiceInventoryError("Not authorized to update this service.")
-        cur.execute("UPDATE service_records SET lifecycle_status=%s WHERE service_id=%s", (lifecycle_status,service_id))
-        cur.execute("INSERT INTO audit_events (actor_employee_id,event_key,target_type,target_id,outcome) VALUES (%s,'SERVICE_LIFECYCLE_CHANGED','service_record',%s,'SUCCESS')", (actor_employee_id,str(service_id)))
+
+        # Authorization locks are acquired before the protected service row.
+        cur.execute(
+            """SELECT lifecycle_status,owner_team_id
+               FROM service_records WHERE service_id=%s FOR UPDATE""",
+            (service_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[0] != old_status or row[1] != team_id:
+            raise ServiceInventoryError("Service record changed; reload and try again.")
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (team_id,),
+        )
+        locked_team = cur.fetchone()
+        if (not locked_team or not locked_team[1]
+                or locked_team[0] != department_id):
+            raise ServiceInventoryError("Service owner team changed; reload and try again.")
+
+        cur.execute(
+            "UPDATE service_records SET lifecycle_status=%s WHERE service_id=%s",
+            (lifecycle_status, service_id),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'SERVICE_LIFECYCLE_CHANGED','service_record',%s,'SUCCESS')""",
+            (actor_employee_id, str(service_id)),
+        )
         conn.commit()
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
