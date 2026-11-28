@@ -23,6 +23,11 @@ jobs:
         run: python -m compileall -q itoms tests
       - name: Run test suite
         run: pytest -q
+      - name: Audit dependencies and high-severity Python security findings
+        run: |
+          python -m pip install pip-audit bandit
+          pip-audit -r requirements.txt
+          bandit -q -r itoms -x tests -ll -ii
 
   mysql-migrations:
     runs-on: ubuntu-latest
