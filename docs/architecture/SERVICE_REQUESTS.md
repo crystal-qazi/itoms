@@ -15,14 +15,14 @@ The first ITOMS release provides a deliberately basic Service Requests workflow:
 - In-app notifications are queued through the shared notification/outbox tables for assignment, status and comment events.
 - Categories are dynamically administered by users with `service_request.categories.manage`.
 - Priority keys, labels, display order and active/inactive state are Admin-configurable through `service_request.priorities.manage`; built-in LOW/MEDIUM/HIGH/CRITICAL levels are seeded defaults, not a fixed enum.
-- The queue supports keyword search across request number/title/description, category, status, configured priority and created-date range; results remain authorization-filtered before the result limit.
+- The queue supports keyword search across request number/title/description, category, status, configured priority and created-date range, plus stable previous/next pagination over authorized visible records.
 - The shared saved-report builder exposes Service Request category, requester, team, priority, status and creation fields with active configured-priority/category filters.
 
 ## Explicit exclusions and remaining capability work
 
 This module does not implement a service catalog, configurable request forms, approval workflows, service-request SLA tracking, or automated fulfillment.
 
-Keyword/category/date/status/priority search and Service Request fields in the shared saved-report builder are implemented. Pagination controls, dedicated Service Request dashboards, richer aggregate analytics and exports beyond the shared CSV report builder remain future enhancements.
+Keyword/category/date/status/priority search, scope-aware previous/next pagination and Service Request fields in the shared saved-report builder are implemented. Dedicated Service Request dashboards, richer aggregate analytics and exports beyond the shared CSV report builder remain future enhancements.
 
 ## Authorization
 
