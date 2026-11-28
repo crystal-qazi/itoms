@@ -105,6 +105,7 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 - Jinja2 and Bootstrap; no React/Vue/Tailwind.
 - Semantic page headings and form labels.
 - Responsive Bootstrap grid and `table-responsive` list.
+- Skip link, labeled priority/search controls, table column scopes and aria-labeled pagination navigation.
 - Jinja autoescaping for request/comment content.
 - Empty-state messaging and permission-gated actions.
 - Labeled priority/search controls and an aria-labeled previous/next pagination navigation.
@@ -124,9 +125,9 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 
 | Gate | Current status | Evidence required |
 |---|---|---|
-| Python unit suite | Passed | CI run `46119322240`: 181 passed, 56 skipped |
-| MySQL migrations | Passed | CI run `46119322240`: 43 applied; second run idempotent |
-| Service Request MySQL integration | Passed | CI run `46119322240`: 56 passed, including priority lifecycle, advanced search, pagination and request-number collision retry |
+| Python unit suite | Passed | CI run `46119599340`: 181 passed, 56 skipped |
+| MySQL migrations | Passed | CI run `46119599340`: 43 applied; second run idempotent |
+| Service Request MySQL integration | Passed | CI run `46119599340`: 56 passed, including priority lifecycle, advanced search, pagination and request-number collision retry |
 | Authorization negative tests | Partial | All Service Request mutation routes reject missing CSRF; cross-scope and denied-action matrix remains |
 | Concurrency/revocation tests | Passed for deterministic shared-scope races | Role-permission, TEAM membership, MANAGED_TEAMS manager mapping and employee-deactivation races are covered; broader load/deadlock stress remains |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
