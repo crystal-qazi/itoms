@@ -120,7 +120,11 @@ def test_advanced_search_route_passes_filters_and_visible_page_offset(monkeypatc
     app = _app_with_identity()
     calls = []
     _mock_index_dependencies(monkeypatch, web)
-    monkeypatch.setattr(web, "list_requests", lambda **kwargs: calls.append(kwargs) or [])
+    monkeypatch.setattr(web, "list_requests", lambda **kwargs: calls.append(kwargs) or [{
+        "request_id": 1, "request_number": "SR-1", "title": "VPN access",
+        "category_name": "Access", "team_name": "Platform",
+        "priority": "NORMAL", "status": "OPEN", "created_at": "2026-11-28",
+    }])
     response = app.test_client().get(
         "/service-requests/?search=VPN&category_id=7&status=OPEN&priority=NORMAL"
         "&created_from=2026-11-01&created_to=2026-11-28&page=2"
