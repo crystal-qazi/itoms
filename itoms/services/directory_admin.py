@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import (
+    ResourceContext, has_permission, has_permissions_in_transaction,
+)
 from itoms.services.directory import (
     DirectoryError, assign_employee_to_team, remove_employee_from_team,
 )
@@ -401,7 +403,10 @@ def assign_team_manager(
             owner_employee_id=manager_employee_id, team_id=team_id,
             department_id=scope[1],
         )
-        if not has_permission(actor_employee_id, "identity.directory.manage", context):
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.directory.manage", [context],
+            lock_employee_ids=[manager_employee_id],
+        ):
             raise DirectoryAdministrationError("Not authorized to assign managers to this team.")
         cur.execute(
             "SELECT employee_id,department_id,is_active FROM employees WHERE employee_id=%s FOR UPDATE",
@@ -472,10 +477,13 @@ def remove_team_manager(
         scope = cur.fetchone()
         if not scope or scope[0] is None or scope[0] != scope[1]:
             raise DirectoryAdministrationError("Manager and team must belong to the same department.")
-        if not has_permission(
-            actor_employee_id, "identity.directory.manage",
-            ResourceContext(owner_employee_id=manager_employee_id, team_id=team_id,
-                            department_id=scope[1]),
+        context = ResourceContext(
+            owner_employee_id=manager_employee_id, team_id=team_id,
+            department_id=scope[1],
+        )
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "identity.directory.manage", [context],
+            lock_employee_ids=[manager_employee_id],
         ):
             raise DirectoryAdministrationError("Not authorized to remove managers from this team.")
         cur.execute(
