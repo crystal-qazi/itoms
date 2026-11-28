@@ -428,14 +428,6 @@ def _store_scanned_version(
     classification: str,
 ) -> dict:
     raw_name, _extension, mime_type = _validate_document_payload(filename, content)
-    if not has_permission(
-        actor_employee_id, "document.version.manage",
-        ResourceContext(resource_type="document", resource_id=str(file_id)),
-    ):
-        # The authoritative owner-aware scope check occurs below; this early
-        # check is intentionally omitted when only an owner context is known
-        # after the database snapshot.
-        pass
     scan = scan_with_trend_micro(content)
     scan_status = scan.get("status", "ERROR")
     if scan_status not in {"CLEAN", "INFECTED", "ERROR"}:
