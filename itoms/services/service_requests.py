@@ -21,6 +21,121 @@ TRANSITIONS = {
 }
 
 
+def _queue_request_notification(
+    cur, *, recipient_employee_id: int | None, actor_employee_id: int,
+    notification_type: str, title: str, body: str, request_id: int,
+) -> None:
+    """Queue an in-app notification inside the owning request transaction."""
+    if not recipient_employee_id or recipient_employee_id == actor_employee_id:
+        return
+    cur.execute(
+        "SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
+        (recipient_employee_id,),
+    )
+    if not cur.fetchone():
+        return
+    cur.execute(
+        """INSERT INTO notifications
+           (recipient_employee_id,notification_type,title,body,target_type,target_id)
+           VALUES (%s,%s,%s,%s,'service_request',%s)""",
+        (recipient_employee_id, notification_type, title[:200], body[:2000], str(request_id)),
+    )
+    notification_id = int(cur.lastrowid)
+    cur.execute(
+        "INSERT INTO notification_outbox (notification_id,channel) VALUES (%s,'IN_APP')",
+        (notification_id,),
+    )
+
+
+def list_comments(*, actor_employee_id: int, request_id: int) -> list[dict]:
+    """List comments only after verifying the actor can read the request."""
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    try:
+        context = _context(cur, request_id)
+        if not context or not has_permission(actor_employee_id, "service_request.read", context):
+            raise ServiceRequestError("Service request was not found.")
+        cur.execute(
+            """SELECT c.comment_id,c.body,c.created_at,c.author_employee_id,
+                      e.full_name AS author_name
+               FROM service_request_comments c
+               JOIN employees e ON e.employee_id=c.author_employee_id
+               WHERE c.request_id=%s
+               ORDER BY c.created_at,c.comment_id""",
+            (request_id,),
+        )
+        return cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def add_comment(*, actor_employee_id: int, request_id: int, body: str) -> int:
+    """Add an escaped plain-text comment and queue an in-app notification atomically."""
+    text = (body or "").strip()
+    if not text or len(text) > 5000:
+        raise ServiceRequestError("Comment must contain 1–5,000 characters.")
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        context = _context(cur, request_id, lock=True)
+        if not context:
+            raise ServiceRequestError("Service request was not found.")
+        if not has_permission(actor_employee_id, "service_request.update", context):
+            raise ServiceRequestError("Not authorized to comment on this service request.")
+        cur.execute(
+            "SELECT assigned_employee_id FROM service_requests WHERE request_id=%s",
+            (request_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ServiceRequestError("Service request was not found.")
+        assigned_employee_id = row[0]
+        cur.execute(
+            """INSERT INTO service_request_comments
+               (request_id,author_employee_id,body) VALUES (%s,%s,%s)""",
+            (request_id, actor_employee_id, text),
+        )
+        comment_id = int(cur.lastrowid)
+        cur.execute(
+            """INSERT INTO service_request_activity
+               (request_id,actor_employee_id,activity_key,new_value)
+               VALUES (%s,%s,'REQUEST_COMMENTED','Comment added')""",
+            (request_id, actor_employee_id),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'SERVICE_REQUEST_COMMENTED','service_request',%s,'SUCCESS')""",
+            (actor_employee_id, str(request_id)),
+        )
+        _queue_request_notification(
+            cur, recipient_employee_id=context.owner_employee_id,
+            actor_employee_id=actor_employee_id,
+            notification_type="SERVICE_REQUEST_COMMENT",
+            title="New comment on your service request",
+            body=f"A comment was added to service request #{request_id}.",
+            request_id=request_id,
+        )
+        _queue_request_notification(
+            cur, recipient_employee_id=assigned_employee_id,
+            actor_employee_id=actor_employee_id,
+            notification_type="SERVICE_REQUEST_COMMENT",
+            title="New comment on an assigned service request",
+            body=f"A comment was added to service request #{request_id}.",
+            request_id=request_id,
+        )
+        conn.commit()
+        return comment_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+
 def _context(cur, request_id: int, *, lock: bool = False):
     """Load trusted requester, team and department context."""
     cur.execute(
@@ -434,16 +549,21 @@ def assign_request(
 
 def transition_request(
     *, actor_employee_id: int, request_id: int, new_status: str,
-    resolution_notes: str = "",
+    resolution_notes: str = "", pending_reason: str = "",
 ) -> None:
     """Move a request through the basic handling lifecycle and record closure details."""
     if new_status not in TRANSITIONS:
         raise ServiceRequestError("Invalid service request status.")
     notes = (resolution_notes or "").strip()
+    hold_reason = (pending_reason or "").strip()
     if new_status == "COMPLETED" and not notes:
         raise ServiceRequestError("Resolution notes are required to complete a service request.")
+    if new_status == "ON_HOLD" and not hold_reason:
+        raise ServiceRequestError("A pending reason is required to put a service request on hold.")
     if len(notes) > 20000:
         raise ServiceRequestError("Resolution notes must be at most 20,000 characters.")
+    if len(hold_reason) > 2000:
+        raise ServiceRequestError("Pending reason must be at most 2,000 characters.")
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -453,29 +573,35 @@ def transition_request(
         if not has_permission(actor_employee_id, "service_request.update", context):
             raise ServiceRequestError("Not authorized to update this service request.")
         cur.execute(
-            "SELECT status FROM service_requests WHERE request_id=%s FOR UPDATE",
+            "SELECT status,pending_reason,requester_employee_id FROM service_requests WHERE request_id=%s FOR UPDATE",
             (request_id,),
         )
         row = cur.fetchone()
         if not row:
             raise ServiceRequestError("Service request was not found.")
-        old_status = row[0]
+        old_status, current_pending_reason, requester_employee_id = row
+        next_pending_reason = (
+            hold_reason if new_status == "ON_HOLD"
+            else (None if old_status == "ON_HOLD" else current_pending_reason)
+        )
         if new_status not in TRANSITIONS[old_status]:
             raise ServiceRequestError(f"Cannot move a service request from {old_status} to {new_status}.")
         cur.execute(
             """UPDATE service_requests
-               SET status=%s,
+               SET status=%s,pending_reason=%s,
                    resolution_notes=CASE WHEN %s='COMPLETED' THEN %s ELSE resolution_notes END,
                    completed_at=CASE WHEN %s='COMPLETED' THEN UTC_TIMESTAMP() ELSE completed_at END,
                    cancelled_at=CASE WHEN %s='CANCELLED' THEN UTC_TIMESTAMP() ELSE cancelled_at END
                WHERE request_id=%s""",
-            (new_status, new_status, notes or None, new_status, new_status, request_id),
+            (new_status, next_pending_reason, new_status, notes or None,
+             new_status, new_status, request_id),
         )
         cur.execute(
             """INSERT INTO service_request_activity
-               (request_id,actor_employee_id,activity_key,old_value,new_value)
-               VALUES (%s,%s,'REQUEST_STATUS_CHANGED',%s,%s)""",
-            (request_id, actor_employee_id, old_status, new_status),
+               (request_id,actor_employee_id,activity_key,old_value,new_value,reason)
+               VALUES (%s,%s,'REQUEST_STATUS_CHANGED',%s,%s,%s)""",
+            (request_id, actor_employee_id, old_status, new_status,
+             hold_reason if new_status == "ON_HOLD" else None),
         )
         cur.execute(
             """INSERT INTO audit_events
@@ -483,6 +609,14 @@ def transition_request(
                VALUES (%s,'SERVICE_REQUEST_STATUS_CHANGED','service_request',%s,'SUCCESS',
                        JSON_OBJECT('old_status',%s,'new_status',%s))""",
             (actor_employee_id, str(request_id), old_status, new_status),
+        )
+        _queue_request_notification(
+            cur, recipient_employee_id=requester_employee_id,
+            actor_employee_id=actor_employee_id,
+            notification_type="SERVICE_REQUEST_STATUS",
+            title="Your service request was updated",
+            body=f"Service request #{request_id} is now {new_status.replace('_', ' ')}.",
+            request_id=request_id,
         )
         conn.commit()
     except Exception:
