@@ -4,7 +4,7 @@ from __future__ import annotations
 from mysql.connector import IntegrityError
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import has_permission, has_permission_in_transaction
 
 
 class TrainingError(ValueError):
@@ -48,8 +48,6 @@ def list_courses(*, actor_employee_id: int, include_inactive: bool = False) -> l
 def create_course(
     *, actor_employee_id: int, course_title: str, description: str = "",
 ) -> int:
-    if not has_permission(actor_employee_id, "training.course.manage"):
-        raise TrainingError("Not authorized to manage training courses.")
     title = (course_title or "").strip()
     detail = (description or "").strip()
     if not title or len(title) > 200:
@@ -59,6 +57,8 @@ def create_course(
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(cur, actor_employee_id, "training.course.manage", None):
+            raise TrainingError("Not authorized to manage training courses.")
         cur.execute(
             "INSERT INTO training_courses (course_title,description,created_by) VALUES (%s,%s,%s)",
             (title, detail or None, actor_employee_id),
@@ -81,11 +81,11 @@ def create_course(
 
 
 def set_course_active(*, actor_employee_id: int, course_id: int, is_active: bool) -> None:
-    if not has_permission(actor_employee_id, "training.course.manage"):
-        raise TrainingError("Not authorized to manage training courses.")
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(cur, actor_employee_id, "training.course.manage", None):
+            raise TrainingError("Not authorized to manage training courses.")
         cur.execute("SELECT is_active FROM training_courses WHERE course_id=%s FOR UPDATE", (course_id,))
         row = cur.fetchone()
         if not row:
@@ -110,23 +110,36 @@ def set_course_active(*, actor_employee_id: int, course_id: int, is_active: bool
 def enroll_employee(
     *, actor_employee_id: int, course_id: int, employee_id: int | None = None,
 ) -> int:
-    target_id = employee_id or actor_employee_id
-    if target_id == actor_employee_id:
-        allowed = (has_permission(actor_employee_id, "training.enroll")
-                   or has_permission(actor_employee_id, "training.manage"))
-    else:
-        allowed = has_permission(actor_employee_id, "training.manage")
-    if not allowed:
-        raise TrainingError("Not authorized to enroll this employee.")
+    target_id = employee_id if employee_id is not None else actor_employee_id
+    if type(target_id) is not int or target_id <= 0:
+        raise TrainingError("Select a valid employee.")
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT is_active FROM training_courses WHERE course_id=%s", (course_id,))
+        if target_id == actor_employee_id:
+            allowed = has_permission_in_transaction(
+                cur, actor_employee_id, "training.enroll", None,
+                lock_employee_ids=[target_id],
+            )
+            if not allowed:
+                allowed = has_permission_in_transaction(
+                    cur, actor_employee_id, "training.manage", None,
+                    lock_employee_ids=[target_id],
+                )
+        else:
+            allowed = has_permission_in_transaction(
+                cur, actor_employee_id, "training.manage", None,
+                lock_employee_ids=[target_id],
+            )
+        if not allowed:
+            raise TrainingError("Not authorized to enroll this employee.")
+        cur.execute("SELECT is_active FROM training_courses WHERE course_id=%s FOR UPDATE", (course_id,))
         course = cur.fetchone()
         if not course or not course[0]:
             raise TrainingError("Training course does not exist or is inactive.")
-        cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE", (target_id,))
-        if not cur.fetchone():
+        cur.execute("SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE", (target_id,))
+        employee = cur.fetchone()
+        if not employee or not employee[0]:
             raise TrainingError("Employee does not exist or is inactive.")
         cur.execute(
             "INSERT INTO training_enrollments (course_id,employee_id) VALUES (%s,%s)",
@@ -153,7 +166,6 @@ def enroll_employee(
     finally:
         cur.close()
         conn.close()
-
 
 def list_enrollments(*, actor_employee_id: int, course_id: int | None = None) -> list[dict]:
     if not (has_permission(actor_employee_id, "training.read")
@@ -183,19 +195,31 @@ def update_enrollment_status(
 ) -> None:
     if new_status not in ENROLLMENT_STATUSES:
         raise TrainingError("Invalid training enrollment status.")
-    if not has_permission(actor_employee_id, "training.manage"):
-        raise TrainingError("Not authorized to update training enrollment.")
     conn = get_connection()
     cur = conn.cursor()
     try:
         cur.execute(
-            "SELECT status FROM training_enrollments WHERE enrollment_id=%s FOR UPDATE",
+            """SELECT employee_id,course_id,status FROM training_enrollments
+               WHERE enrollment_id=%s""",
+            (enrollment_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise TrainingError("Training enrollment was not found.")
+        employee_id, course_id, old_status = snapshot
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "training.manage", None,
+            lock_employee_ids=[employee_id],
+        ):
+            raise TrainingError("Not authorized to update training enrollment.")
+        cur.execute(
+            """SELECT employee_id,course_id,status FROM training_enrollments
+               WHERE enrollment_id=%s FOR UPDATE""",
             (enrollment_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise TrainingError("Training enrollment was not found.")
-        old_status = row[0]
+        if not row or row[0] != employee_id or row[1] != course_id or row[2] != old_status:
+            raise TrainingError("Training enrollment changed; reload and try again.")
         if new_status not in ENROLLMENT_TRANSITIONS[old_status]:
             raise TrainingError(f"Cannot move enrollment from {old_status} to {new_status}.")
         cur.execute(
