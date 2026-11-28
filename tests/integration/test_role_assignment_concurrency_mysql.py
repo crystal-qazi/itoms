@@ -212,3 +212,58 @@ def test_role_assignment_holds_authorization_until_commit_before_revocation(
             role_id=data["target_role_id"],
             scope_type="DEPARTMENT",
         )
+
+
+
+def test_permission_revocation_wins_before_role_assignment_authorization(
+    role_assignment_fixture, monkeypatch
+):
+    from itoms.services import identity_admin
+
+    data = role_assignment_fixture
+    original_lock = identity_admin._lock_actor_permission_for_role_change
+    revocation_locks_acquired = threading.Event()
+    allow_revocation_to_finish = threading.Event()
+
+    def coordinated_lock(cur, **kwargs):
+        result = original_lock(cur, **kwargs)
+        if kwargs.get("actor_employee_id") == data["revoker_id"]:
+            revocation_locks_acquired.set()
+            if not allow_revocation_to_finish.wait(timeout=15):
+                raise TimeoutError("test did not release permission revocation")
+        return result
+
+    monkeypatch.setattr(
+        identity_admin, "_lock_actor_permission_for_role_change", coordinated_lock
+    )
+
+    def revoke():
+        with data["app"].app_context():
+            return identity_admin.revoke_role_permission(
+                actor_employee_id=data["revoker_id"],
+                role_id=data["assigner_role_id"],
+                permission_key="identity.roles.assign",
+            )
+
+    def assign():
+        with data["app"].app_context():
+            return identity_admin.assign_role(
+                actor_employee_id=data["assigner_id"],
+                employee_id=data["target_employee_id"],
+                role_id=data["target_role_id"],
+                scope_type="DEPARTMENT",
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        revocation_future = pool.submit(revoke)
+        assert revocation_locks_acquired.wait(timeout=10), (
+            "permission revocation did not acquire the target role lock"
+        )
+        assignment_future = pool.submit(assign)
+        assert not assignment_future.done(), (
+            "role assignment passed while permission revocation held the role lock"
+        )
+        allow_revocation_to_finish.set()
+        assert revocation_future.result(timeout=15) is True
+        with pytest.raises(identity_admin.IdentityAdministrationError, match="Not authorized"):
+            assignment_future.result(timeout=15)
