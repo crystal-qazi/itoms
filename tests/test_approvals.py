@@ -41,7 +41,12 @@ class FakeConnection:
 
 def test_create_approval_writes_submission_audit_in_same_transaction(monkeypatch):
     connection = FakeConnection()
-    monkeypatch.setattr(approvals, "has_permission", lambda *_: True)
+    checks = []
+    monkeypatch.setattr(
+        approvals, "has_permission_in_transaction",
+        lambda cur, actor, key, resource=None, **kwargs:
+            checks.append((actor, key, resource, kwargs.get("lock_employee_ids"))) or True,
+    )
     monkeypatch.setattr(approvals, "get_connection", lambda: connection)
 
     request_id = approvals.create_approval(
@@ -54,6 +59,7 @@ def test_create_approval_writes_submission_audit_in_same_transaction(monkeypatch
     )
 
     assert request_id == 42
+    assert checks == [(10, "approvals.create", None, [11, 12])]
     assert connection.committed
     audit_sql = [sql for sql, _ in connection.fake_cursor.statements if "APPROVAL_SUBMITTED" in sql]
     assert len(audit_sql) == 1
