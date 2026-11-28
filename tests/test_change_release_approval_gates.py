@@ -38,12 +38,10 @@ class Connection:
 
 
 def test_change_cannot_be_scheduled_without_approved_linked_request(monkeypatch):
-    snapshot = {"change_id": 25, "requested_by": 10, "status": "SUBMITTED"}
-    first = Connection([snapshot])
-    second = Connection([("SUBMITTED", 10), None])
-    connections = iter([first, second])
-    monkeypatch.setattr(change_management, "get_connection", lambda: next(connections))
-    monkeypatch.setattr(change_management, "has_permission", lambda *_: True)
+    snapshot = (25, 10, None, "SUBMITTED", 1, None)
+    connection = Connection([snapshot, ("SUBMITTED", 10, None), None])
+    monkeypatch.setattr(change_management, "get_connection", lambda: connection)
+    monkeypatch.setattr(change_management, "has_permission_in_transaction", lambda *_a, **_k: True)
 
     with pytest.raises(change_management.ChangeError, match="fully approved"):
         change_management.transition_change(
@@ -52,17 +50,15 @@ def test_change_cannot_be_scheduled_without_approved_linked_request(monkeypatch)
             new_status="SCHEDULED",
         )
 
-    assert second.rolled_back
-    assert not second.committed
+    assert connection.rolled_back
+    assert not connection.committed
 
 
 def test_release_cannot_be_approved_without_approved_linked_request(monkeypatch):
-    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "READY"}
-    first = Connection([snapshot])
-    second = Connection([("READY", 10, "REL-5"), None])
-    connections = iter([first, second])
-    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
-    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+    snapshot = (5, "REL-5", 10, "READY", 1, None)
+    connection = Connection([snapshot, ("READY", 10, "REL-5"), None])
+    monkeypatch.setattr(release_management, "get_connection", lambda: connection)
+    monkeypatch.setattr(release_management, "has_permission_in_transaction", lambda *_a, **_k: True)
 
     with pytest.raises(release_management.ReleaseError, match="fully approved"):
         release_management.transition_release(
@@ -71,16 +67,14 @@ def test_release_cannot_be_approved_without_approved_linked_request(monkeypatch)
             new_status="APPROVED",
         )
 
-    assert second.rolled_back
-    assert not second.committed
+    assert connection.rolled_back
+    assert not connection.committed
 
 def test_release_cannot_deploy_without_approved_linked_request(monkeypatch):
-    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "APPROVED"}
-    first = Connection([snapshot])
-    second = Connection([("APPROVED", 10, "REL-5"), None])
-    connections = iter([first, second])
-    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
-    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+    snapshot = (5, "REL-5", 10, "APPROVED", 1, None)
+    connection = Connection([snapshot, ("APPROVED", 10, "REL-5"), None])
+    monkeypatch.setattr(release_management, "get_connection", lambda: connection)
+    monkeypatch.setattr(release_management, "has_permission_in_transaction", lambda *_a, **_k: True)
 
     with pytest.raises(release_management.ReleaseError, match="fully approved"):
         release_management.transition_release(
@@ -94,12 +88,10 @@ def test_release_cannot_deploy_without_approved_linked_request(monkeypatch):
 
 
 def test_release_approval_cannot_bypass_sqa_readiness_gate(monkeypatch):
-    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "READY"}
-    first = Connection([snapshot])
-    second = Connection([("READY", 10, "REL-5"), ("APPROVED",), (0,)])
-    connections = iter([first, second])
-    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
-    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+    snapshot = (5, "REL-5", 10, "READY", 1, None)
+    connection = Connection([snapshot, ("READY", 10, "REL-5"), ("APPROVED",), (0,)])
+    monkeypatch.setattr(release_management, "get_connection", lambda: connection)
+    monkeypatch.setattr(release_management, "has_permission_in_transaction", lambda *_a, **_k: True)
 
     with pytest.raises(release_management.ReleaseError, match="completed test plan"):
         release_management.transition_release(
@@ -113,12 +105,10 @@ def test_release_approval_cannot_bypass_sqa_readiness_gate(monkeypatch):
 
 
 def test_release_deployment_rechecks_sqa_readiness_gate(monkeypatch):
-    snapshot = {"release_id": 5, "release_key": "REL-5", "created_by": 10, "status": "APPROVED"}
-    first = Connection([snapshot])
-    second = Connection([("APPROVED", 10, "REL-5"), ("APPROVED",), (0,)])
-    connections = iter([first, second])
-    monkeypatch.setattr(release_management, "get_connection", lambda: next(connections))
-    monkeypatch.setattr(release_management, "has_permission", lambda *_: True)
+    snapshot = (5, "REL-5", 10, "APPROVED", 1, None)
+    connection = Connection([snapshot, ("APPROVED", 10, "REL-5"), ("APPROVED",), (0,)])
+    monkeypatch.setattr(release_management, "get_connection", lambda: connection)
+    monkeypatch.setattr(release_management, "has_permission_in_transaction", lambda *_a, **_k: True)
 
     with pytest.raises(release_management.ReleaseError, match="completed test plan"):
         release_management.transition_release(
