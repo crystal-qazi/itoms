@@ -170,3 +170,10 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Updated `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` to include merged cross-scope, denied HTTP mutation, audit rollback and notification-outbox rollback evidence from PRs #1, #2, #4, #5, #6, #8 and #9.
 - Updated the remaining-gates statements to distinguish completed Service Request regression coverage from open broader cross-service deadlock/load, accessibility, dashboard, worker-monitoring and deployment gates.
 - Documentation-only PR [#10](https://github.com/crystal-qazi/itoms/pull/10) was squash-merged into `feature/itoms-foundation` as `7c64264e2a69dc11873d1de9b07309ad87dd1a7d`. No CI was triggered for the docs-only change.
+
+
+## 18. Concurrent Service Request transition regression — 2026-11-28
+- Added a deterministic two-connection MySQL regression test `test_concurrent_status_transitions_serialize_and_reject_stale_transition` to `tests/integration/test_service_requests_mysql.py`.
+- The test synchronizes both connections before competing OPEN → IN_PROGRESS transitions and checks exactly one success, one stale-state rejection, and exactly one persisted status activity/audit event.
+- PR [#11](https://github.com/crystal-qazi/itoms/pull/11), head `a293af7fb252330d627b89d3de7f94fcd71cf76e`, is open. GitHub Actions run [46124493783](https://github.com/crystal-qazi/itoms/actions/runs/46124493783): `python-quality` passed; `mysql-migrations` was still in progress at this update. Do not merge until both checks pass.
+- Test-only change; no production code changed.
