@@ -98,7 +98,7 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 6. **Specialist skills:** UI/UX Engineer v1.0.0, Full-Stack Engineer v1.0.0, and Security Engineer v1.0.0 skill files and references are present on `feature/itoms-foundation`. Their availability on that branch is confirmed; local agent installation/configuration remains unverified/pending.
 7. **Service Request representative validation:** `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` records CI run `46119899408`: 182 Python tests passed, 56 skipped; 43 migrations applied and rerun idempotently; 56 Service Request MySQL integration tests passed. These are recorded CI results, not tests rerun during the 2026-11-28 review.
 8. **Service Request remaining gates:** A MySQL integration regression test verifies that an employee with only OWN-scoped `service_request.read` cannot read another employee's request (IDOR/cross-scope denial). A second integration test injects a failure into the `SERVICE_REQUEST_CREATED` audit insert and verifies request/activity/audit rollback. Both are merged into `feature/itoms-foundation` by PR [#1](https://github.com/crystal-qazi/itoms/pull/1), squash commit `6f87a69bca256e8fad5c78e61da1a4ec7350539b`; CI run `46122079076` passed both jobs. A third MySQL integration test now verifies that an OWN-scoped read-only employee cannot add comments, reassign, or change status on another employee's request, and that all relevant state/history/audit records remain unchanged. PR [#2](https://github.com/crystal-qazi/itoms/pull/2) was merged into `feature/itoms-foundation` as squash commit `3ec323ba8a5aaf9077d8b37f13fe51adcf0229fa`; CI run `46122357121` passed both `python-quality` and `mysql-migrations` (including MySQL 8.4 integration tests). Broader deadlock/load stress, manual keyboard/screen-reader/contrast/reflow/target-size/theme/mobile review, automated accessibility scan, dedicated dashboards/aggregate analytics follow-up, worker monitoring, and deployment validation remain open as detailed in `IMPLEMENTATION_REVIEW_2026-11-28.md`.
-9. **Migration count discrepancy:** Feature branch README says 42 numbered migrations, while the Service Request validation records 43 applied and migration `043_service_request_priorities.sql` exists. Resolve documentation discrepancy; current migration files indicate 43.
+9. **Migration count:** Resolved. The complete Git tree contains exactly 43 SQL migration files under `itoms/db/migrations/versions/`, numbered consecutively `001`–`043`. README was corrected through PR [#3](https://github.com/crystal-qazi/itoms/pull/3), merged to `feature/itoms-foundation` as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`. This was a documentation-only change; no CI workflow was triggered for the docs-only branch.
 10. **Full questionnaire history:** Exact Q1–Q275 selected options and rationales still require backfill from source conversations/decision records. Do not reconstruct by guess.
 11. **Full-stack skill package:** The v1.0.0 skill and references are present in the feature branch. A separately generated/validated ZIP package is not confirmed by this review.
 12. **Production status:** No production readiness or release approval is established. Continue module-level specialist validation and safe deployment gates.
@@ -120,7 +120,7 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - [ ] Record the eight teams by their approved names and responsibilities from the full blueprint.
 - [ ] Record the implementation roadmap and milestone status from the approved blueprint.
 - [ ] Decide and execute a safe reconciliation of the 613-ahead/3-behind `feature/itoms-foundation` branch with the memory-bearing `main`; preserve all work and do not force-push.
-- [ ] Resolve the README migration-count discrepancy (42 stated vs 43 present/applied).
+- [x] Resolve the README migration-count discrepancy: 43 SQL migrations exist, numbered `001`–`043`; README corrected and merged.
 - [ ] Complete the open Service Request security, accessibility, operational and deployment gates in `IMPLEMENTATION_REVIEW_2026-11-28.md`.
 - [ ] Verify local agent skill installation/configuration for OpenCode, Qoder and Hermes.
 - [ ] If a distributable Full-Stack skill ZIP is still desired, prepare and validate it; the source skill package already exists on the feature branch.
@@ -142,6 +142,12 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - GitHub Actions run `46122357121` passed `python-quality` and `mysql-migrations`, including MySQL 8.4 integration tests.
 - Merged PR [#2](https://github.com/crystal-qazi/itoms/pull/2) into `feature/itoms-foundation` as squash commit `3ec323ba8a5aaf9077d8b37f13fe51adcf0229fa`.
 - No production code or authorization policy changed; this increment adds regression coverage only.
+
+### 2026-11-28 — README migration count correction
+- Enumerated the complete, non-truncated Git tree of `feature/itoms-foundation` and confirmed 43 SQL files in `itoms/db/migrations/versions/`, numbered consecutively `001` through `043`.
+- Corrected README from 42 to 43 and explicitly documented the range `001`–`043`.
+- Merged [PR #3](https://github.com/crystal-qazi/itoms/pull/3) into `feature/itoms-foundation` as squash commit `cadf80cedd6b40febc7738c2d98a7de34351c1e3`.
+- Documentation-only change; no CI run was triggered and no application or migration SQL was changed.
 
 ### 2026-11-28 — Repository and Service Request implementation review
 - Reviewed the canonical memory files on `main`, the full blueprint and all three specialist skills on `feature/itoms-foundation`, and the Service Request validation, route, service, templates and tests.
