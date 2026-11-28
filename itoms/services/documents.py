@@ -566,6 +566,8 @@ def create_document_share(
 ) -> int:
     if permission != "DOWNLOAD":
         raise DocumentError("Only explicit DOWNLOAD shares are currently supported.")
+    if not isinstance(recipient_employee_id, int) or isinstance(recipient_employee_id, bool) or recipient_employee_id <= 0:
+        raise DocumentError("Share recipient is invalid.")
     try:
         expiry = datetime.fromisoformat(expires_at)
     except (TypeError, ValueError):
@@ -591,15 +593,27 @@ def create_document_share(
             owner_employee_id=file_row["uploaded_by"], resource_type="document",
             resource_id=str(file_id),
         )
-        if not has_permission(actor_employee_id, "document.share", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.share", context,
+            lock_employee_ids=[file_row["uploaded_by"], recipient_employee_id],
+        ):
             raise DocumentError("Document was not found.")
+        cur.execute(
+            """SELECT uploaded_by,classification,scan_status,lifecycle_status
+               FROM managed_files WHERE file_id=%s FOR UPDATE""",
+            (file_id,),
+        )
+        current_file = cur.fetchone()
+        if current_file != file_row:
+            raise DocumentError("Document changed; reload and try again.")
         if file_row["scan_status"] != "CLEAN" or file_row["lifecycle_status"] != "ACTIVE":
             raise DocumentError("Only clean active documents can be shared.")
         cur.execute(
-            "SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
+            "SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE",
             (recipient_employee_id,),
         )
-        if not cur.fetchone():
+        recipient = cur.fetchone()
+        if not recipient or not recipient["is_active"]:
             raise DocumentError("Share recipient is inactive or unavailable.")
         if file_row["classification"] in {"RESTRICTED", "CONFIDENTIAL"}:
             if not approval_request_id:
@@ -608,7 +622,7 @@ def create_document_share(
                 """SELECT 1 FROM approval_requests
                    WHERE approval_request_id=%s AND requested_by=%s
                      AND request_type='DOCUMENT_SHARE' AND resource_type='managed_file'
-                     AND resource_id=%s AND status='APPROVED'""",
+                     AND resource_id=%s AND status='APPROVED' FOR UPDATE""",
                 (approval_request_id, actor_employee_id, str(file_id)),
             )
             if not cur.fetchone():
@@ -641,7 +655,6 @@ def create_document_share(
         cur.close()
         conn.close()
 
-
 def revoke_document_share(*, actor_employee_id: int, share_id: int) -> None:
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
@@ -649,18 +662,35 @@ def revoke_document_share(*, actor_employee_id: int, share_id: int) -> None:
         cur.execute(
             """SELECT s.file_id,f.uploaded_by FROM managed_file_shares s
                JOIN managed_files f ON f.file_id=s.file_id
-               WHERE s.share_id=%s FOR UPDATE""",
+               WHERE s.share_id=%s""",
+            (share_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise DocumentError("Document share was not found.")
+        context = ResourceContext(
+            owner_employee_id=snapshot["uploaded_by"], resource_type="document",
+            resource_id=str(snapshot["file_id"]),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.share", context,
+            lock_employee_ids=[snapshot["uploaded_by"]],
+        ):
+            raise DocumentError("Document share was not found.")
+        cur.execute(
+            "SELECT uploaded_by FROM managed_files WHERE file_id=%s FOR UPDATE",
+            (snapshot["file_id"],),
+        )
+        owner = cur.fetchone()
+        if not owner or owner["uploaded_by"] != snapshot["uploaded_by"]:
+            raise DocumentError("Document share scope changed; reload and try again.")
+        cur.execute(
+            "SELECT file_id,revoked_at FROM managed_file_shares WHERE share_id=%s FOR UPDATE",
             (share_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise DocumentError("Document share was not found.")
-        context = ResourceContext(
-            owner_employee_id=row["uploaded_by"], resource_type="document",
-            resource_id=str(row["file_id"]),
-        )
-        if not has_permission(actor_employee_id, "document.share", context):
-            raise DocumentError("Document share was not found.")
+        if not row or row["file_id"] != snapshot["file_id"]:
+            raise DocumentError("Document share changed; reload and try again.")
         cur.execute(
             "UPDATE managed_file_shares SET revoked_at=UTC_TIMESTAMP() WHERE share_id=%s AND revoked_at IS NULL",
             (share_id,),
@@ -679,7 +709,6 @@ def revoke_document_share(*, actor_employee_id: int, share_id: int) -> None:
     finally:
         cur.close()
         conn.close()
-
 
 def list_document_shares(*, employee_id: int) -> list[dict]:
     conn = get_connection()
@@ -738,18 +767,28 @@ def archive_document(*, actor_employee_id: int, file_id: int) -> None:
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute(
+            "SELECT uploaded_by,lifecycle_status FROM managed_files WHERE file_id=%s",
+            (file_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=snapshot["uploaded_by"], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.archive", context,
+            lock_employee_ids=[snapshot["uploaded_by"]],
+        ):
+            raise DocumentError("Document was not found.")
+        cur.execute(
             "SELECT uploaded_by,lifecycle_status FROM managed_files WHERE file_id=%s FOR UPDATE",
             (file_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise DocumentError("Document was not found.")
-        context = ResourceContext(
-            owner_employee_id=row["uploaded_by"], resource_type="document",
-            resource_id=str(file_id),
-        )
-        if not has_permission(actor_employee_id, "document.archive", context):
-            raise DocumentError("Document was not found.")
+        if not row or row["uploaded_by"] != snapshot["uploaded_by"] or row["lifecycle_status"] != snapshot["lifecycle_status"]:
+            raise DocumentError("Document changed; reload and try again.")
         if row["lifecycle_status"] not in {"ACTIVE", "QUARANTINED"}:
             raise DocumentError("Only active or quarantined documents can be archived.")
         cur.execute(
@@ -774,7 +813,6 @@ def archive_document(*, actor_employee_id: int, file_id: int) -> None:
         cur.close()
         conn.close()
 
-
 def permanently_delete_document(
     *, actor_employee_id: int, file_id: int, approval_request_id: int,
 ) -> None:
@@ -790,23 +828,35 @@ def permanently_delete_document(
     try:
         cur.execute(
             """SELECT uploaded_by,lifecycle_status FROM managed_files
+               WHERE file_id=%s""",
+            (file_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=snapshot["uploaded_by"], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.delete", context,
+            lock_employee_ids=[snapshot["uploaded_by"]],
+        ):
+            raise DocumentError("Document was not found.")
+        cur.execute(
+            """SELECT uploaded_by,lifecycle_status FROM managed_files
                WHERE file_id=%s FOR UPDATE""",
             (file_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise DocumentError("Document was not found.")
-        context = ResourceContext(
-            owner_employee_id=row["uploaded_by"], resource_type="document",
-            resource_id=str(file_id),
-        )
-        if not has_permission(actor_employee_id, "document.delete", context):
-            raise DocumentError("Document was not found.")
+        if (not row or row["uploaded_by"] != snapshot["uploaded_by"]
+                or row["lifecycle_status"] != snapshot["lifecycle_status"]):
+            raise DocumentError("Document changed; reload and try again.")
         cur.execute(
             """SELECT 1 FROM approval_requests
                WHERE approval_request_id=%s AND requested_by=%s
                  AND request_type='DOCUMENT_DELETE' AND resource_type='managed_file'
-                 AND resource_id=%s AND status='APPROVED'""",
+                 AND resource_id=%s AND status='APPROVED' FOR UPDATE""",
             (approval_request_id, actor_employee_id, str(file_id)),
         )
         if not cur.fetchone():
