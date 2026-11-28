@@ -360,21 +360,21 @@ def update_priority(
             cur, actor_employee_id, "service_request.priorities.manage"
         ):
             raise ServiceRequestError("Not authorized to manage service request priorities.")
+        # Serialize priority activation changes by locking the complete small
+        # catalogue in stable key order before checking the active-count invariant.
         cur.execute(
-            """SELECT priority_label,sort_order,is_active
-               FROM service_request_priorities WHERE priority_key=%s FOR UPDATE""",
-            (key,),
+            """SELECT priority_key,priority_label,sort_order,is_active
+               FROM service_request_priorities ORDER BY priority_key FOR UPDATE"""
         )
-        row = cur.fetchone()
+        catalogue = cur.fetchall()
+        row = next((item for item in catalogue if item[0] == key), None)
         if not row:
             raise ServiceRequestError("Service Request priority was not found.")
-        if bool(row[2]) and not bool(is_active):
-            cur.execute(
-                "SELECT COUNT(*) FROM service_request_priorities WHERE is_active=TRUE"
-            )
-            if int(cur.fetchone()[0]) <= 1:
+        if bool(row[3]) and not bool(is_active):
+            active_count = sum(1 for item in catalogue if bool(item[3]))
+            if active_count <= 1:
                 raise ServiceRequestError("At least one active Service Request priority must remain.")
-        changed = (row[0] != label or int(row[1]) != sort_order or bool(row[2]) != bool(is_active))
+        changed = (row[1] != label or int(row[2]) != sort_order or bool(row[3]) != bool(is_active))
         if not changed:
             conn.commit()
             return False
