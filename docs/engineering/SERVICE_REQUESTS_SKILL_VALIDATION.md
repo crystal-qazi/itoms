@@ -83,7 +83,7 @@ Comments currently use `service_request.update`; there is no separate comment pe
 **Controls observed**
 - All module routes require authenticated login.
 - Mutating forms validate the session CSRF token with constant-time comparison.
-- Every request read/action performs server-side permission and resource-scope checks.
+- Every request read/action performs server-side permission and resource-scope checks. Comment creation now uses a transaction-bound permission evaluator in the same MySQL transaction as the protected write.
 - Requester identity defaults to the authenticated employee; web form does not accept a requester ID.
 - Team and assignee selections are validated against active records and membership.
 - SQL values are parameterized; comments are plain text and Jinja autoescaping is retained.
@@ -92,8 +92,8 @@ Comments currently use `service_request.update`; there is no separate comment pe
 - Notification delivery is queued through the existing outbox; no synchronous external network call is made in the request transaction.
 
 **Security gate not passed**
-- `has_permission` owns a separate DB connection. Assignment, status transition, category administration and comment mutation do not yet bind authorization reads and protected writes to one transaction with a proven global lock order. This leaves a documented time-of-check/time-of-use revocation window. See `docs/architecture/AUTHORIZATION_TRANSACTION_CONSISTENCY.md`.
-- Existing tests do not yet prove request mutation versus concurrent role/team/department revocation in both lock orderings.
+- The shared `has_permission` still owns a separate DB connection. Request creation, assignment, status transition and category administration still authorize outside their mutation transaction. Only `add_comment` has been migrated to `has_permission_in_transaction`; its lock order is actor employee → team/membership/manager mapping → sorted roles → actor assignments → exact permission grant → request row (with scope revalidation). This is a bounded guarantee, not a global lock protocol.
+- A MySQL two-connection race test proves the comment authorization transaction wins before a concurrent role-permission revocation, then the later comment is denied. Team-membership/manager-scope revocation, department change and employee deactivation races remain unproven.
 - Request-number collision behavior needs a controlled retry or equivalent strategy.
 - Negative tests should cover cross-scope comment access, assignment to an unauthorized team, stale/inactive employee membership, CSRF failure for every mutation route and audit rollback.
 
@@ -123,15 +123,15 @@ Comments currently use `service_request.update`; there is no separate comment pe
 
 | Gate | Current status | Evidence required |
 |---|---|---|
-| Python unit suite | Passed | CI run `46111756702`: 166 passed, 43 skipped |
-| MySQL migrations | Passed | CI run `46111756702`: 42 applied; second run idempotent |
-| Service Request MySQL integration | Passed | CI run `46111756702`: 43 passed, including pending reason/comment/notification coverage |
-| Authorization negative tests | Not complete | Cross-scope and revoked-permission MySQL tests |
-| Concurrency/revocation tests | Not complete | Deterministic two-connection MySQL tests |
+| Python unit suite | Passed | CI run `46112814997`: 166 passed, 44 skipped |
+| MySQL migrations | Passed | CI run `46112814997`: 42 applied; second run idempotent |
+| Service Request MySQL integration | Passed | CI run `46112814997`: 44 passed, including comment-vs-role-revocation race |
+| Authorization negative tests | Partial | Comment after role-permission revocation is denied; cross-scope, unauthorized-team and stale-membership matrix remains |
+| Concurrency/revocation tests | Partial | Comment-vs-role-permission revocation covered; team/manager/department and other mutation races remain |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
 | WCAG 2.2 AA | Not tested | Automated scan plus manual checklist |
 | Deployment readiness | Not tested in target environment | Config, worker, backup/restore and deployment evidence |
 
 ## 8. Release recommendation
 
-Do not claim the Service Request module has passed all specialist skill gates or is production-ready. The basic functional workflow is implemented, and the Blueprint's pending-reason, comment and in-app notification capabilities have been added. Advanced search/reporting, configurable priorities, transaction-bound authorization consistency, security negative/concurrency tests and UI accessibility evidence remain open.
+Do not claim the Service Request module has passed all specialist skill gates or is production-ready. The basic functional workflow is implemented, and the Blueprint's pending-reason, comment and in-app notification capabilities have been added. Advanced search/reporting, configurable priorities, transaction-bound authorization for all mutations (only comment creation is migrated), broader security negative/concurrency tests and UI accessibility evidence remain open.
