@@ -90,14 +90,14 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 
 ## 7. Current status and pending work (reviewed 2026-11-28)
 
-1. **Canonical memory:** `main` contains `docs/project-memory/` and remains the canonical memory branch.
+1. **Canonical memory:** `main` contains `docs/project-memory/` and remains the canonical memory branch. Security validation work is being developed on `feature/security-service-request-cross-scope-tests`, based on `feature/itoms-foundation`.
 2. **Approved blueprint:** The full `docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md` exists on `feature/itoms-foundation` (835 lines in the branch comparison); the planning baseline is therefore recoverable from GitHub.
 3. **Implementation branch:** `feature/itoms-foundation` contains a substantial Flask/MySQL application, 43 numbered migrations, specialist skills, tests, CI, architecture notes, setup/deployment guidance, and module implementations. Its README describes it as active development, not a production release.
 4. **Earlier baseline branch:** `foundation/engineering-skills-baseline` also exists and is an earlier engineering baseline.
 5. **Branch relationship:** GitHub comparison of `main...feature/itoms-foundation` returned `diverged`, with feature branch 613 commits ahead and 3 commits behind `main` at review time. The feature branch does not contain `docs/project-memory/`. No open PR was returned by the repository-scoped PR search. Do not merge, force-push, or overwrite either branch automatically; prepare a deliberate reconciliation plan.
 6. **Specialist skills:** UI/UX Engineer v1.0.0, Full-Stack Engineer v1.0.0, and Security Engineer v1.0.0 skill files and references are present on `feature/itoms-foundation`. Their availability on that branch is confirmed; local agent installation/configuration remains unverified/pending.
 7. **Service Request representative validation:** `docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md` records CI run `46119899408`: 182 Python tests passed, 56 skipped; 43 migrations applied and rerun idempotently; 56 Service Request MySQL integration tests passed. These are recorded CI results, not tests rerun during the 2026-11-28 review.
-8. **Service Request remaining gates:** denied-action/cross-scope route tests, representative audit rollback tests, broader deadlock/load stress, manual keyboard/screen-reader/contrast/reflow/target-size/theme/mobile review, automated accessibility scan, dedicated dashboards/aggregate analytics follow-up, worker monitoring, and deployment validation remain open as detailed in `IMPLEMENTATION_REVIEW_2026-11-28.md`.
+8. **Service Request remaining gates:** A new MySQL integration regression test now verifies that an employee with only OWN-scoped `service_request.read` cannot read another employee's request (IDOR/cross-scope denial). This test is on `feature/security-service-request-cross-scope-tests`; GitHub Actions run `46121950608` is in progress. Representative audit rollback tests, broader deadlock/load stress, manual keyboard/screen-reader/contrast/reflow/target-size/theme/mobile review, automated accessibility scan, dedicated dashboards/aggregate analytics follow-up, worker monitoring, and deployment validation remain open as detailed in `IMPLEMENTATION_REVIEW_2026-11-28.md`. The test has not yet been confirmed passing.
 9. **Migration count discrepancy:** Feature branch README says 42 numbered migrations, while the Service Request validation records 43 applied and migration `043_service_request_priorities.sql` exists. Resolve documentation discrepancy; current migration files indicate 43.
 10. **Full questionnaire history:** Exact Q1–Q275 selected options and rationales still require backfill from source conversations/decision records. Do not reconstruct by guess.
 11. **Full-stack skill package:** The v1.0.0 skill and references are present in the feature branch. A separately generated/validated ZIP package is not confirmed by this review.
@@ -126,6 +126,12 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - [ ] If a distributable Full-Stack skill ZIP is still desired, prepare and validate it; the source skill package already exists on the feature branch.
 
 ## 10. Change log
+
+### 2026-11-28 — Service Request cross-scope authorization regression test
+- Added a MySQL-backed integration test to `tests/integration/test_service_requests_mysql.py` on `feature/security-service-request-cross-scope-tests`.
+- The test provisions an outsider with only an OWN-scoped read grant and verifies the HTTP detail endpoint returns the same 404 response used for nonexistent requests, preventing cross-scope request enumeration.
+- GitHub Actions CI run `46121950608` was started by the push and was still in progress at memory update time; no passing result is claimed.
+- No production code or permission policy was changed; this increment adds regression coverage only.
 
 ### 2026-11-28 — Repository and Service Request implementation review
 - Reviewed the canonical memory files on `main`, the full blueprint and all three specialist skills on `feature/itoms-foundation`, and the Service Request validation, route, service, templates and tests.
