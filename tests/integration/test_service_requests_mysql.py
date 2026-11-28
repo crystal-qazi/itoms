@@ -993,3 +993,163 @@ def test_own_scope_reader_cannot_mutate_another_employees_request(service_reques
         finally:
             cursor.close()
             cleanup.close()
+
+
+
+def test_own_scope_reader_http_mutations_are_denied_without_side_effects(
+    service_request_fixture,
+):
+    """HTTP comment, assignment and status routes must enforce OWN read-only scope."""
+    from flask import g
+    from itoms.services.service_requests import create_request
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="HTTP mutation scope denial",
+        description="The route boundary must preserve the service authorization decision.",
+    )
+
+    outsider_id = None
+    outsider_role_id = None
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO employees
+               (employee_code,full_name,department_id,is_active)
+               VALUES (%s,%s,%s,TRUE)""",
+            (
+                f"SR-{data['suffix']}-http-mutator",
+                "Service Request HTTP Read Only",
+                data["department_id"],
+            ),
+        )
+        outsider_id = int(cursor.lastrowid)
+        cursor.execute(
+            """INSERT INTO application_roles (role_name,description)
+               VALUES (%s,%s)""",
+            (
+                f"Service Request HTTP Read Only {data['suffix']}",
+                "Own-scope read-only HTTP integration-test role",
+            ),
+        )
+        outsider_role_id = int(cursor.lastrowid)
+        cursor.execute(
+            "SELECT permission_id FROM permissions WHERE permission_key=%s",
+            ("service_request.read",),
+        )
+        permission = cursor.fetchone()
+        assert permission, "service_request.read permission migration must be applied"
+        cursor.execute(
+            "INSERT INTO role_permissions (role_id,permission_id) VALUES (%s,%s)",
+            (outsider_role_id, permission[0]),
+        )
+        cursor.execute(
+            """INSERT INTO employee_role_assignments
+               (employee_id,role_id,scope_type,is_active)
+               VALUES (%s,%s,'OWN',TRUE)""",
+            (outsider_id, outsider_role_id),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        cursor.close()
+        connection.close()
+
+    @data["app"].before_request
+    def authenticate_outsider():
+        g.account_id = 987655
+        g.employee_id = outsider_id
+        g.mfa_enabled = True
+
+    try:
+        client = data["app"].test_client()
+        with client.session_transaction() as state:
+            state["csrf_token"] = "service-request-http-test-token"
+
+        mutations = (
+            (
+                f"/service-requests/{request_id}/comments",
+                {"body": "Unauthorized HTTP comment"},
+            ),
+            (
+                f"/service-requests/{request_id}/assignment",
+                {
+                    "assigned_team_id": str(data["team_id"]),
+                    "assigned_employee_id": str(data["assignee_id"]),
+                },
+            ),
+            (
+                f"/service-requests/{request_id}/status",
+                {"status": "ON_HOLD", "pending_reason": "Unauthorized HTTP transition"},
+            ),
+        )
+        for path, payload in mutations:
+            response = client.post(
+                path,
+                data={"csrf_token": "service-request-http-test-token", **payload},
+            )
+            assert response.status_code == 302, path
+            assert response.headers["Location"].endswith(
+                f"/service-requests/{request_id}"
+            )
+
+        connection = _db()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                """SELECT status,assigned_team_id,assigned_employee_id
+                   FROM service_requests WHERE request_id=%s""",
+                (request_id,),
+            )
+            assert cursor.fetchone() == ("OPEN", None, None)
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_comments WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 0
+            cursor.execute(
+                "SELECT COUNT(*) FROM service_request_activity WHERE request_id=%s",
+                (request_id,),
+            )
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                """SELECT COUNT(*) FROM audit_events
+                   WHERE target_type='service_request' AND target_id=%s
+                     AND actor_employee_id=%s""",
+                (str(request_id), outsider_id),
+            )
+            assert cursor.fetchone()[0] == 0
+        finally:
+            cursor.close()
+            connection.close()
+    finally:
+        cleanup = _db()
+        cursor = cleanup.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM employee_role_assignments WHERE employee_id=%s",
+                (outsider_id,),
+            )
+            cursor.execute(
+                "DELETE FROM role_permissions WHERE role_id=%s",
+                (outsider_role_id,),
+            )
+            cursor.execute(
+                "DELETE FROM application_roles WHERE role_id=%s",
+                (outsider_role_id,),
+            )
+            cursor.execute(
+                "DELETE FROM employees WHERE employee_id=%s",
+                (outsider_id,),
+            )
+            cleanup.commit()
+        except Exception:
+            cleanup.rollback()
+            raise
+        finally:
+            cursor.close()
+            cleanup.close()
