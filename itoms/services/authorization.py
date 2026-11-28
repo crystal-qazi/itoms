@@ -75,6 +75,7 @@ def has_permissions_in_transaction(
     cur, employee_id: int, permission_key: str,
     resources: list[ResourceContext | None],
     *, lock_employee_ids: list[int] | None = None,
+    require_all: bool = True,
 ) -> bool:
     """Require one permission grant for every resource in a single transaction.
 
@@ -240,7 +241,8 @@ def has_permissions_in_transaction(
                 return True
         return False
 
-    return all(resource_is_authorized(resource) for resource in resources)
+    results = [resource_is_authorized(resource) for resource in resources]
+    return all(results) if require_all else any(results)
 
 
 def has_permission_in_transaction(
@@ -257,5 +259,5 @@ def has_permission_in_transaction(
     """
     return has_permissions_in_transaction(
         cur, employee_id, permission_key, [resource],
-        lock_employee_ids=lock_employee_ids,
+        lock_employee_ids=lock_employee_ids, require_all=require_all,
     )
