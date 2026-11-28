@@ -207,3 +207,10 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - PR [#8](https://github.com/crystal-qazi/itoms/pull/8) was squash-merged into `feature/itoms-foundation` as `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0`.
 - The status rollback test now sits after the merged assignment rollback test. PR #7 remains closed as superseded; no force-push was used.
 - PRs #6 and #8 add test-only rollback coverage. No production code was modified.
+
+
+### 2026-11-28 — Notification outbox rollback regression opened (PR #9)
+- Added `test_assignment_rolls_back_when_notification_outbox_insert_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-notification-outbox-rollback-complete`.
+- The test forces the `notification_outbox` insert to fail after the assignment audit and notification inbox insert, then verifies assignment, activity, audit, inbox notification and outbox rows all roll back.
+- PR [#9](https://github.com/crystal-qazi/itoms/pull/9), head `3f7033290924d2f325b0ad6d4de543d0e1fa0984`, targets `feature/itoms-foundation`. Both `python-quality` and `mysql-migrations` were in progress at memory update time; do not merge until both pass.
+- Test-only change; no production code changed.
