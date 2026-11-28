@@ -247,6 +247,7 @@ def has_permission_in_transaction(
     cur, employee_id: int, permission_key: str,
     resource: ResourceContext | None = None,
     *, lock_employee_ids: list[int] | None = None,
+    require_all: bool = True,
 ) -> bool:
     """Transaction-bound permission check for one trusted resource/action.
 
