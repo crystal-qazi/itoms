@@ -506,6 +506,13 @@ def test_priority_catalogue_is_admin_configurable_and_used_for_new_requests(serv
         "LOW", "MEDIUM", "HIGH", "CRITICAL",
     ]
 
+    with pytest.raises(ServiceRequestError, match="Not authorized"):
+        create_priority(
+            actor_employee_id=data["requester_id"],
+            priority_key="UNAUTHORIZED",
+            priority_label="Unauthorized",
+        )
+
     create_priority(
         actor_employee_id=data["administrator_id"],
         priority_key="urgent",
