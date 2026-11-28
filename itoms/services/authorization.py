@@ -73,27 +73,40 @@ def has_permission(employee_id: int, permission_key: str,
 def has_permissions_in_transaction(
     cur, employee_id: int, permission_key: str,
     resources: list[ResourceContext | None],
+    *, lock_employee_ids: list[int] | None = None,
 ) -> bool:
     """Require one permission grant for every resource in a single transaction.
 
-    Lock order: actor employee -> resource teams in ascending team_id ->
-    membership/manager-mapping rows in ascending team_id -> sorted application
-    roles -> actor role assignments -> exact role-permission rows. Callers lock
-    protected resource rows only after this function and revalidate snapshots.
+    Lock order: actor/target employee rows in ascending employee_id ->
+    resource teams in ascending team_id -> membership/manager-mapping rows in
+    ascending team_id -> sorted application roles -> actor role assignments ->
+    exact role-permission rows. Callers lock protected resource rows only after
+    this function and revalidate snapshots.
     """
     if (not isinstance(employee_id, int) or isinstance(employee_id, bool)
             or employee_id <= 0 or not permission_key or not resources):
         return False
 
-    cur.execute(
-        """SELECT department_id FROM employees
-           WHERE employee_id=%s AND is_active=TRUE FOR UPDATE""",
-        (employee_id,),
-    )
-    actor = cur.fetchone()
-    if not actor:
+    employee_ids = sorted({
+        employee_id,
+        *(int(value) for value in (lock_employee_ids or [])),
+    })
+    if any(value <= 0 for value in employee_ids):
         return False
-    actor_department_id = actor[0]
+    marks = ",".join(["%s"] * len(employee_ids))
+    cur.execute(
+        f"""SELECT employee_id,department_id,is_active FROM employees
+            WHERE employee_id IN ({marks})
+            ORDER BY employee_id FOR UPDATE""",
+        tuple(employee_ids),
+    )
+    locked_employees = {
+        int(row[0]): row for row in cur.fetchall()
+    }
+    actor = locked_employees.get(employee_id)
+    if not actor or not actor[2] or len(locked_employees) != len(employee_ids):
+        return False
+    actor_department_id = actor[1]
 
     # Lock all team scopes in a single deterministic order. This matters for
     # mutations such as assignment that authorize both the existing request
