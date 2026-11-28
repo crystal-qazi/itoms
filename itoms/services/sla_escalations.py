@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import has_permission, has_permission_in_transaction
 
 
 class SLAEscalationError(ValueError):
@@ -36,8 +36,6 @@ def upsert_escalation_policy(
     *, actor_employee_id: int, priority: str, sla_type: str,
     escalation_level: int, after_due_minutes: int, is_active: bool = True,
 ) -> None:
-    if not has_permission(actor_employee_id, "incident.sla.manage"):
-        raise SLAEscalationError("Not authorized to manage SLA escalation policies.")
     priority = (priority or "").strip().upper()
     sla_type = (sla_type or "").strip().upper()
     if priority not in PRIORITIES or sla_type not in SLA_TYPES:
@@ -49,6 +47,10 @@ def upsert_escalation_policy(
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "incident.sla.manage", None
+        ):
+            raise SLAEscalationError("Not authorized to manage SLA escalation policies.")
         cur.execute(
             """INSERT INTO incident_sla_escalation_policies
                (priority,sla_type,escalation_level,after_due_minutes,is_active)
