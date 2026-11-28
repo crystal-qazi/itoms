@@ -12,7 +12,7 @@ Production branch: `main` (not modified)
 - Dynamic role/permission authorization with OWN, TEAM, MANAGED_TEAMS, DEPARTMENT and RESOURCE scope support; identity and directory administration.
 - Approval workflow, Change Management and Release Management with SQA release gates.
 - Helpdesk Incident Management, public/internal comments, Grafana webhook ingestion and 24x7 read-time SLA indicators.
-- Service Requests lifecycle, dynamic categories, team/employee assignment, pending reasons, comments, audit history and transactional in-app notification enqueueing; comment creation uses transaction-bound permission authorization, with other mutation paths still pending migration.
+- Service Requests lifecycle, dynamic categories, team/employee assignment, pending reasons, comments, audit history and transactional in-app notification enqueueing; create/assign/status/category/comment mutations use transaction-bound permission authorization.
 - Service and Software Inventory.
 - Engineering Task Management.
 - SQA plans, cases, executions, defects and release signoffs.
