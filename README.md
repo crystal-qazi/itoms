@@ -7,7 +7,7 @@ Private, offline-first hospital intranet platform for IT operations across eight
 - Requirements and product planning: finalized.
 - Active implementation branch: `feature/itoms-foundation`.
 - The feature branch contains the shared platform foundation and implementations of identity/MFA, authorization, department-scoped employee directory, team and team-manager administration, incidents/Grafana intake, service requests, engineering tasks, service inventory, approvals, change/release, SQA, problem management, projects, assets/maintenance, technical operations, training, vendor directory, notifications, SLA escalation, reporting and document management. The installable PWA shell caches only approved static assets; operational and employee data remain server-backed and uncached.
-- Database schema is delivered through 41 numbered SQL migrations.
+- Database schema is delivered through 42 numbered SQL migrations.
 - Automated Python and MySQL 8.4 CI is required for every code change.
 - This is an actively developed feature branch, not a production release. Deployment hardening, operational integration, end-to-end acceptance and controlled integration into `main` remain required.
 
@@ -36,4 +36,4 @@ Configure a disposable MySQL 8.4 database before running migrations or MySQL int
 
 Never commit credentials, secrets, production data, uploaded documents or virtual-environment files. Configure secrets and encryption keys through the deployment environment. Document storage must be outside the web root and Trend Micro ICAP scanning must be configured before accepting documents; scan failures remain quarantined. Sensitive records must not be cached by the app shell or browser.
 
-Apply the ITOMS UI/UX Engineer, Full-Stack Engineer and Security Engineer standards throughout implementation.
+Apply the [ITOMS UI/UX Engineer](skills/itoms-ui-ux-engineer/SKILL.md), [Full-Stack Engineer](skills/itoms-fullstack-engineer/SKILL.md) and [Security Engineer](skills/itoms-security-engineer/SKILL.md) standards throughout implementation. The approved requirements baseline is [Master Requirements & System Blueprint](docs/MASTER_REQUIREMENTS_AND_SYSTEM_BLUEPRINT.md); current Service Request skill validation is recorded [here](docs/engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md).
