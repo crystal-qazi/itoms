@@ -591,4 +591,31 @@ def test_advanced_request_search_filters_keyword_category_and_created_date(servi
         actor_employee_id=data["requester_id"], search="no matching request",
     ) == []
 
+def test_request_number_collision_is_retried(service_request_fixture, monkeypatch):
+    from itoms.services import service_requests
+
+    data = service_request_fixture
+    monkeypatch.setattr(service_requests.secrets, "token_hex", lambda size: "a" * 16)
+    first_id = service_requests.create_request(
+        actor_employee_id=data["requester_id"],
+        title="First generated request",
+        description="Creates the request number that the next insert will collide with.",
+    )
+
+    suffixes = iter(("a" * 16, "b" * 16))
+    monkeypatch.setattr(service_requests.secrets, "token_hex", lambda size: next(suffixes))
+    second_id = service_requests.create_request(
+        actor_employee_id=data["requester_id"],
+        title="Second generated request",
+        description="The duplicate request number must be retried safely.",
+    )
+    first = service_requests.get_request_detail(
+        actor_employee_id=data["requester_id"], request_id=first_id,
+    )
+    second = service_requests.get_request_detail(
+        actor_employee_id=data["requester_id"], request_id=second_id,
+    )
+    assert first["request_number"] != second["request_number"]
+    assert second["request_number"].endswith("B" * 16)
+
 
