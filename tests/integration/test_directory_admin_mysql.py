@@ -109,6 +109,29 @@ def directory_admin_fixture():
         cursor.execute(f"DELETE FROM employee_role_assignments WHERE employee_id IN ({marks})", tuple(employees))
         cursor.execute("DELETE FROM role_permissions WHERE role_id IN (%s,%s)", (role_id, member_role_id))
         cursor.execute("DELETE FROM application_roles WHERE role_id IN (%s,%s)", (role_id, member_role_id))
+        # Account/session rows reference employees and must be removed before
+        # deleting the fixture employees. Deactivation intentionally preserves
+        # these rows in production; this is isolated test-fixture cleanup only.
+        cursor.execute(
+            f"""DELETE FROM account_recovery_codes
+                WHERE account_id IN (
+                    SELECT account_id FROM user_accounts
+                    WHERE employee_id IN ({marks})
+                )""",
+            tuple(employees),
+        )
+        cursor.execute(
+            f"""DELETE FROM user_sessions
+                WHERE account_id IN (
+                    SELECT account_id FROM user_accounts
+                    WHERE employee_id IN ({marks})
+                )""",
+            tuple(employees),
+        )
+        cursor.execute(
+            f"DELETE FROM user_accounts WHERE employee_id IN ({marks})",
+            tuple(employees),
+        )
         cursor.execute(f"DELETE FROM employees WHERE employee_id IN ({marks})", tuple(employees))
         for extra_team_id in data["extra_team_ids"]:
             cursor.execute("DELETE FROM teams WHERE team_id=%s", (extra_team_id,))
