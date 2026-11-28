@@ -41,22 +41,25 @@ class Connection:
 
 
 def test_incident_creation_checks_requester_scope(monkeypatch):
-    connection = Connection([(7,), None])
+    connection = Connection([(7,), (7, True), None])
     checks = []
     monkeypatch.setattr(incidents, "get_connection", lambda: connection)
-    monkeypatch.setattr(incidents, "has_permission",
-                        lambda actor, key, context=None: checks.append((key, context)) or True)
+    monkeypatch.setattr(
+        incidents, "has_permission_in_transaction",
+        lambda cur, actor, key, context=None, **kwargs:
+            checks.append((key, context, kwargs.get("lock_employee_ids"))) or True,
+    )
 
     ticket_id = incidents.create_incident(
         actor_employee_id=11, title="Network issue", description="Link down"
     )
 
     assert ticket_id == 501
-    assert checks[0] == ("incident.create", None)
-    assert checks[1] == (
+    assert checks == [(
         "incident.create",
         ResourceContext(owner_employee_id=11, department_id=7),
-    )
+        [11],
+    )]
     assert connection.committed
 
 
@@ -64,10 +67,10 @@ def test_incident_creation_rejects_out_of_scope_requester(monkeypatch):
     connection = Connection([(99,)])
     checks = []
     monkeypatch.setattr(incidents, "get_connection", lambda: connection)
-    def permission(actor, key, context=None):
+    def permission(cur, actor, key, context=None, **kwargs):
         checks.append((key, context))
-        return context is None
-    monkeypatch.setattr(incidents, "has_permission", permission)
+        return False
+    monkeypatch.setattr(incidents, "has_permission_in_transaction", permission)
 
     with pytest.raises(incidents.IncidentError, match="requester or team"):
         incidents.create_incident(
@@ -82,10 +85,10 @@ def test_initial_team_assignment_requires_assign_scope(monkeypatch):
     connection = Connection([(7,), (8,)])
     checks = []
     monkeypatch.setattr(incidents, "get_connection", lambda: connection)
-    def permission(actor, key, context=None):
+    def permission(cur, actor, key, context=None, **kwargs):
         checks.append((key, context))
         return key != "incident.assign"
-    monkeypatch.setattr(incidents, "has_permission", permission)
+    monkeypatch.setattr(incidents, "has_permission_in_transaction", permission)
 
     with pytest.raises(incidents.IncidentError, match="assign new incidents"):
         incidents.create_incident(
