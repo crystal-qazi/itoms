@@ -215,3 +215,10 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Historical Q1–Q275 decision backfill and local specialist-skill installation verification.
 
 No production application or notification-worker code was changed in PRs #11–#14; these increments add tests and documentation only. Passing CI for these test PRs does not establish production readiness.
+
+
+## 22. Notification operations runbook — 2026-11-28
+- Added operator-facing worker commands for in-app processing, stale-claim recovery, optional SMTP email delivery and permission-controlled dead-letter replay.
+- Added read-only SQL observations for per-channel/status queue depth and age, stale PROCESSING claims and DEAD backlog.
+- Explicitly documented that these queries are not alerting; operational thresholds, alert routing, worker supervision and on-call ownership still require approval.
+- Documentation-only PR [#15](https://github.com/crystal-qazi/itoms/pull/15) was squash-merged into `feature/itoms-foundation` as `4bbbfbb430b590452cd8a227f5612aca4399088e`. No CI was triggered; no production code changed.
