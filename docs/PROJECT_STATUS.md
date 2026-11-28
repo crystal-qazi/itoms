@@ -9,7 +9,7 @@ Production branch: `main` (not modified)
 
 - Flask modular monolith, MySQL migration runner, CLI, health route, configuration and structured logging.
 - Local authentication, password lifecycle, session revocation/idle expiry, CSRF, TOTP MFA, recovery codes and first-Administrator bootstrap.
-- Dynamic role/permission authorization with OWN, TEAM, MANAGED_TEAMS, DEPARTMENT and RESOURCE scope support; identity and directory administration.
+- Dynamic role/permission authorization with OWN, TEAM, MANAGED_TEAMS, DEPARTMENT and RESOURCE scope support; identity and directory administration. Directory team-membership writes now authorize in the same transaction as membership changes.
 - Approval workflow, Change Management and Release Management with SQA release gates.
 - Helpdesk Incident Management, public/internal comments, Grafana webhook ingestion and 24x7 read-time SLA indicators.
 - Service Requests lifecycle, dynamic categories, team/employee assignment, pending reasons, comments, audit history and transactional in-app notification enqueueing; create/assign/status/category/comment mutations use transaction-bound permission authorization.
