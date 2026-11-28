@@ -5,7 +5,7 @@ import re
 from urllib.parse import urlparse
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import has_permission, has_permission_in_transaction
 
 
 class VendorError(ValueError):
@@ -37,8 +37,6 @@ def create_vendor(
     *, actor_employee_id: int, vendor_name: str, service_description: str = "",
     support_email: str = "", support_phone: str = "", support_portal_url: str = "",
 ) -> int:
-    if not has_permission(actor_employee_id, "vendor.directory.manage"):
-        raise VendorError("Not authorized to manage the vendor directory.")
     name = (vendor_name or "").strip()
     description = (service_description or "").strip()
     email = (support_email or "").strip()
@@ -58,6 +56,8 @@ def create_vendor(
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(cur, actor_employee_id, "vendor.directory.manage", None):
+            raise VendorError("Not authorized to manage the vendor directory.")
         cur.execute(
             """SELECT vendor_id FROM vendor_directory
                WHERE LOWER(vendor_name)=LOWER(%s) LIMIT 1""",
@@ -89,11 +89,11 @@ def create_vendor(
 
 
 def set_vendor_active(*, actor_employee_id: int, vendor_id: int, is_active: bool) -> None:
-    if not has_permission(actor_employee_id, "vendor.directory.manage"):
-        raise VendorError("Not authorized to manage the vendor directory.")
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(cur, actor_employee_id, "vendor.directory.manage", None):
+            raise VendorError("Not authorized to manage the vendor directory.")
         cur.execute("SELECT vendor_name FROM vendor_directory WHERE vendor_id=%s FOR UPDATE", (vendor_id,))
         row = cur.fetchone()
         if not row:
