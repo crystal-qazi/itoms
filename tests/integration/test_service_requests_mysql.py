@@ -145,6 +145,19 @@ def service_request_fixture():
         if request_ids:
             req_marks = ",".join(["%s"] * len(request_ids))
             cursor.execute(
+                f"""DELETE FROM notification_outbox
+                    WHERE notification_id IN (
+                        SELECT notification_id FROM notifications
+                        WHERE target_type='service_request' AND target_id IN ({req_marks})
+                    )""",
+                tuple(str(request_id) for request_id in request_ids),
+            )
+            cursor.execute(
+                f"""DELETE FROM notifications
+                    WHERE target_type='service_request' AND target_id IN ({req_marks})""",
+                tuple(str(request_id) for request_id in request_ids),
+            )
+            cursor.execute(
                 f"DELETE FROM service_request_comments WHERE request_id IN ({req_marks})",
                 request_ids,
             )
