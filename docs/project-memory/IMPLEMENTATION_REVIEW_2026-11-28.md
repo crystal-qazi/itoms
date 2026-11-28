@@ -150,3 +150,10 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - Merged PR [#8](https://github.com/crystal-qazi/itoms/pull/8) into `feature/itoms-foundation` using squash merge. Merge commit: `e932083a1a813951fbcdbe1d5b6498b7a4d7e2c0`.
 - PR #7 was closed as superseded by #8 after PR #6 merged; the rebased branch avoided force-pushing and received fresh CI.
 - Test-only change; no production service or authorization logic changed.
+
+
+## 15. Notification outbox rollback regression — 2026-11-28
+- Added `test_assignment_rolls_back_when_notification_outbox_insert_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-notification-outbox-rollback-complete`.
+- The MySQL trigger rejects `notification_outbox` insertion after the assignment audit and inbox notification insert. The test checks request assignment, activity, audit event, notification inbox and outbox are all absent/unchanged after rollback; trigger cleanup runs in `finally`.
+- PR [#9](https://github.com/crystal-qazi/itoms/pull/9), head `3f7033290924d2f325b0ad6d4de543d0e1fa0984`, is open and mergeable. GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) had both `python-quality` and `mysql-migrations` in progress at this review. Do not merge until both pass.
+- Test-only change; no production service code changed.
