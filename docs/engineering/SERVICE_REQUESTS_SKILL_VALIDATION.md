@@ -17,7 +17,8 @@ The validation uses the real application branch, not the documentation-only engi
 | Templates | `itoms/templates/service_requests/index.html`, `detail.html` |
 | Base schema | `itoms/db/migrations/versions/027_service_requests.sql` |
 | Blueprint-required completion | `itoms/db/migrations/versions/042_service_request_comments_pending.sql` |
-| Configurable priorities | `itoms/db/migrations/versions/043_service_request_priorities.sql` |\n| Unit tests | `tests/test_service_requests.py` |
+| Configurable priorities | `itoms/db/migrations/versions/043_service_request_priorities.sql` |
+| Unit tests | `tests/test_service_requests.py` |
 | MySQL integration tests | `tests/integration/test_service_requests_mysql.py` |
 | Shared services | Authorization, audit events, notifications/outbox, employee/team directory |
 
@@ -34,7 +35,7 @@ The validation uses the real application branch, not the documentation-only engi
 | Pending reasons | ON_HOLD requires reason; current reason and activity history stored | Implemented in migration 042 |
 | Comments | Authenticated, scoped, length-limited plain-text comments with author/time | Implemented in migration 042 |
 | Basic notifications | In-app notification and outbox rows queued transactionally for assignment, status and comment events | Implemented; delivery depends on configured worker |
-| Advanced search | Keyword search across request number/title/description, category, status, configured priority and created-date range; scope filtering occurs before the result limit | Implemented; pagination controls remain a follow-up |
+| Advanced search | Keyword search across request number/title/description, category, status, configured priority and created-date range; stable previous/next pagination is applied after authorization filtering | Implemented |
 | Reporting | Shared saved-report dataset includes request number, title, category, requester, team, priority, status and created date; priority/category filters use active catalogues | Implemented through shared reporting; dedicated dashboards and aggregate analytics remain follow-up work |
 
 ## 3. Permission and workflow mapping
@@ -44,7 +45,8 @@ The validation uses the real application branch, not the documentation-only engi
 - `service_request.read`
 - `service_request.update`
 - `service_request.assign`
-- `service_request.categories.manage`\n- `service_request.priorities.manage`
+- `service_request.categories.manage`
+- `service_request.priorities.manage`
 
 Comments currently use `service_request.update`; there is no separate comment permission. Role grants remain dynamic and administrator-controlled. Resource scope is evaluated using trusted requester/team/department context from the service layer.
 
@@ -69,14 +71,13 @@ Comments currently use `service_request.update`; there is no separate comment pe
 - In-app notification/outbox persistence is performed in the request transaction.
 
 **Remaining work**
-1. Add bounded pagination controls and stable next/previous navigation.
-2. Add dedicated Service Request dashboards and aggregate analytics beyond the shared saved-report/CSV builder.
-3. Expand route-level tests for every form action, CSRF failure and denied access path.
-4. Document worker delivery expectations and operational monitoring.
+1. Add dedicated Service Request dashboards and aggregate analytics beyond the shared saved-report/CSV builder.
+2. Expand route-level tests for denied access paths and audit rollback behavior; all mutation routes now have CSRF rejection coverage.
+3. Document worker delivery expectations and operational monitoring.
 
 Request numbers now use a 64-bit random suffix and retry duplicate-key collisions up to five attempts; other database errors are not retried.
 
-**Assessment:** Core Section 7.4 functional capabilities are implemented. Pagination, dedicated dashboards and some route/UI evidence remain incomplete.
+**Assessment:** Core Section 7.4 functional capabilities are implemented. Dedicated dashboards, richer aggregate analytics and some route/UI evidence remain incomplete.
 
 ## 5. Security Engineer assessment
 
@@ -94,7 +95,7 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 **Security gate not passed**
 - The shared `has_permission` remains a separate-connection helper for read/list paths. All Service Request write paths, including priority catalogue create/update, use transaction-bound evaluation. Request assignment authorizes current and destination-team contexts together; comment/status revalidate the request's requester/team snapshot after acquiring its row lock. This is a module-bounded guarantee, not a claim that read paths are revocation-atomic.
 - MySQL 8.4 integration tests cover the request lifecycle, priority creation/deactivation/default selection, advanced keyword/category/date search, request-number collision retry, and transactional audit/notification behavior. Shared authorization tests cover role-permission revocation, TEAM membership removal, MANAGED_TEAMS manager-mapping removal and employee deactivation races.
-- Remaining negative evidence includes route-level CSRF/denied-action coverage for every mutation route, audit rollback tests across representative service families, and broader cross-service deadlock/load stress.
+- Route-level HTTP tests now verify missing-CSRF rejection across every Service Request mutation endpoint, and verify priority administration/search routing. Remaining negative evidence includes denied-action/cross-scope route cases, audit rollback tests across representative service families, and broader cross-service deadlock/load stress.
 
 **Assessment:** Mutation authorization is transaction-bound and deterministic revocation races are covered; manual security assessment and broader route-level/rollback evidence remain open.
 
@@ -106,6 +107,7 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 - Responsive Bootstrap grid and `table-responsive` list.
 - Jinja autoescaping for request/comment content.
 - Empty-state messaging and permission-gated actions.
+- Labeled priority/search controls and an aria-labeled previous/next pagination navigation.
 - Comment history and pending/resolution details are visible.
 
 **Not yet evidenced**
@@ -122,15 +124,15 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 
 | Gate | Current status | Evidence required |
 |---|---|---|
-| Python unit suite | Passed | CI run `46113102986`: 166 passed, 44 skipped |
-| MySQL migrations | Passed | CI run `46113102986`: 42 applied; second run idempotent |
-| Service Request MySQL integration | Passed | CI run `46113102986`: 44 passed, including comment-vs-role-revocation race |
-| Authorization negative tests | Partial | Comment after role-permission revocation is denied; cross-scope, unauthorized-team and stale-membership matrix remains |
-| Concurrency/revocation tests | Partial | Comment-vs-role-permission revocation covered; team/manager/department and other mutation races remain |
+| Python unit suite | Passed | CI run `46119322240`: 181 passed, 56 skipped |
+| MySQL migrations | Passed | CI run `46119322240`: 43 applied; second run idempotent |
+| Service Request MySQL integration | Passed | CI run `46119322240`: 56 passed, including priority lifecycle, advanced search, pagination and request-number collision retry |
+| Authorization negative tests | Partial | All Service Request mutation routes reject missing CSRF; cross-scope and denied-action matrix remains |
+| Concurrency/revocation tests | Passed for deterministic shared-scope races | Role-permission, TEAM membership, MANAGED_TEAMS manager mapping and employee-deactivation races are covered; broader load/deadlock stress remains |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
 | WCAG 2.2 AA | Not tested | Automated scan plus manual checklist |
 | Deployment readiness | Not tested in target environment | Config, worker, backup/restore and deployment evidence |
 
 ## 8. Release recommendation
 
-Do not claim the Service Request module has passed all specialist skill gates or is production-ready. The basic functional workflow is implemented, and the Blueprint's pending-reason, comment and in-app notification capabilities have been added. Advanced search/reporting, configurable priorities, transaction-bound authorization for all mutations (only comment creation is migrated), broader security negative/concurrency tests and UI accessibility evidence remain open.
+The core Section 7.4 workflow is implemented: configurable priorities, advanced search, scope-aware pagination, shared saved-report fields, collision-safe request numbers, pending reasons, comments and in-app notification enqueueing. Service Request write paths use transaction-bound authorization, and deterministic shared-scope revocation races plus mutation-route CSRF tests pass. Do not claim all specialist gates or production readiness: dedicated dashboards/aggregate analytics, manual keyboard/screen-reader and WCAG 2.2 AA verification, denied-action/audit-rollback evidence, production-like load/deadlock testing and deployment validation remain open.
