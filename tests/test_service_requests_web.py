@@ -46,7 +46,7 @@ def _mock_index_dependencies(monkeypatch, web):
     ])
 
 
-def test_priority_admin_page_renders_accessible_controls_and_search(monkeypatch):
+def test_priority_admin_page_renders_labeled_controls_and_search(monkeypatch):
     from itoms.web import service_requests as web
 
     app = _app_with_identity()
@@ -55,10 +55,9 @@ def test_priority_admin_page_renders_accessible_controls_and_search(monkeypatch)
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Priority administration" in body
-    assert 'name="priority_key"' in body
-    assert 'name="priority_label"' in body
-    assert 'name="search"' in body
-    assert 'aria-label="Service request pages"' not in body
+    assert 'for="priority-key"' in body
+    assert 'for="priority-label"' in body
+    assert 'for="sr-search"' in body
 
 
 def test_priority_create_route_rejects_missing_csrf(monkeypatch):
@@ -133,3 +132,38 @@ def test_advanced_search_route_passes_filters_and_visible_page_offset(monkeypatc
         "created_to": "2026-11-28", "visible_offset": 25, "limit": 26,
     }]
     assert "Page 2" in response.get_data(as_text=True)
+
+def test_every_service_request_mutation_route_rejects_missing_csrf(monkeypatch):
+    from itoms.web import service_requests as web
+
+    app = _app_with_identity()
+    for name in (
+        "create_request", "create_category", "set_category_active", "assign_request",
+        "transition_request", "add_comment", "create_priority", "update_priority",
+    ):
+        monkeypatch.setattr(
+            web, name,
+            lambda **_: pytest.fail(f"{name} must not run without CSRF"),
+        )
+    client = app.test_client()
+    paths = (
+        ("/service-requests/", {}),
+        ("/service-requests/categories", {}),
+        ("/service-requests/categories/7/active", {"is_active": "1"}),
+        ("/service-requests/7/assignment", {}),
+        ("/service-requests/7/status", {"status": "ON_HOLD"}),
+        ("/service-requests/7/comments", {"body": "test"}),
+        ("/service-requests/priorities", {"priority_key": "URGENT", "priority_label": "Urgent"}),
+        ("/service-requests/priorities/URGENT/update", {"priority_label": "Urgent"}),
+    )
+    for path, data in paths:
+        response = client.post(path, data=data)
+        assert response.status_code == 400, path
+
+
+def test_service_request_index_requires_login():
+    app = create_app(TestConfig)
+    response = app.test_client().get("/service-requests/")
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+
