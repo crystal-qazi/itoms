@@ -374,6 +374,15 @@ def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
         return result
 
     monkeypatch.setattr(directory, "has_permissions_in_transaction", coordinated_check)
+    original_assignment_check = identity_admin.has_permissions_in_transaction
+    assignment_check_started = threading.Event()
+
+    def track_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs):
+        if actor_employee_id == data["assigner_id"]:
+            assignment_check_started.set()
+        return original_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+
+    monkeypatch.setattr(identity_admin, "has_permissions_in_transaction", track_assignment_check)
 
     def remove_membership():
         with data["app"].app_context():
@@ -397,6 +406,7 @@ def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
         removal_future = pool.submit(remove_membership)
         assert revocation_locked.wait(timeout=10), "membership removal did not acquire its locks"
         assignment_future = pool.submit(assign_team_role)
+        assert assignment_check_started.wait(timeout=10), "team-scoped assignment did not start authorization"
         assert not assignment_future.done(), "team-scoped assignment passed while membership removal held locks"
         allow_revocation.set()
         removal_future.result(timeout=15)
@@ -449,6 +459,15 @@ def test_employee_deactivation_wins_before_role_assignment(
         return result
 
     monkeypatch.setattr(directory_admin, "has_permissions_in_transaction", coordinated_check)
+    original_assignment_check = identity_admin.has_permissions_in_transaction
+    assignment_check_started = threading.Event()
+
+    def track_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs):
+        if actor_employee_id == data["assigner_id"]:
+            assignment_check_started.set()
+        return original_assignment_check(cur, actor_employee_id, permission_key, resources, **kwargs)
+
+    monkeypatch.setattr(identity_admin, "has_permissions_in_transaction", track_assignment_check)
 
     def deactivate():
         with data["app"].app_context():
@@ -470,6 +489,7 @@ def test_employee_deactivation_wins_before_role_assignment(
         deactivation_future = pool.submit(deactivate)
         assert deactivation_locked.wait(timeout=10), "deactivation did not acquire its locks"
         assignment_future = pool.submit(assign)
+        assert assignment_check_started.wait(timeout=10), "role assignment did not start authorization"
         assert not assignment_future.done(), "role assignment passed while deactivation held employee locks"
         allow_deactivation.set()
         assert deactivation_future.result(timeout=15) is True
