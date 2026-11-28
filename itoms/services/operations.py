@@ -5,7 +5,7 @@ import re
 import secrets
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 
 class OperationsError(ValueError):
@@ -104,6 +104,9 @@ def create_operational_work_item(
         raise OperationsError("External reference must be 150 characters or fewer.")
     if type(owner_team_id) is not int or owner_team_id <= 0:
         raise OperationsError("Select a valid owner team.")
+    if assigned_to is not None and (type(assigned_to) is not int or assigned_to <= 0):
+        raise OperationsError("Select a valid assignee.")
+
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -117,17 +120,38 @@ def create_operational_work_item(
         if not team:
             raise OperationsError("Owner team is inactive or unavailable.")
         context = ResourceContext(team_id=owner_team_id, department_id=team[0])
-        if not has_permission(actor_employee_id, "operations.create", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "operations.create", context,
+            lock_employee_ids=[assigned_to] if assigned_to is not None else None,
+        ):
             raise OperationsError("Not authorized to create work for this team.")
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (owner_team_id,),
+        )
+        locked_team = cur.fetchone()
+        if not locked_team or not locked_team[1] or locked_team[0] != team[0]:
+            raise OperationsError("Owner team changed; retry work creation.")
+        cur.execute(
+            "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+            (team[0],),
+        )
+        department = cur.fetchone()
+        if not department or not department[0]:
+            raise OperationsError("Owner department is inactive or unavailable.")
         if assigned_to is not None:
+            cur.execute("SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE", (assigned_to,))
+            assignee = cur.fetchone()
+            if not assignee or not assignee[0]:
+                raise OperationsError("Assignee must be an active member of the owner team.")
             cur.execute(
-                """SELECT 1 FROM employees e JOIN employee_team_memberships m
-                   ON m.employee_id=e.employee_id
-                   WHERE e.employee_id=%s AND e.is_active=TRUE AND m.team_id=%s""",
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
                 (assigned_to, owner_team_id),
             )
             if not cur.fetchone():
                 raise OperationsError("Assignee must be an active member of the owner team.")
+
         number = f"OPS-{domain[:3]}-{secrets.token_hex(4).upper()}"
         cur.execute(
             """INSERT INTO operational_work_items
@@ -164,18 +188,29 @@ def update_work_status(*, actor_employee_id: int, work_item_id: int, new_status:
         cur.execute(
             """SELECT w.status,w.owner_team_id,t.department_id
                FROM operational_work_items w JOIN teams t ON t.team_id=w.owner_team_id
-               WHERE w.work_item_id=%s FOR UPDATE""",
+               WHERE w.work_item_id=%s""",
+            (work_item_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise OperationsError("Operations work item was not found.")
+        context = ResourceContext(
+            team_id=snapshot["owner_team_id"], department_id=snapshot["department_id"],
+            resource_type="operational_work_item", resource_id=str(work_item_id),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "operations.update", context
+        ):
+            raise OperationsError("Not authorized to update this work item.")
+        cur.execute(
+            """SELECT status,owner_team_id FROM operational_work_items
+               WHERE work_item_id=%s FOR UPDATE""",
             (work_item_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise OperationsError("Operations work item was not found.")
-        context = ResourceContext(
-            team_id=row["owner_team_id"], department_id=row["department_id"],
-            resource_type="operational_work_item", resource_id=str(work_item_id),
-        )
-        if not has_permission(actor_employee_id, "operations.update", context):
-            raise OperationsError("Not authorized to update this work item.")
+        if (not row or row["status"] != snapshot["status"]
+                or row["owner_team_id"] != snapshot["owner_team_id"]):
+            raise OperationsError("Operations work item changed; reload and try again.")
         old_status = row["status"]
         if new_status not in WORK_TRANSITIONS[old_status]:
             raise OperationsError(f"Cannot move work from {old_status} to {new_status}.")
@@ -197,7 +232,6 @@ def update_work_status(*, actor_employee_id: int, work_item_id: int, new_status:
     finally:
         cur.close()
         conn.close()
-
 
 def list_manageable_services(*, actor_employee_id: int) -> list[dict]:
     """Return services for which the actor has explicit Oracle inventory management scope."""
@@ -273,7 +307,7 @@ def create_oracle_database(
         raise OperationsError("Environment name is required (maximum 80 characters).")
     if not database or len(database) > 128:
         raise OperationsError("Database name is required (maximum 128 characters).")
-    secret_pattern = re.compile(r"(?i)(password\s*=|passwd\s*=|token\s*=|secret\s*=|://[^/\s]+:[^/@\s]+@)")
+    secret_pattern = re.compile(r"(?i)(password\\s*=|passwd\\s*=|token\\s*=|secret\\s*=|://[^/\\s]+:[^/@\\s]+@)")
     if (not host or len(host) > 255
             or any(secret_pattern.search(value) for value in (host, detail, environment, database, version))):
         raise OperationsError("Oracle inventory fields cannot contain credentials and secrets, including tokens.")
@@ -298,8 +332,26 @@ def create_oracle_database(
             team_id=service[0], department_id=service[1],
             resource_type="service", resource_id=str(service_id),
         )
-        if not has_permission(actor_employee_id, "oracle.inventory.manage", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "oracle.inventory.manage", context
+        ):
             raise OperationsError("Not authorized to manage Oracle inventory for this service.")
+        cur.execute(
+            """SELECT s.owner_team_id,t.department_id FROM service_records s
+               JOIN teams t ON t.team_id=s.owner_team_id
+               WHERE s.service_id=%s FOR UPDATE""",
+            (service_id,),
+        )
+        locked_service = cur.fetchone()
+        if not locked_service or locked_service[0] != service[0] or locked_service[1] != service[1]:
+            raise OperationsError("Owning service changed; retry Oracle registration.")
+        cur.execute(
+            "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+            (service[1],),
+        )
+        department = cur.fetchone()
+        if not department or not department[0]:
+            raise OperationsError("Owning service department is inactive.")
         cur.execute(
             """INSERT INTO oracle_database_inventory
                (service_id,environment_name,database_name,host_reference,version_label,
@@ -324,6 +376,7 @@ def create_oracle_database(
         conn.close()
 
 
+
 def update_oracle_lifecycle(
     *, actor_employee_id: int, oracle_database_id: int, new_status: str,
 ) -> None:
@@ -337,18 +390,29 @@ def update_oracle_lifecycle(
                FROM oracle_database_inventory o
                JOIN service_records s ON s.service_id=o.service_id
                JOIN teams t ON t.team_id=s.owner_team_id
-               WHERE o.oracle_database_id=%s FOR UPDATE""",
+               WHERE o.oracle_database_id=%s""",
+            (oracle_database_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise OperationsError("Oracle database record was not found.")
+        context = ResourceContext(
+            team_id=snapshot["owner_team_id"], department_id=snapshot["department_id"],
+            resource_type="service", resource_id=str(snapshot["service_id"]),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "oracle.inventory.manage", context
+        ):
+            raise OperationsError("Not authorized to update this Oracle database.")
+        cur.execute(
+            """SELECT lifecycle_status,service_id FROM oracle_database_inventory
+               WHERE oracle_database_id=%s FOR UPDATE""",
             (oracle_database_id,),
         )
         row = cur.fetchone()
-        if not row:
-            raise OperationsError("Oracle database record was not found.")
-        context = ResourceContext(
-            team_id=row["owner_team_id"], department_id=row["department_id"],
-            resource_type="service", resource_id=str(row["service_id"]),
-        )
-        if not has_permission(actor_employee_id, "oracle.inventory.manage", context):
-            raise OperationsError("Not authorized to update this Oracle database.")
+        if (not row or row["lifecycle_status"] != snapshot["lifecycle_status"]
+                or row["service_id"] != snapshot["service_id"]):
+            raise OperationsError("Oracle database record changed; reload and try again.")
         old_status = row["lifecycle_status"]
         if old_status == "RETIRED" and new_status != "RETIRED":
             raise OperationsError("Retired Oracle database records cannot be reactivated.")
