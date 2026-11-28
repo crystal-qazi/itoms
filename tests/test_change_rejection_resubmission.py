@@ -91,19 +91,26 @@ class CancelConn:
 
 
 def test_cancelling_change_approval_returns_change_to_draft(monkeypatch):
-    first = CancelConn([(10, "PENDING", "CHANGE", "change", "25")])
-    active_check = CancelConn([(1,)])
-    second = CancelConn([("SUBMITTED",), (10, "PENDING", "CHANGE", "change", "25")])
-    connections = iter([first, active_check, second])
-    monkeypatch.setattr(approvals, "get_connection", lambda: next(connections))
-    monkeypatch.setattr(approvals, "has_permission", lambda *_: True)
+    connection = CancelConn([
+        (10, "PENDING", "CHANGE", "change", "25"),
+        (1,),
+        ("SUBMITTED",),
+        (10, "PENDING", "CHANGE", "change", "25"),
+    ])
+    monkeypatch.setattr(approvals, "get_connection", lambda: connection)
 
     approvals.cancel_approval(actor_employee_id=10, request_id=42)
 
-    sql = [statement for statement, _ in second.fake_cursor.statements]
-    change_lock = next(i for i, statement in enumerate(sql) if "FROM change_records" in statement and "FOR UPDATE" in statement)
-    approval_lock = next(i for i, statement in enumerate(sql) if "FROM approval_requests" in statement and "FOR UPDATE" in statement)
+    sql = [statement for statement, _ in connection.fake_cursor.statements]
+    change_lock = next(
+        i for i, statement in enumerate(sql)
+        if "FROM change_records" in statement and "FOR UPDATE" in statement
+    )
+    approval_lock = next(
+        i for i, statement in enumerate(sql)
+        if "FROM approval_requests" in statement and "FOR UPDATE" in statement
+    )
     assert change_lock < approval_lock
     assert any("UPDATE change_records SET status='DRAFT'" in statement for statement in sql)
     assert any("CHANGE_APPROVAL_CANCELLED" in statement for statement in sql)
-    assert second.committed
+    assert connection.committed
