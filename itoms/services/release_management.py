@@ -138,7 +138,6 @@ def create_release(*, actor_employee_id: int, release_key: str, version_label: s
         if not actor_row or actor_row[0] is None:
             raise ReleaseError("An active employee in a department is required to create releases.")
         actor_context = ResourceContext(
-            owner_employee_id=actor_employee_id,
             department_id=actor_row[0], team_id=actor_row[1],
         )
 
