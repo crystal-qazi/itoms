@@ -5,7 +5,7 @@
 The first ITOMS release provides a deliberately basic Service Requests workflow:
 
 - Employees submit a request with a title, description, category and priority.
-- Request numbers are generated automatically and protected by a unique database constraint.
+- Request numbers use a date prefix and 64-bit random suffix, are protected by a unique database constraint, and retry duplicate-key collisions up to five times without retrying other database errors.
 - Authorized staff can assign a request to an active team and optional active team member.
 - Requests move through OPEN, IN_PROGRESS, ON_HOLD, COMPLETED or CANCELLED.
 - Entering ON_HOLD requires a pending reason; the current reason is shown on the request and preserved in status activity.
