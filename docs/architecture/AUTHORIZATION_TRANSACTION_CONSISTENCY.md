@@ -1,7 +1,9 @@
 # Authorization Transaction Consistency
 
-**Status:** Partially implemented; transaction-bound role-permission administration is covered by MySQL concurrency tests, while other mutating services remain on the staged rollout path  
+**Status:** Broad domain-mutation rollout implemented. Transaction-bound authorization now covers Service Request, Directory/Identity, Incident, Change, Release, SQA, Service/Oracle Inventory, Engineering Tasks, Operations, Problem, Project, Asset/Maintenance, Document, Vendor, Training, SLA, Notification, Reporting and Approval workflows. This is not a security certification or production-readiness approval.  
 **Scope:** Mutating service operations that must honor permission, role, team-membership, and department revocation consistently.
+
+**Latest verification:** [CI run 46117713131](https://github.com/crystal-qazi/itoms/actions/runs/46117713131), commit `77860e9d5cf78102728b415b946523f284b45737`: 167 Python tests passed, 52 skipped; 52 MySQL 8.4 integration tests passed; all 42 migrations applied and the second run was idempotent. MySQL evidence includes `REPEATABLE-READ`, index-plan assertions, role-permission revoke races, TEAM membership revocation, MANAGED_TEAMS mapping revocation, and employee-deactivation races.
 
 ## Problem
 
@@ -92,9 +94,9 @@ Use two independent connections and deterministic barriers/events; do not rely o
 6. Migrate one bounded service path first; run the full Python and MySQL CI suites.
 7. Expand service-by-service (SQA, releases, incidents, engineering tasks, identity administration), retaining regression tests at each step.
 
-## Current decision
+## Historical decision — 2026-11-27 (superseded)
 
-**No broad authorization refactor is included in this change.** The existing independent-connection behavior remains until the lock-order protocol and MySQL race tests prove the replacement. This avoids claiming revocation consistency that the current code does not guarantee and avoids introducing an untested deadlock or privilege regression.
+At this point in the staged rollout, no broad authorization refactor had yet been implemented. The subsequent implementation sections below record the completed bounded migrations and the evidence now available. The historical candidate lock order and source inventory below must not be read as the current implementation state.
 
 
 ## Repository audit — 2026-11-27 (refreshed after identity scope-lock change)
