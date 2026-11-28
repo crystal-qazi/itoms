@@ -128,3 +128,58 @@ def test_request_queue_rejects_invalid_visible_offset_before_database(monkeypatc
     with pytest.raises(service_requests.ServiceRequestError, match="result offset"):
         service_requests.list_requests(actor_employee_id=1, visible_offset=-1)
 
+
+
+def test_personal_dashboard_summary_uses_only_employee_owned_or_assigned_rows(monkeypatch):
+    class Cursor:
+        def __init__(self):
+            self.sql = ""
+            self.params = None
+            self.closed = False
+
+        def execute(self, sql, params):
+            self.sql = sql
+            self.params = params
+
+        def fetchone(self):
+            return {
+                "submitted_total": 8, "submitted_active": 3,
+                "submitted_on_hold": 1, "assigned_active": 2,
+                "assigned_on_hold": 1, "assigned_completed_30d": 4,
+            }
+
+        def close(self):
+            self.closed = True
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+            self.closed = False
+
+        def cursor(self, **kwargs):
+            assert kwargs == {"dictionary": True}
+            return self.cursor_instance
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(service_requests, "get_connection", lambda: connection)
+    result = service_requests.get_personal_dashboard_summary(employee_id=42)
+
+    assert result == {
+        "submitted_total": 8, "submitted_active": 3, "submitted_on_hold": 1,
+        "assigned_active": 2, "assigned_on_hold": 1, "assigned_completed_30d": 4,
+    }
+    assert connection.cursor_instance.params == (42,) * 8
+    assert "WHERE requester_employee_id=%s OR assigned_employee_id=%s" in connection.cursor_instance.sql
+    assert connection.cursor_instance.closed and connection.closed
+
+
+def test_personal_dashboard_summary_rejects_invalid_employee_before_database(monkeypatch):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened for an invalid employee identity"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match="employee identity"):
+        service_requests.get_personal_dashboard_summary(employee_id=True)
