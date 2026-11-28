@@ -461,3 +461,58 @@ def test_employee_deactivation_wins_before_role_assignment(
         assert deactivation_future.result(timeout=15) is True
         with pytest.raises(identity_admin.IdentityAdministrationError, match="inactive"):
             assignment_future.result(timeout=15)
+
+
+
+def test_authorization_locking_queries_use_indexes_under_repeatable_read(
+    role_assignment_fixture,
+):
+    from itoms.db.connection import get_connection
+
+    data = role_assignment_fixture
+    connection = get_connection()
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT @@transaction_isolation AS isolation_level")
+        isolation = cursor.fetchone()["isolation_level"]
+        assert isolation == "REPEATABLE-READ"
+
+        checks = [
+            (
+                "employee primary-key lookup",
+                "SELECT employee_id FROM employees WHERE employee_id=%s",
+                (data["assigner_id"],),
+            ),
+            (
+                "team primary-key lookup",
+                "SELECT team_id FROM teams WHERE team_id=%s",
+                (data["team_ids"][0],),
+            ),
+            (
+                "employee-team membership lookup",
+                "SELECT 1 FROM employee_team_memberships WHERE employee_id=%s AND team_id=%s",
+                (data["target_employee_id"], data["team_ids"][0]),
+            ),
+            (
+                "employee role-assignment lookup",
+                """SELECT role_id FROM employee_role_assignments
+                   WHERE employee_id=%s AND is_active=TRUE
+                     AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())
+                   ORDER BY role_id""",
+                (data["assigner_id"],),
+            ),
+            (
+                "role-permission lookup",
+                "SELECT permission_id FROM role_permissions WHERE role_id=%s AND permission_id=%s",
+                (data["assigner_role_id"], 1),
+            ),
+        ]
+        for label, query, params in checks:
+            cursor.execute("EXPLAIN " + query, params)
+            plan = cursor.fetchone()
+            assert plan and plan.get("type") != "ALL" and plan.get("key"), (
+                f"{label} must use an index; observed plan: {plan}"
+            )
+    finally:
+        cursor.close()
+        connection.close()
