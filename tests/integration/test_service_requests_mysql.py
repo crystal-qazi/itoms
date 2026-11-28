@@ -145,6 +145,10 @@ def service_request_fixture():
         if request_ids:
             req_marks = ",".join(["%s"] * len(request_ids))
             cursor.execute(
+                f"DELETE FROM service_request_comments WHERE request_id IN ({req_marks})",
+                request_ids,
+            )
+            cursor.execute(
                 f"DELETE FROM service_request_activity WHERE request_id IN ({req_marks})",
                 request_ids,
             )
@@ -293,3 +297,86 @@ def test_request_category_submission_assignment_and_closure_are_audited(service_
             description="The deactivated category must not be selectable.",
             category_id=category_id,
         )
+
+
+
+def test_pending_reasons_comments_and_in_app_notifications(service_request_fixture):
+    from itoms.services.service_requests import (
+        ServiceRequestError, add_comment, assign_request, create_request,
+        get_request_detail, list_comments, transition_request,
+    )
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="VPN access",
+        description="Please enable VPN access for remote support.",
+        priority="HIGH",
+    )
+
+    with pytest.raises(ServiceRequestError, match="pending reason"):
+        transition_request(
+            actor_employee_id=data["requester_id"],
+            request_id=request_id,
+            new_status="ON_HOLD",
+        )
+
+    transition_request(
+        actor_employee_id=data["requester_id"],
+        request_id=request_id,
+        new_status="ON_HOLD",
+        pending_reason="Waiting for manager confirmation.",
+    )
+    assign_request(
+        actor_employee_id=data["requester_id"],
+        request_id=request_id,
+        assigned_team_id=data["team_id"],
+        assigned_employee_id=data["assignee_id"],
+    )
+    comment_id = add_comment(
+        actor_employee_id=data["requester_id"],
+        request_id=request_id,
+        body="Manager confirmation has been requested.",
+    )
+    comments = list_comments(
+        actor_employee_id=data["requester_id"], request_id=request_id
+    )
+    assert len(comments) == 1
+    assert comments[0]["comment_id"] == comment_id
+    assert comments[0]["author_employee_id"] == data["requester_id"]
+    assert comments[0]["body"] == "Manager confirmation has been requested."
+
+    detail = get_request_detail(
+        actor_employee_id=data["requester_id"], request_id=request_id
+    )
+    assert detail["status"] == "ON_HOLD"
+    assert detail["pending_reason"] == "Waiting for manager confirmation."
+
+    connection = _db()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """SELECT reason FROM service_request_activity
+               WHERE request_id=%s AND activity_key='REQUEST_STATUS_CHANGED'
+               ORDER BY activity_id DESC LIMIT 1""",
+            (request_id,),
+        )
+        assert cursor.fetchone()[0] == "Waiting for manager confirmation."
+        cursor.execute(
+            """SELECT COUNT(*) FROM notifications
+               WHERE recipient_employee_id=%s AND target_type='service_request'
+                 AND target_id=%s""",
+            (data["assignee_id"], str(request_id)),
+        )
+        assert cursor.fetchone()[0] == 2
+        cursor.execute(
+            """SELECT COUNT(*) FROM notification_outbox o
+               JOIN notifications n ON n.notification_id=o.notification_id
+               WHERE n.recipient_employee_id=%s AND n.target_type='service_request'
+                 AND n.target_id=%s AND o.channel='IN_APP' AND o.delivery_status='PENDING'""",
+            (data["assignee_id"], str(request_id)),
+        )
+        assert cursor.fetchone()[0] == 2
+    finally:
+        cursor.close()
+        connection.close()
