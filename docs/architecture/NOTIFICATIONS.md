@@ -88,3 +88,12 @@ Migration `044_notification_outbox_recovery_index.sql` adds `idx_outbox_recovery
 - MySQL 8.4 CI run [46125978646](https://github.com/crystal-qazi/itoms/actions/runs/46125978646) passed both `python-quality` and `mysql-migrations`. The four-worker test recovered 40 stale rows in four batches of ten, with exactly one retry increment and one recovery audit event per row.
 - PR [#16](https://github.com/crystal-qazi/itoms/pull/16) was squash-merged into `feature/itoms-foundation` as `804458a2fbc90d51510e813933018725682a9fc6`.
 - This is focused concurrency evidence, not sustained worker throughput or production monitoring certification.
+
+
+## Eight-worker outbox claim contention verification — 2026-11-28
+
+- Strengthened the claim-isolation regression to synchronize eight independent MySQL workers against 80 due IN_APP outbox rows.
+- Each worker claims ten rows. The test asserts every batch has ten rows, all 80 IDs are unique across workers, and all 80 rows are in PROCESSING after the claims.
+- GitHub Actions run [46126319001](https://github.com/crystal-qazi/itoms/actions/runs/46126319001) passed both `python-quality` and `mysql-migrations` on MySQL 8.4.
+- PR [#18](https://github.com/crystal-qazi/itoms/pull/18) was squash-merged into `feature/itoms-foundation` as `04ab4923c46fbc5fd995ff29e835f237757439dc`.
+- This verifies bounded eight-worker contention, not a sustained throughput benchmark or production capacity target.
