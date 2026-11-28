@@ -178,18 +178,18 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Test-only change; no production transaction, service, or authorization logic changed.
 
 
-### 2026-11-28 — Assignment audit-failure rollback regression (PR #6 pending)
+### 2026-11-28 — Assignment audit-failure rollback regression (historical initial PR #6 snapshot; superseded below)
 - Added `test_assignment_rolls_back_when_audit_write_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-assignment-audit-rollback`.
 - The test creates a request, installs a temporary MySQL trigger rejecting `SERVICE_REQUEST_ASSIGNED`, calls `assign_request`, and verifies request assignment remains empty, only the original activity remains, no assignment audit event exists, and no notification was queued. Trigger cleanup runs in `finally`.
 - Pull request [#6](https://github.com/crystal-qazi/itoms/pull/6) targets `feature/itoms-foundation`; head commit `def547dad9197d72e3cf503666f2690296270b92`.
-- At memory synchronization time, no PR workflow run was returned for the head commit. CI is therefore **not yet verified**; do not merge until `python-quality` and `mysql-migrations` pass.
+- At this initial snapshot, no PR workflow run was returned and CI was unverified. This status was superseded by the successful CI and merge recorded below.
 - Test-only change; no production service, authorization or transaction logic changed.
 
 
-### 2026-11-28 — Service Request transaction rollback follow-up (PRs #6 and #7 open)
+### 2026-11-28 — Service Request transaction rollback follow-up (historical initial PR #6/#7 snapshot; superseded below)
 - PR [#6](https://github.com/crystal-qazi/itoms/pull/6), branch `feature/security-service-request-assignment-audit-rollback`, head `def547dad9197d72e3cf503666f2690296270b92`: adds MySQL test forcing `SERVICE_REQUEST_ASSIGNED` audit insertion to fail and checks assignment, activity, audit and notification rollback.
 - PR [#7](https://github.com/crystal-qazi/itoms/pull/7), branch `feature/security-service-request-status-audit-rollback`, head `12a68b48c34502edf12e73c304f9801625338a17`: adds MySQL test forcing `SERVICE_REQUEST_STATUS_CHANGED` audit insertion to fail and checks status, activity, audit and notification rollback.
-- Both are test-only changes against `feature/itoms-foundation`. Neither has been merged. GitHub Actions workflow runs and commit statuses were not returned by the available checks at review time; CI is **unverified**, not passed. Do not merge until required `python-quality` and `mysql-migrations` checks are confirmed passing.
+- At this initial snapshot both changes were test-only and CI could not be verified. PR #6 was later merged; PR #7 was closed as superseded and its status test was rebased and merged through PR #8, as recorded in the following sections.
 - Notification writes are queued after the audit insert in the service transaction; tests assert no notification row survives the forced audit failure.
 
 
@@ -228,7 +228,7 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Documentation-only PR [#10](https://github.com/crystal-qazi/itoms/pull/10) was squash-merged into `feature/itoms-foundation` as `7c64264e2a69dc11873d1de9b07309ad87dd1a7d`. No CI was triggered for the docs-only change.
 
 
-### 2026-11-28 — Concurrent Service Request transition regression (PR #11 pending)
+### 2026-11-28 — Concurrent Service Request transition regression (historical initial PR #11 snapshot; see merged status below)
 - Added `test_concurrent_status_transitions_serialize_and_reject_stale_transition` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-concurrent-transitions`.
 - The MySQL integration test opens two independent connections, synchronizes both workers before their concurrent transition, and verifies only one OPEN → IN_PROGRESS transition succeeds; the stale competing transition is rejected and only one activity/audit status event is persisted.
 - PR [#11](https://github.com/crystal-qazi/itoms/pull/11) was corrected in follow-up commit `e0b03bd9e673ccd8ddf839bf0e77e65623049ae7`; GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations`. It was squash-merged as `544853f84846ceadf15fe126b0ab4df34228d131`.
