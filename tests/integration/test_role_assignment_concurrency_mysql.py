@@ -352,11 +352,6 @@ def test_managed_teams_role_assignment_revalidates_all_team_memberships(
             role_id=data["target_role_id"],
             scope_type="MANAGED_TEAMS",
         )
-    return
-    finally:
-        cursor.close()
-        connection.close()
-
 
 
 def test_team_membership_revocation_wins_before_team_scoped_role_assignment(
