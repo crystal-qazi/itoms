@@ -20,7 +20,7 @@ class ReportingError(ValueError):
 DATASETS = {
     "service_requests": {
         "label": "Service Requests",
-        "fields": ("request_number", "title", "priority", "status", "created_at"),
+        "fields": ("request_number", "title", "category_name", "requester_name", "team_name", "priority", "status", "created_at"),
         "filters": {"status": {"OPEN", "IN_PROGRESS", "ON_HOLD", "COMPLETED", "CANCELLED"}},
     },
     "projects": {
@@ -96,6 +96,10 @@ def create_report(
             allowed = {
                 row["priority_key"] for row in service_requests.list_priorities()
             }
+        if dataset_key == "service_requests" and key == "category_id":
+            allowed = {
+                str(row["category_id"]) for row in service_requests.list_categories()
+            }
         if allowed is None or value not in allowed:
             raise ReportingError(f"Invalid {key} filter for this report dataset.")
         selected_filters[key] = value
@@ -133,7 +137,9 @@ def _load_dataset(employee_id: int, dataset_key: str, filters: dict) -> list[dic
     if dataset_key == "service_requests":
         return service_requests.list_requests(
             actor_employee_id=employee_id, status=filters.get("status"),
-            priority=filters.get("priority"), limit=200,
+            priority=filters.get("priority"),
+            category_id=int(filters["category_id"]) if filters.get("category_id") else None,
+            limit=200,
         )
     if dataset_key == "projects":
         return projects.list_projects(actor_employee_id=employee_id, status=filters.get("status"))
