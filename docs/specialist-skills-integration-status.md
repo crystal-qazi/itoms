@@ -16,27 +16,37 @@
 - `skills/itoms-fullstack-engineer/references/validation-checklist.md`
 - `skills/itoms-fullstack-engineer/references/decision-baseline.md`
 
-## Verification and provenance
-The complete UI/UX and Security v1.0.0 source packages are available in the user's ChatGPT Library. The repository entry points above are concise project-integrated skill texts; the complete original package reference/template files have not yet been expanded into this repository.
+## Blueprint cross-check
+- Added `docs/requirements-to-specialist-skills-crosswalk.md`.
+- Initial assessment: the three skill entry points collectively align with the Blueprint's main architecture, module, platform, security, accessibility, documentation and deployment requirements.
+- No direct architecture conflict was identified in the inspected entry points.
+- The crosswalk records specific gaps and the evidence expected from a representative vertical slice.
+- This is a standards alignment review, not implementation validation or a compliance audit.
 
-Full-Stack Decisions 27–29 are represented. Decisions 1–26 are deliberately not reconstructed; the original decision record is still required for complete decision traceability.
+## Original package integration
+The complete UI/UX and Security v1.0.0 source ZIP packages are available in the user's ChatGPT Library and have been retrieved for integration.
+- UI/UX package reference/template expansion: pending.
+- Security package reference/template expansion: pending.
+- Full-Stack reference set: already committed.
 
-The Master Requirements & System Blueprint v1.0 has now been committed to the repository. Requirements-to-skill cross-checking remains to be performed.
+## Decision traceability
+- Full-Stack Decisions 27–29 are represented.
+- Decisions 1–26 are not reconstructed or guessed.
+- Per the user's instruction, their absence does not block continuing the specialist-skill work against the committed, finalized Blueprint and available skill packages. Add the original decision record later if it is supplied.
 
 ## Current status
-- Repository foundation: in progress on this branch.
-- Master Requirements & System Blueprint: committed.
-- Three specialist entry points: committed.
+- Repository foundation and Blueprint: committed on the integration branch.
+- Three specialist skill entry points: committed.
 - Full-Stack reference set: committed.
-- Complete UI/UX and Security reference/template expansion: pending.
-- Original decision record for Decisions 1–26: pending.
-- Requirements-to-skill cross-check: pending.
-- Representative-module validation: pending; choose the slice from the Blueprint and record evidence.
+- Blueprint-to-skill crosswalk: committed.
+- Complete UI/UX reference/template expansion: pending.
+- Complete Security reference/template expansion: pending.
+- Representative-module validation: pending.
 - No application module implementation or test execution is claimed.
 
 ## Next actions
-1. Expand the original UI/UX and Security reference/template files from their v1.0.0 packages.
-2. Obtain the original decision record and verify Decisions 1–26.
-3. Cross-check all three skills against the Blueprint and each other.
-4. Select a representative vertical slice from the Blueprint.
-5. Implement and test it end-to-end, then record pass/limitations/failure evidence.
+1. Commit the complete original UI/UX reference/template files.
+2. Commit the complete original Security reference/template files.
+3. Select a representative vertical slice strictly from the Blueprint.
+4. Implement and validate it end-to-end using the Full-Stack checklist and UI/UX/Security gates.
+5. Record actual test output, limitations and unresolved risks; do not claim checks that were not run.
