@@ -47,8 +47,10 @@ def test_account_creation_checks_department_scope(monkeypatch):
     connection = Connection([(1,), (1,)])
     checks = []
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
-    monkeypatch.setattr(identity_admin, "has_permission",
-                        lambda actor, key, context=None: checks.append((key, context)) or True)
+    monkeypatch.setattr(
+        identity_admin, "has_permissions_in_transaction",
+        lambda cur, actor, key, resources, **kwargs: checks.append((key, resources)) or True,
+    )
     monkeypatch.setattr(identity_admin, "validate_password", lambda value: None)
     monkeypatch.setattr(identity_admin, "hash_password", lambda value: "hash")
 
@@ -58,14 +60,17 @@ def test_account_creation_checks_department_scope(monkeypatch):
     )
 
     assert result == 91
-    assert checks == [("identity.accounts.create", ResourceContext(department_id=7))]
+    assert checks == [("identity.accounts.create", [ResourceContext(department_id=7)])]
     assert connection.committed
 
 
 def test_account_creation_rejects_out_of_scope_department(monkeypatch):
     connection = Connection([(1,)])
     monkeypatch.setattr(identity_admin, "get_connection", lambda: connection)
-    monkeypatch.setattr(identity_admin, "has_permission", lambda *_: False)
+    monkeypatch.setattr(
+        identity_admin, "has_permissions_in_transaction",
+        lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(identity_admin, "validate_password", lambda value: None)
     monkeypatch.setattr(identity_admin, "hash_password", lambda value: "hash")
 
