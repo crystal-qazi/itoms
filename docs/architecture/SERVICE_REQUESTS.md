@@ -33,7 +33,7 @@ The module uses the shared permission service and trusted resource context:
 
 Role grants remain explicit administrator decisions. Request reads and mutations are scoped by requester, team or department according to the actor's grants. Comments use `service_request.update` in the current implementation; no separate comment permission is defined. Category changes and request mutations write audit events in the same database transaction as their changes.
 
-**Known security limitation:** The shared `has_permission` function opens a separate connection. Request assignment, status changes and comments therefore do not yet serialize permission revocation with the protected mutation in one transaction. This is a documented TOCTOU consistency gap, not a passed security gate. See `AUTHORIZATION_TRANSACTION_CONSISTENCY.md` and `../engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md`.
+**Current bounded security guarantee:** Comment creation uses `has_permission_in_transaction` on the same MySQL connection as the comment, activity, audit and notification/outbox writes. It locks actor authorization and team scope before locking the request row, then revalidates requester/team IDs. A MySQL 8.4 two-connection test verifies that a permission revocation waits for an in-flight authorized comment transaction and that a later comment is denied. Request creation, assignment, status transitions and category administration still use the separate-connection `has_permission` path; their TOCTOU windows remain open. This is not a module-wide or repository-wide security pass. See `AUTHORIZATION_TRANSACTION_CONSISTENCY.md` and `../engineering/SERVICE_REQUESTS_SKILL_VALIDATION.md`.
 
 ## Lifecycle
 
