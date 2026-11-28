@@ -239,3 +239,10 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - PR [#11](https://github.com/crystal-qazi/itoms/pull/11) adds a deterministic two-connection race test for competing OPEN → IN_PROGRESS transitions. After correcting a punctuation-only expected-message assertion, GitHub Actions run [46124602722](https://github.com/crystal-qazi/itoms/actions/runs/46124602722) passed both `python-quality` and `mysql-migrations`; squash merge commit: `544853f84846ceadf15fe126b0ab4df34228d131`.
 - Documentation-only PR [#12](https://github.com/crystal-qazi/itoms/pull/12) records the test evidence and clarifies its limits; squash merge commit: `15d04848d93b764deb142ff94db19fc543c06110`. No CI was triggered for the docs-only change.
 - The focused test proves one concurrent state transition wins and a stale competing transition is rejected, with one activity and audit event. Broader cross-service load/deadlock testing remains open. No production code changed.
+
+
+### 2026-11-28 — Notification outbox concurrent-claim regression merged and documented
+- Added MySQL integration test `test_concurrent_outbox_claimers_receive_disjoint_batches` in `tests/integration/test_notifications_outbox_mysql.py`. Two independent workers claim ten due IN_APP rows in batches of five; the test verifies disjoint ID sets and all ten rows move to PROCESSING.
+- PR [#13](https://github.com/crystal-qazi/itoms/pull/13), head `7b83a889149e3639fe3d4eea13c57b1ef80350cc`, passed both `python-quality` and `mysql-migrations` in run [46124841345](https://github.com/crystal-qazi/itoms/actions/runs/46124841345), then squash-merged as `b8d4123f5a484df669982fe171713b652f85da14`.
+- Documentation-only PR [#14](https://github.com/crystal-qazi/itoms/pull/14) records the concurrency evidence and the remaining operational monitoring limitations; squash-merged as `6f2aa1d7cd836122779bbd2aa709d1b178295194`. No CI was triggered for this docs-only change.
+- This verifies SKIP LOCKED claim isolation, not sustained load, production worker supervision, alert delivery or full cross-service deadlock behavior. Those remain open.
