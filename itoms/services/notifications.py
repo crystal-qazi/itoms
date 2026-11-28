@@ -182,7 +182,7 @@ def recover_stale_outbox(
     dead = 0
     try:
         cur.execute(
-            """SELECT outbox_id,attempt_count FROM notification_outbox
+            """SELECT outbox_id,attempt_count FROM notification_outbox FORCE INDEX (idx_outbox_recovery)
                WHERE delivery_status='PROCESSING'
                  AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s SECOND)
                ORDER BY locked_at,outbox_id LIMIT %s FOR UPDATE SKIP LOCKED""",
