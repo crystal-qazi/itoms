@@ -125,9 +125,9 @@ Request numbers now use a 64-bit random suffix and retry duplicate-key collision
 
 | Gate | Current status | Evidence required |
 |---|---|---|
-| Python unit suite | Passed | CI run `46119753911`: 182 passed, 56 skipped |
-| MySQL migrations | Passed | CI run `46119753911`: 43 applied; second run idempotent |
-| Service Request MySQL integration | Passed | CI run `46119753911`: 56 passed, including priority lifecycle, advanced search, pagination and request-number collision retry |
+| Python unit suite | Passed | CI run `46119899408`: 182 passed, 56 skipped |
+| MySQL migrations | Passed | CI run `46119899408`: 43 applied; second run idempotent |
+| Service Request MySQL integration | Passed | CI run `46119899408`: 56 passed, including priority lifecycle, advanced search, pagination and request-number collision retry |
 | Authorization negative tests | Partial | All Service Request mutation routes reject missing CSRF; cross-scope and denied-action matrix remains |
 | Concurrency/revocation tests | Passed for deterministic shared-scope races | Role-permission, TEAM membership, MANAGED_TEAMS manager mapping and employee-deactivation races are covered; broader load/deadlock stress remains |
 | UI manual review | Not tested | Viewport/keyboard/screen-reader evidence |
