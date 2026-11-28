@@ -120,3 +120,11 @@ def test_advanced_search_rejects_invalid_filters_before_database(monkeypatch, fi
     with pytest.raises(service_requests.ServiceRequestError, match=message):
         service_requests.list_requests(actor_employee_id=1, **filters)
 
+def test_request_queue_rejects_invalid_visible_offset_before_database(monkeypatch):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened for an invalid result offset"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match="result offset"):
+        service_requests.list_requests(actor_employee_id=1, visible_offset=-1)
+
