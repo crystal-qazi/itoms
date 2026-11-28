@@ -557,3 +557,38 @@ def test_priority_catalogue_is_admin_configurable_and_used_for_new_requests(serv
     )
     assert any(row["request_id"] == default_request_id for row in default_rows)
 
+def test_advanced_request_search_filters_keyword_category_and_created_date(service_request_fixture):
+    from datetime import datetime, timezone
+    from itoms.services.service_requests import (
+        create_category, create_request, list_requests,
+    )
+
+    data = service_request_fixture
+    category_id = create_category(
+        actor_employee_id=data["administrator_id"],
+        category_name=f"Search Category {data['suffix']}",
+        description="Category used by advanced search integration coverage",
+    )
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Distinctive Finance VPN access",
+        description="Enable access for the finance support group.",
+        category_id=category_id,
+    )
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    rows = list_requests(
+        actor_employee_id=data["requester_id"],
+        search="Distinctive Finance",
+        category_id=category_id,
+        created_from=today,
+        created_to=today,
+    )
+    assert [row["request_id"] for row in rows] == [request_id]
+    assert rows[0]["category_name"] == f"Search Category {data['suffix']}"
+    assert rows[0]["requester_name"] == f"Service Request requester"
+    assert list_requests(
+        actor_employee_id=data["requester_id"], search="no matching request",
+    ) == []
+
+
