@@ -6,8 +6,7 @@ import secrets
 from mysql.connector import IntegrityError
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
-from itoms.services.incidents import get_incident_detail
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 
 class ProblemError(ValueError):
@@ -54,6 +53,8 @@ def create_problem(
         raise ProblemError("Select a valid problem priority.")
     if type(owner_team_id) is not int or owner_team_id <= 0:
         raise ProblemError("Select a valid owner team.")
+    if assigned_to is not None and (type(assigned_to) is not int or assigned_to <= 0):
+        raise ProblemError("Select a valid assignee.")
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -67,13 +68,33 @@ def create_problem(
         if not team:
             raise ProblemError("Owner team is inactive or unavailable.")
         context = ResourceContext(team_id=owner_team_id, department_id=team[0])
-        if not has_permission(actor_employee_id, "problem.create", context):
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "problem.create", context,
+            lock_employee_ids=[assigned_to] if assigned_to is not None else None,
+        ):
             raise ProblemError("Not authorized to create problems for this team.")
+        cur.execute(
+            "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+            (owner_team_id,),
+        )
+        locked_team = cur.fetchone()
+        if not locked_team or not locked_team[1] or locked_team[0] != team[0]:
+            raise ProblemError("Owner team changed; retry problem creation.")
+        cur.execute(
+            "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+            (team[0],),
+        )
+        department = cur.fetchone()
+        if not department or not department[0]:
+            raise ProblemError("Owner department is inactive or unavailable.")
         if assigned_to is not None:
+            cur.execute("SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE", (assigned_to,))
+            assignee = cur.fetchone()
+            if not assignee or not assignee[0]:
+                raise ProblemError("Assignee must be an active member of the owner team.")
             cur.execute(
-                """SELECT 1 FROM employees e JOIN employee_team_memberships m
-                   ON m.employee_id=e.employee_id
-                   WHERE e.employee_id=%s AND e.is_active=TRUE AND m.team_id=%s""",
+                """SELECT 1 FROM employee_team_memberships
+                   WHERE employee_id=%s AND team_id=%s FOR UPDATE""",
                 (assigned_to, owner_team_id),
             )
             if not cur.fetchone():
@@ -101,7 +122,6 @@ def create_problem(
     finally:
         cur.close()
         conn.close()
-
 
 def list_problems(*, actor_employee_id: int, status: str | None = None) -> list[dict]:
     if status and status not in PROBLEM_STATUSES:
@@ -217,13 +237,31 @@ def transition_problem(*, actor_employee_id: int, problem_id: int, new_status: s
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT status,owner_team_id FROM problem_records WHERE problem_id=%s FOR UPDATE", (problem_id,))
-        row = cur.fetchone()
-        if not row:
+        cur.execute(
+            """SELECT p.status,p.owner_team_id,t.department_id
+               FROM problem_records p JOIN teams t ON t.team_id=p.owner_team_id
+               JOIN departments d ON d.department_id=t.department_id
+               WHERE p.problem_id=%s""",
+            (problem_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
             raise ProblemError("Problem was not found.")
-        context = _problem_context(cur, problem_id)
-        if not context or not has_permission(actor_employee_id, "problem.update", context):
+        context = ResourceContext(
+            team_id=snapshot["owner_team_id"], department_id=snapshot["department_id"],
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "problem.update", context
+        ):
             raise ProblemError("Not authorized to update this problem.")
+        cur.execute(
+            "SELECT status,owner_team_id FROM problem_records WHERE problem_id=%s FOR UPDATE",
+            (problem_id,),
+        )
+        row = cur.fetchone()
+        if (not row or row["status"] != snapshot["status"]
+                or row["owner_team_id"] != snapshot["owner_team_id"]):
+            raise ProblemError("Problem changed; reload and try again.")
         old_status = row["status"]
         if new_status not in PROBLEM_TRANSITIONS[old_status]:
             raise ProblemError(f"Cannot move a problem from {old_status} to {new_status}.")
@@ -249,18 +287,57 @@ def transition_problem(*, actor_employee_id: int, problem_id: int, new_status: s
         cur.close()
         conn.close()
 
-
 def link_incident(*, actor_employee_id: int, problem_id: int, ticket_id: int) -> None:
-    try:
-        get_incident_detail(actor_employee_id=actor_employee_id, ticket_id=ticket_id)
-    except Exception:
-        raise ProblemError("Incident was not found or is outside your access scope.") from None
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        context = _problem_context(cur, problem_id)
-        if not context or not has_permission(actor_employee_id, "problem.update", context):
+        problem_context = _problem_context(cur, problem_id)
+        if not problem_context:
+            raise ProblemError("Problem was not found.")
+        cur.execute(
+            """SELECT i.requester_employee_id,i.assigned_team_id,
+                      COALESCE(t.department_id,e.department_id) AS department_id
+               FROM incident_tickets i
+               JOIN employees e ON e.employee_id=i.requester_employee_id
+               LEFT JOIN teams t ON t.team_id=i.assigned_team_id
+               WHERE i.ticket_id=%s""",
+            (ticket_id,),
+        )
+        incident = cur.fetchone()
+        if not incident:
+            raise ProblemError("Incident was not found or is outside your access scope.")
+        incident_context = ResourceContext(
+            owner_employee_id=incident["requester_employee_id"],
+            team_id=incident["assigned_team_id"],
+            department_id=incident["department_id"],
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "incident.read", incident_context,
+            lock_employee_ids=[incident["requester_employee_id"]],
+        ):
+            raise ProblemError("Incident was not found or is outside your access scope.")
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "problem.update", problem_context,
+            lock_employee_ids=[incident["requester_employee_id"]],
+        ):
             raise ProblemError("Not authorized to link incidents to this problem.")
+        cur.execute(
+            "SELECT owner_team_id FROM problem_records WHERE problem_id=%s FOR UPDATE",
+            (problem_id,),
+        )
+        current_problem = cur.fetchone()
+        if not current_problem:
+            raise ProblemError("Problem was not found.")
+        cur.execute(
+            """SELECT requester_employee_id,assigned_team_id
+               FROM incident_tickets WHERE ticket_id=%s FOR UPDATE""",
+            (ticket_id,),
+        )
+        current_incident = cur.fetchone()
+        if (not current_incident
+                or current_incident["requester_employee_id"] != incident["requester_employee_id"]
+                or current_incident["assigned_team_id"] != incident["assigned_team_id"]):
+            raise ProblemError("Incident changed; reload and try again.")
         cur.execute(
             "INSERT INTO problem_incident_links (problem_id,ticket_id,linked_by) VALUES (%s,%s,%s)",
             (problem_id, ticket_id, actor_employee_id),
@@ -284,7 +361,6 @@ def link_incident(*, actor_employee_id: int, problem_id: int, ticket_id: int) ->
         cur.close()
         conn.close()
 
-
 def create_known_error(
     *, actor_employee_id: int, problem_id: int, title: str,
     symptoms: str, workaround: str,
@@ -300,9 +376,16 @@ def create_known_error(
     cur = conn.cursor(dictionary=True)
     try:
         context = _problem_context(cur, problem_id)
-        if not context or not has_permission(actor_employee_id, "problem.update", context):
+        if not context:
+            raise ProblemError("Problem was not found.")
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "problem.update", context
+        ):
             raise ProblemError("Not authorized to manage known errors for this problem.")
-        cur.execute("SELECT status FROM problem_records WHERE problem_id=%s FOR UPDATE", (problem_id,))
+        cur.execute(
+            "SELECT status FROM problem_records WHERE problem_id=%s FOR UPDATE",
+            (problem_id,),
+        )
         row = cur.fetchone()
         if not row or row["status"] != "KNOWN_ERROR":
             raise ProblemError("Move the problem to KNOWN_ERROR before publishing its workaround.")
