@@ -334,8 +334,10 @@ def create_priority(
         )
         conn.commit()
         return key
-    except Exception:
+    except Exception as exc:
         conn.rollback()
+        if getattr(exc, "errno", None) == 1062:
+            raise ServiceRequestError("Priority key or display label already exists.") from exc
         raise
     finally:
         cur.close()
@@ -393,8 +395,10 @@ def update_priority(
         )
         conn.commit()
         return True
-    except Exception:
+    except Exception as exc:
         conn.rollback()
+        if getattr(exc, "errno", None) == 1062:
+            raise ServiceRequestError("Priority display label already exists.") from exc
         raise
     finally:
         cur.close()
