@@ -191,9 +191,9 @@ This is deliberately **not** a global authorization consistency claim. Role assi
 A focused source review was performed before starting the next transaction-bound authorization rollout. It found that the candidate order above is not yet safe to adopt as a global protocol. The following concrete conflicts must be resolved first:
 
 - **Role assignment (`identity_admin.assign_role`) and role-assignment revocation (`identity_admin.revoke_role_assignment`)** now use the transaction-bound evaluator. Both lock actor and target employee rows in ascending employee ID order, authorize the trusted scope in the same transaction, and revalidate target membership/manager mappings or the exact assignment before writing. The initial target/assignment reads are snapshots only; final mutation state is re-read under the transaction's locks. A MySQL test covers an authorized assignment holding its authorization locks while a concurrent permission revocation waits, then verifies a later assignment is denied. This is a bounded guarantee for these two operations; it does not establish a universal order for all service families.
-- **Employee deactivation (`directory_admin.deactivate_employee`)** locks actor and target employee rows together in ascending employee ID order, but its authorization check is separate-connection and occurs before those locks. Any global protocol must preserve this deterministic multi-employee ordering while making actor authorization current inside the transaction.
-- **Service Request mutations** had separate-connection authorization. `add_comment` has now been migrated to a transaction-bound evaluator and no longer uses `_context(..., lock=True)`; it reads a scope snapshot, locks actor/scope/authorization state, then locks only the request row and revalidates requester/team IDs. Assignment, status transition, category administration and request creation still use separate-connection checks and remain outside this targeted guarantee.
-- **Directory membership writers** share employee → team → membership ordering for their protected data, but actor authorization is pre-checked on another connection. Manager mapping writers and membership removal also touch membership/manager rows, so their shared ordering must remain explicit.
+- **Employee deactivation (`directory_admin.deactivate_employee`)** now uses transaction-bound authorization while locking actor and target employee rows together in ascending employee ID order, then revalidates target state before deactivation. The deterministic deactivation-vs-authorization race still needs explicit MySQL coverage.
+- **Service Request mutations** now use transaction-bound authorization for create, assignment, status transition, category create/activation and comments. They read trusted scope snapshots, acquire actor/scope/authorization locks, then lock the request row and revalidate requester/team IDs before mutation.
+- **Directory membership and manager writers** now authorize inside their owning transaction. They share employee → team → membership/manager-mapping ordering; manager mappings and membership removal still require additional deterministic scope-revocation race coverage.
 - **Role-permission administration** has a proven bounded order (actor employee → sorted role rows → actor assignment rows → exact role-permission rows). Any global design must retain that guarantee and avoid introducing a reverse edge from role/permission locks back to employee locks.
 
 ### Remaining design work for the wider service rollout
@@ -205,10 +205,10 @@ A focused source review was performed before starting the next transaction-bound
 5. Inspect actual MySQL 8.4 isolation, indexes, and `EXPLAIN` plans; verify locking-read behavior on the exact queries used.
 6. Only after the above is agreed, implement the transaction-bound evaluator and migrate one mutation path with deterministic two-connection tests for both race winners.
 
-**The implementation below is a bounded Service Request comment slice, not a global authorization consistency claim.** The original global candidate order remains unapproved for the whole application; each service family must reconcile its own lock graph before migration.
+**The implementation below documents a bounded Service Request mutation slice, not a global authorization consistency claim.** The original global candidate order remains unapproved for the whole application; each service family must reconcile its own lock graph before migration.
 
 
-## Targeted transaction-bound evaluator — Service Request comments
+## Targeted transaction-bound evaluator — Service Request mutations
 
 Implemented on `feature/itoms-foundation`:
 
@@ -228,8 +228,22 @@ CI run [46113760635](https://github.com/crystal-qazi/itoms/actions/runs/46113760
 - MySQL 8.4 integration: 44 passed.
 - Migrations: 42 applied; second migration run was idempotent.
 
+## Additional transaction-bound mutation services — 2026-11-28
+
+The following service families have now been migrated on `feature/itoms-foundation`:
+
+- **Identity role assignment/revocation:** both operations use transaction-bound authorization, sorted actor/target employee locks, trusted scope checks, and locked revalidation of the target assignment/membership/manager mappings. A deterministic MySQL race test proves that a permission revocation waits when an authorized role assignment has already acquired its authorization locks; a later assignment is denied after revocation.
+- **Service Inventory:** service registration and lifecycle updates now authorize within the mutation transaction. Team/department state is revalidated before insert/update, and the service row is locked only after authorization.
+- **Engineering Task Management:** task creation and status transitions now authorize within the mutation transaction. Task-team state and assignee active membership are revalidated; actor/assignee employee rows are locked in sorted order before team/membership scope locks.
+- **Incident Management:** incident creation, status transitions, comments and team/employee assignment now authorize in the owning transaction. Requester/assignee employee rows and team scopes are locked before the incident row; trusted requester/team snapshots are revalidated before mutation. Existing MySQL integration tests exercise these operations and their department/team scope behavior.
+
+CI run [46114721760](https://github.com/crystal-qazi/itoms/actions/runs/46114721760), commit `85647e36f25a7d4c93b8532b83b12a8f4ad30b48`, passed:
+- Python quality: 166 passed, 45 skipped.
+- MySQL 8.4 integration: 45 passed.
+- Migrations: 42 applied; second migration run was idempotent.
+
 ### Explicit remaining gaps
 
-The transaction-bound evaluator is currently used by Service Request create, assignment, status, category create/activation and comment mutations; directory team-membership and team-manager assignment/removal; team create/activation; employee deactivation and account creation; and identity role assignment/revocation. The role-assignment slice now has a deterministic MySQL test for the authorization-wins ordering; the complementary revocation-wins case and MANAGED_TEAMS scope cases still need explicit race coverage. Do not infer that other ITOMS services are revocation-atomic.
+The transaction-bound evaluator is currently used by Service Request create/assignment/status/category/comment mutations; directory membership and manager assignment/removal, team create/activation, employee deactivation and account creation; identity role assignment/revocation; Service Inventory create/lifecycle update; Engineering Task create/status update; and Incident create/status/comment/assignment. Do not infer that other ITOMS services are revocation-atomic.
 
-Remaining work includes deterministic race tests for team-membership and manager-scope revocation, department/employee deactivation races, MySQL isolation/query-plan evidence, and transaction-bound authorization migration for Incident, Change, Release, SQA, Engineering Task, Inventory and other mutation services. A repository-wide security pass remains open.
+Remaining work includes Change Management, Release Management, SQA, Operations/Oracle Inventory, Problem Management, Project Management, Assets, Documents and other mutation services; deterministic race tests for team-membership and manager-scope revocation, employee deactivation and role-assignment revocation-wins; MANAGED_TEAMS scope cases; and MySQL isolation/query-plan evidence. A repository-wide security pass remains open.
