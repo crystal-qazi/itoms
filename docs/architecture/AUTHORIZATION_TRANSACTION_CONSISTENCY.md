@@ -246,10 +246,10 @@ CI run [46115510466](https://github.com/crystal-qazi/itoms/actions/runs/46115510
 - MySQL 8.4 integration: 45 passed.
 - Migrations: 42 applied; second migration run was idempotent.
 
-The follow-on Approval service migration and its final tests are being verified separately; do not treat the above run as evidence for that follow-on commit.
+The follow-on Approval service migration (transaction-bound approval creation and non-requester cancellation, with requester cancellation locked in-transaction) is included in CI run [46115820301](https://github.com/crystal-qazi/itoms/actions/runs/46115820301), commit `7ae1f82a1a331d74396367f119f8a640424fa578`. It passed 167 Python tests (45 skipped), 45 MySQL 8.4 integration tests, and 42 migrations with an idempotent second run. The approval creation/cancellation-specific assertions are unit tests; the MySQL suite verifies the broader approval, Change and Release integration flows.
 
 ### Explicit remaining gaps
 
 The transaction-bound evaluator is currently used by Service Request create/assignment/status/category/comment mutations; directory membership and manager assignment/removal, team create/activation, employee deactivation and account creation; identity role assignment/revocation; Service Inventory create/lifecycle update; Engineering Task create/status update; and Incident create/status/comment/assignment. Do not infer that other ITOMS services are revocation-atomic.
 
-Remaining work includes Problem Management, Project Management, Assets, Documents and other mutation services; deterministic race tests for team-membership and manager-scope revocation, employee deactivation and role-assignment revocation-wins; MANAGED_TEAMS scope cases; and MySQL isolation/query-plan evidence. Approval create/cancel has been migrated in the follow-on code but still requires its final green CI run before this section can be treated as verified. A repository-wide security pass remains open.
+Remaining work includes Problem Management, Project Management, Assets, Documents and other mutation services; deterministic race tests for team-membership and manager-scope revocation, employee deactivation and role-assignment revocation-wins; MANAGED_TEAMS scope cases; and MySQL isolation/query-plan evidence. Approval create/cancel is included in the latest green CI run. A repository-wide security pass remains open.
