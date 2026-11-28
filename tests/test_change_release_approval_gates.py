@@ -83,8 +83,8 @@ def test_release_cannot_deploy_without_approved_linked_request(monkeypatch):
             new_status="DEPLOYING",
         )
 
-    assert second.rolled_back
-    assert not second.committed
+    assert connection.rolled_back
+    assert not connection.committed
 
 
 def test_release_approval_cannot_bypass_sqa_readiness_gate(monkeypatch):
@@ -100,8 +100,8 @@ def test_release_approval_cannot_bypass_sqa_readiness_gate(monkeypatch):
             new_status="APPROVED",
         )
 
-    assert second.rolled_back
-    assert not second.committed
+    assert connection.rolled_back
+    assert not connection.committed
 
 
 def test_release_deployment_rechecks_sqa_readiness_gate(monkeypatch):
@@ -117,8 +117,8 @@ def test_release_deployment_rechecks_sqa_readiness_gate(monkeypatch):
             new_status="DEPLOYING",
         )
 
-    assert second.rolled_back
-    assert not second.committed
+    assert connection.rolled_back
+    assert not connection.committed
 
 @pytest.mark.parametrize(
     ("defect_status", "unresolved_count", "blocked"),
