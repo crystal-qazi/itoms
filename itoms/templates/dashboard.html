@@ -2,16 +2,39 @@
 {% block title %}Overview · ITOMS{% endblock %}
 {% block content %}
 <div class="page-heading">
-  <div><p class="eyebrow">WORKSPACE</p><h1>Overview</h1><p class="text-secondary mb-0">Your operational workspace at a glance.</p></div>
-  <span class="status-pill"><span></span> Platform foundation</span>
+  <div><p class="eyebrow">WORKSPACE</p><h1>Overview</h1><p class="text-secondary mb-0">A personal view of your Service Request workload.</p></div>
+  <span class="status-pill"><span></span> Personal overview</span>
 </div>
-<section class="row g-3 mt-2" aria-label="Operational summary">
+<section class="row g-3 mt-2" aria-label="My Service Request summary">
   {% for item in summary %}
-  <div class="col-12 col-sm-6 col-xl-3"><article class="metric-card h-100"><div class="metric-label">{{ item.label }}</div><div class="metric-value">—</div><div class="metric-note">{{ item.note }}</div></article></div>
+  <div class="col-12 col-sm-6 col-xl-3">
+    <article class="metric-card h-100">
+      <div class="metric-label">{{ item.label }}</div>
+      <div class="metric-value">{{ item.value }}</div>
+      <div class="metric-note">{{ item.note }}</div>
+    </article>
+  </div>
   {% endfor %}
 </section>
 <section class="row g-3 mt-1">
-  <div class="col-12 col-xl-8"><article class="panel-card h-100"><div class="panel-heading"><div><h2>Operational modules</h2><p>Modules will appear here as they are released.</p></div></div><div class="module-placeholder"><div class="placeholder-icon">IT</div><div><strong>Platform foundation is being built</strong><p class="mb-0 text-secondary">Identity, access control and shared services are under implementation.</p></div></div></article></div>
-  <div class="col-12 col-xl-4"><article class="panel-card h-100"><div class="panel-heading"><div><h2>My workspace</h2><p>Personal work queue</p></div></div><div class="empty-state"><div class="empty-state-mark">✓</div><strong>You're signed in</strong><p class="text-secondary mb-0">Your assigned work will appear here when the task modules are enabled.</p></div></article></div>
+  <div class="col-12 col-xl-8">
+    <article class="panel-card h-100">
+      <div class="panel-heading"><div><h2>Service Requests</h2><p>Track requests you submitted and work assigned directly to you.</p></div></div>
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <a class="btn btn-primary" href="{{ url_for('service_requests.index') }}">Open request queue</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('reports.index') }}">Open reporting</a>
+      </div>
+      <p class="text-secondary small mt-3 mb-0">Counts are personal to your employee account. Team-wide totals are not included in this overview.</p>
+    </article>
+  </div>
+  <div class="col-12 col-xl-4">
+    <article class="panel-card h-100">
+      <div class="panel-heading"><div><h2>Workload notes</h2><p>Current personal indicators</p></div></div>
+      <ul class="list-unstyled mt-3 mb-0">
+        <li class="d-flex justify-content-between py-2 border-bottom"><span>Requests on hold</span><strong>{{ submitted_on_hold + assigned_on_hold }}</strong></li>
+        <li class="d-flex justify-content-between py-2"><span>Active assigned work</span><strong>{{ assigned_active }}</strong></li>
+      </ul>
+    </article>
+  </div>
 </section>
 {% endblock %}
