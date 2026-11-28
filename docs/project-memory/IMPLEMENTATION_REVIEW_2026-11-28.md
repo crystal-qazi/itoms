@@ -155,5 +155,12 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 ## 15. Notification outbox rollback regression — 2026-11-28
 - Added `test_assignment_rolls_back_when_notification_outbox_insert_fails` to `tests/integration/test_service_requests_mysql.py` on branch `feature/security-service-request-notification-outbox-rollback-complete`.
 - The MySQL trigger rejects `notification_outbox` insertion after the assignment audit and inbox notification insert. The test checks request assignment, activity, audit event, notification inbox and outbox are all absent/unchanged after rollback; trigger cleanup runs in `finally`.
-- PR [#9](https://github.com/crystal-qazi/itoms/pull/9), head `3f7033290924d2f325b0ad6d4de543d0e1fa0984`, is open and mergeable. GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) had both `python-quality` and `mysql-migrations` in progress at this review. Do not merge until both pass.
+- PR [#9](https://github.com/crystal-qazi/itoms/pull/9), head `3f7033290924d2f325b0ad6d4de543d0e1fa0984`, is open and mergeable. GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) passed both `python-quality` and `mysql-migrations`. PR #9 was squash-merged into `feature/itoms-foundation` as `a67fda9cd699c8245eca1d8095d7f7b63ee2992b`.
+- Test-only change; no production service code changed.
+
+
+## 16. Notification outbox rollback regression merged — 2026-11-28
+- GitHub Actions run [46123997617](https://github.com/crystal-qazi/itoms/actions/runs/46123997617) passed both `python-quality` and `mysql-migrations`.
+- Merged PR [#9](https://github.com/crystal-qazi/itoms/pull/9) into `feature/itoms-foundation` using squash merge. Merge commit: `a67fda9cd699c8245eca1d8095d7f7b63ee2992b`.
+- The regression test forces a notification outbox insert failure after audit and inbox notification writes, then verifies request assignment, activity, audit, notification inbox and outbox persistence all roll back.
 - Test-only change; no production service code changed.
