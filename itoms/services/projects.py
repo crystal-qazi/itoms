@@ -7,7 +7,7 @@ from datetime import date
 from mysql.connector import IntegrityError
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permissions_in_transaction
 
 
 class ProjectError(ValueError):
@@ -138,6 +138,9 @@ def create_project(
     ends = _date_value(target_end_date, "Target end date")
     if starts and ends and ends < starts:
         raise ProjectError("Target end date cannot be before the start date.")
+    manager_id = manager_employee_id if manager_employee_id is not None else actor_employee_id
+    if type(manager_id) is not int or manager_id <= 0:
+        raise ProjectError("Project manager is invalid.")
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
@@ -153,11 +156,31 @@ def create_project(
         teams = cur.fetchall()
         if len(teams) != len(team_ids):
             raise ProjectError("One or more selected teams are inactive or unavailable.")
+        resources = [
+            ResourceContext(team_id=team["team_id"], department_id=team["department_id"])
+            for team in teams
+        ]
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "project.create", resources,
+            lock_employee_ids=[manager_id],
+        ):
+            raise ProjectError("Not authorized to create projects for every selected team.")
         for team in teams:
-            context = ResourceContext(team_id=team["team_id"], department_id=team["department_id"])
-            if not has_permission(actor_employee_id, "project.create", context):
-                raise ProjectError("Not authorized to create projects for every selected team.")
-        manager_id = manager_employee_id or actor_employee_id
+            cur.execute(
+                "SELECT department_id,is_active FROM teams WHERE team_id=%s FOR UPDATE",
+                (team["team_id"],),
+            )
+            current_team = cur.fetchone()
+            if (not current_team or not current_team["is_active"]
+                    or current_team["department_id"] != team["department_id"]):
+                raise ProjectError("A selected team changed; reload and retry project creation.")
+            cur.execute(
+                "SELECT is_active FROM departments WHERE department_id=%s FOR UPDATE",
+                (team["department_id"],),
+            )
+            department = cur.fetchone()
+            if not department or not department["is_active"]:
+                raise ProjectError("A selected team's department is inactive.")
         cur.execute(
             "SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
             (manager_id,),
@@ -197,7 +220,6 @@ def create_project(
         cur.close()
         conn.close()
 
-
 def update_project_status(
     *, actor_employee_id: int, project_id: int, new_status: str,
 ) -> None:
@@ -207,18 +229,40 @@ def update_project_status(
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT status FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
-        project = cur.fetchone()
-        if not project:
+        cur.execute("SELECT status FROM projects WHERE project_id=%s", (project_id,))
+        snapshot = cur.fetchone()
+        if not snapshot:
             raise ProjectError("Project was not found.")
         teams = _project_teams(cur, project_id)
-        if not any(has_permission(
-            actor_employee_id, "project.update",
-            ResourceContext(team_id=t["team_id"], department_id=t["department_id"],
-                            resource_type="project", resource_id=str(project_id)),
-        ) for t in teams):
+        if not teams:
             raise ProjectError("Not authorized to update this project.")
-        old_status = project["status"]
+        resources = [
+            ResourceContext(
+                team_id=t["team_id"], department_id=t["department_id"],
+                resource_type="project", resource_id=str(project_id),
+            ) for t in teams
+        ]
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "project.update", resources, require_all=False
+        ):
+            raise ProjectError("Not authorized to update this project.")
+        cur.execute("SELECT project_id FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
+        if not cur.fetchone():
+            raise ProjectError("Project was not found.")
+        cur.execute(
+            """SELECT a.team_id FROM project_team_assignments a
+               JOIN teams t ON t.team_id=a.team_id AND t.is_active=TRUE
+               WHERE a.project_id=%s ORDER BY a.team_id FOR UPDATE""",
+            (project_id,),
+        )
+        locked_team_ids = [row["team_id"] for row in cur.fetchall()]
+        if locked_team_ids != sorted(t["team_id"] for t in teams):
+            raise ProjectError("Project team scope changed; reload and try again.")
+        cur.execute("SELECT status FROM projects WHERE project_id=%s", (project_id,))
+        current = cur.fetchone()
+        old_status = current["status"] if current else None
+        if old_status != snapshot["status"]:
+            raise ProjectError("Project changed; reload and try again.")
         if new_status not in PROJECT_TRANSITIONS[old_status]:
             raise ProjectError(f"Cannot move a project from {old_status} to {new_status}.")
         cur.execute("UPDATE projects SET status=%s WHERE project_id=%s", (new_status, project_id))
@@ -237,7 +281,6 @@ def update_project_status(
         cur.close()
         conn.close()
 
-
 def create_milestone(
     *, actor_employee_id: int, project_id: int, title: str,
     due_date: str | None = None,
@@ -253,12 +296,28 @@ def create_milestone(
         teams = _project_teams(cur, project_id)
         if not teams:
             raise ProjectError("Project was not found or has no active owner team.")
-        if not any(has_permission(
-            actor_employee_id, "project.update",
-            ResourceContext(team_id=t["team_id"], department_id=t["department_id"],
-                            resource_type="project", resource_id=str(project_id)),
-        ) for t in teams):
+        resources = [
+            ResourceContext(
+                team_id=t["team_id"], department_id=t["department_id"],
+                resource_type="project", resource_id=str(project_id),
+            ) for t in teams
+        ]
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "project.update", resources, require_all=False
+        ):
             raise ProjectError("Not authorized to update this project.")
+        cur.execute("SELECT project_id FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
+        if not cur.fetchone():
+            raise ProjectError("Project was not found.")
+        cur.execute(
+            """SELECT a.team_id FROM project_team_assignments a
+               JOIN teams t ON t.team_id=a.team_id AND t.is_active=TRUE
+               WHERE a.project_id=%s ORDER BY a.team_id FOR UPDATE""",
+            (project_id,),
+        )
+        locked_team_ids = [row["team_id"] for row in cur.fetchall()]
+        if locked_team_ids != sorted(t["team_id"] for t in teams):
+            raise ProjectError("Project team scope changed; reload and try again.")
         cur.execute(
             "INSERT INTO project_milestones (project_id,title,due_date) VALUES (%s,%s,%s)",
             (project_id, name, due),
@@ -279,7 +338,6 @@ def create_milestone(
         cur.close()
         conn.close()
 
-
 def update_milestone_status(
     *, actor_employee_id: int, milestone_id: int, new_status: str,
 ) -> None:
@@ -291,20 +349,46 @@ def update_milestone_status(
     try:
         cur.execute(
             """SELECT m.project_id,m.status FROM project_milestones m
-               WHERE m.milestone_id=%s FOR UPDATE""",
+               WHERE m.milestone_id=%s""",
+            (milestone_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
+            raise ProjectError("Milestone was not found.")
+        project_id = snapshot["project_id"]
+        teams = _project_teams(cur, project_id)
+        if not teams:
+            raise ProjectError("Not authorized to update this project.")
+        resources = [
+            ResourceContext(
+                team_id=t["team_id"], department_id=t["department_id"],
+                resource_type="project", resource_id=str(project_id),
+            ) for t in teams
+        ]
+        if not has_permissions_in_transaction(
+            cur, actor_employee_id, "project.update", resources, require_all=False
+        ):
+            raise ProjectError("Not authorized to update this project.")
+        cur.execute("SELECT project_id FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
+        if not cur.fetchone():
+            raise ProjectError("Project was not found.")
+        cur.execute(
+            """SELECT a.team_id FROM project_team_assignments a
+               JOIN teams t ON t.team_id=a.team_id AND t.is_active=TRUE
+               WHERE a.project_id=%s ORDER BY a.team_id FOR UPDATE""",
+            (project_id,),
+        )
+        locked_team_ids = [row["team_id"] for row in cur.fetchall()]
+        if locked_team_ids != sorted(t["team_id"] for t in teams):
+            raise ProjectError("Project team scope changed; reload and try again.")
+        cur.execute(
+            "SELECT project_id,status FROM project_milestones WHERE milestone_id=%s FOR UPDATE",
             (milestone_id,),
         )
         milestone = cur.fetchone()
-        if not milestone:
-            raise ProjectError("Milestone was not found.")
-        project_id = milestone["project_id"]
-        teams = _project_teams(cur, project_id)
-        if not any(has_permission(
-            actor_employee_id, "project.update",
-            ResourceContext(team_id=t["team_id"], department_id=t["department_id"],
-                            resource_type="project", resource_id=str(project_id)),
-        ) for t in teams):
-            raise ProjectError("Not authorized to update this project.")
+        if (not milestone or milestone["project_id"] != project_id
+                or milestone["status"] != snapshot["status"]):
+            raise ProjectError("Milestone changed; reload and try again.")
         old_status = milestone["status"]
         if new_status not in MILESTONE_TRANSITIONS[old_status]:
             raise ProjectError(f"Cannot move a milestone from {old_status} to {new_status}.")
@@ -328,7 +412,6 @@ def update_milestone_status(
     finally:
         cur.close()
         conn.close()
-
 
 def get_project_detail(*, actor_employee_id: int, project_id: int) -> dict:
     """Return project metadata and milestones after a team-scope check."""
