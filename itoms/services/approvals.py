@@ -1,54 +1,75 @@
 """Sequential approval workflow with actor-bound decisions and history."""
 from __future__ import annotations
 from itoms.db.connection import get_connection
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import has_permission, has_permission_in_transaction
 
 class ApprovalError(ValueError):
     """Approval operation is invalid or unauthorized."""
 
 def create_approval(*, actor_employee_id: int, request_type: str, resource_type: str,
-                    resource_id: str, approver_employee_ids: list[int], reason: str | None=None) -> int:
-    if not has_permission(actor_employee_id,"approvals.create"):
-        raise ApprovalError("Not authorized to create approvals.")
-    approvers=list(dict.fromkeys(int(x) for x in approver_employee_ids))
-    if not approvers or len(approvers)>10 or actor_employee_id in approvers:
+                    resource_id: str, approver_employee_ids: list[int],
+                    reason: str | None = None) -> int:
+    approvers = list(dict.fromkeys(int(value) for value in approver_employee_ids))
+    if not approvers or len(approvers) > 10 or actor_employee_id in approvers:
         raise ApprovalError("Provide 1–10 distinct approvers other than the requester.")
-    if not request_type or len(request_type)>80 or not resource_type or len(resource_type)>80 or not resource_id or len(resource_id)>100:
+    if (not request_type or len(request_type) > 80 or not resource_type
+            or len(resource_type) > 80 or not resource_id or len(resource_id) > 100):
         raise ApprovalError("Request and resource identifiers are required and must fit their limits.")
-    if reason is not None and len(reason)>4000:
+    if reason is not None and len(reason) > 4000:
         raise ApprovalError("Approval reason is too long (maximum 4000 characters).")
-    if not has_permission(actor_employee_id,"approvals.create"):
-        raise ApprovalError("Not authorized to create approvals.")
-    conn=get_connection(); cur=conn.cursor()
+    if any(value <= 0 for value in approvers):
+        raise ApprovalError("Approver IDs must be positive employee IDs.")
+
+    conn = get_connection()
+    cur = conn.cursor()
     try:
-        cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
-            (actor_employee_id,))
-        if not cur.fetchone():
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "approvals.create", None,
+            lock_employee_ids=approvers,
+        ):
             raise ApprovalError("Not authorized to create approvals.")
         for approver in approvers:
-            cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",(approver,))
-            if not cur.fetchone(): raise ApprovalError("An approver is inactive or unavailable.")
-        cur.execute("""INSERT INTO approval_requests
-            (request_type,resource_type,resource_id,requested_by,request_reason)
-            VALUES (%s,%s,%s,%s,%s)""",(request_type,resource_type,resource_id,actor_employee_id,reason))
-        request_id=int(cur.lastrowid)
-        for step,approver in enumerate(approvers,1):
-            cur.execute("""INSERT INTO approval_steps
-                (approval_request_id,step_number,approver_employee_id)
-                VALUES (%s,%s,%s)""",(request_id,step,approver))
-        cur.execute("""INSERT INTO approval_history
-            (approval_request_id,actor_employee_id,action_key,comment)
-            VALUES (%s,%s,'SUBMITTED',%s)""",(request_id,actor_employee_id,reason))
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome,details)
-            VALUES (%s,'APPROVAL_SUBMITTED','approval',%s,'SUCCESS',
-                    JSON_OBJECT('request_type',%s,'resource_type',%s,'approver_count',%s))""",
-            (actor_employee_id,str(request_id),request_type,resource_type,len(approvers)))
-        conn.commit(); return request_id
+            cur.execute(
+                "SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
+                (approver,),
+            )
+            if not cur.fetchone():
+                raise ApprovalError("An approver is inactive or unavailable.")
+        cur.execute(
+            """INSERT INTO approval_requests
+               (request_type,resource_type,resource_id,requested_by,request_reason)
+               VALUES (%s,%s,%s,%s,%s)""",
+            (request_type, resource_type, resource_id, actor_employee_id, reason),
+        )
+        request_id = int(cur.lastrowid)
+        for step, approver in enumerate(approvers, 1):
+            cur.execute(
+                """INSERT INTO approval_steps
+                   (approval_request_id,step_number,approver_employee_id)
+                   VALUES (%s,%s,%s)""",
+                (request_id, step, approver),
+            )
+        cur.execute(
+            """INSERT INTO approval_history
+               (approval_request_id,actor_employee_id,action_key,comment)
+               VALUES (%s,%s,'SUBMITTED',%s)""",
+            (request_id, actor_employee_id, reason),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome,details)
+               VALUES (%s,'APPROVAL_SUBMITTED','approval',%s,'SUCCESS',
+                       JSON_OBJECT('request_type',%s,'resource_type',%s,'approver_count',%s))""",
+            (actor_employee_id, str(request_id), request_type, resource_type, len(approvers)),
+        )
+        conn.commit()
+        return request_id
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
 def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
                     comment: str | None=None) -> None:
@@ -123,63 +144,95 @@ def decide_approval(*, actor_employee_id: int, request_id: int, decision: str,
         cur.close(); conn.close()
 
 def cancel_approval(*, actor_employee_id: int, request_id: int) -> None:
-    # Read ownership first, then perform the permission query before taking row locks.
-    conn=get_connection(); cur=conn.cursor()
+    """Cancel an approval after transaction-bound requester/permission authorization."""
+    conn = get_connection()
+    cur = conn.cursor()
     try:
-        cur.execute("""SELECT requested_by,status,request_type,resource_type,resource_id
-            FROM approval_requests WHERE approval_request_id=%s""",(request_id,))
-        snapshot=cur.fetchone()
-    finally:
-        cur.close(); conn.close()
-    if not snapshot or snapshot[1]!="PENDING":
-        raise ApprovalError("Approval is not pending.")
-    if snapshot[0]!=actor_employee_id and not has_permission(actor_employee_id,"approvals.cancel"):
-        raise ApprovalError("Not authorized to cancel this approval.")
-    actor_conn=get_connection(); actor_cur=actor_conn.cursor()
-    try:
-        actor_cur.execute("SELECT 1 FROM employees WHERE employee_id=%s AND is_active=TRUE",
-            (actor_employee_id,))
-        actor_active=actor_cur.fetchone()
-    finally:
-        actor_cur.close(); actor_conn.close()
-    if not actor_active:
-        raise ApprovalError("Not authorized to cancel this approval.")
-    conn=get_connection(); cur=conn.cursor()
-    try:
-        if snapshot[2]=="CHANGE" and snapshot[3]=="change":
-            cur.execute("SELECT status FROM change_records WHERE change_id=%s FOR UPDATE",(int(snapshot[4]),))
+        cur.execute(
+            """SELECT requested_by,status,request_type,resource_type,resource_id
+               FROM approval_requests WHERE approval_request_id=%s""",
+            (request_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot or snapshot[1] != "PENDING":
+            raise ApprovalError("Approval is not pending.")
+
+        if snapshot[0] == actor_employee_id:
+            cur.execute(
+                "SELECT is_active FROM employees WHERE employee_id=%s FOR UPDATE",
+                (actor_employee_id,),
+            )
+            actor = cur.fetchone()
+            if not actor or not actor[0]:
+                raise ApprovalError("Not authorized to cancel this approval.")
+        elif not has_permission_in_transaction(
+            cur, actor_employee_id, "approvals.cancel", None,
+            lock_employee_ids=[snapshot[0]],
+        ):
+            raise ApprovalError("Not authorized to cancel this approval.")
+
+        # Change workflows preserve resource -> approval row ordering, matching
+        # approval decisions and Change Management transitions.
+        if snapshot[2] == "CHANGE" and snapshot[3] == "change":
+            cur.execute(
+                "SELECT status FROM change_records WHERE change_id=%s FOR UPDATE",
+                (int(snapshot[4]),),
+            )
             if not cur.fetchone():
                 raise ApprovalError("Linked change record does not exist.")
-        cur.execute("""SELECT requested_by,status,request_type,resource_type,resource_id
-            FROM approval_requests WHERE approval_request_id=%s FOR UPDATE""",(request_id,))
-        row=cur.fetchone()
-        if not row or row[1]!="PENDING" or tuple(row[2:])!=tuple(snapshot[2:]) or row[0]!=snapshot[0]:
+        cur.execute(
+            """SELECT requested_by,status,request_type,resource_type,resource_id
+               FROM approval_requests WHERE approval_request_id=%s FOR UPDATE""",
+            (request_id,),
+        )
+        row = cur.fetchone()
+        if (not row or row[1] != "PENDING" or tuple(row[2:]) != tuple(snapshot[2:])
+                or row[0] != snapshot[0]):
             raise ApprovalError("Approval changed; reload and try again.")
-        cur.execute("UPDATE approval_requests SET status='CANCELLED',completed_at=UTC_TIMESTAMP() WHERE approval_request_id=%s",(request_id,))
-        cur.execute("""UPDATE approval_steps SET decision='SKIPPED'
-            WHERE approval_request_id=%s AND decision='PENDING'""",(request_id,))
-        cur.execute("""INSERT INTO approval_history
-            (approval_request_id,actor_employee_id,action_key)
-            VALUES (%s,%s,'CANCELLED')""",(request_id,actor_employee_id))
-        cur.execute("""INSERT INTO audit_events
-            (actor_employee_id,event_key,target_type,target_id,outcome)
-            VALUES (%s,'APPROVAL_CANCELLED','approval',%s,'SUCCESS')""",
-            (actor_employee_id,str(request_id)))
-        if snapshot[2]=="CHANGE" and snapshot[3]=="change":
-            change_id=int(snapshot[4])
-            cur.execute("""UPDATE change_records SET status='DRAFT'
-                WHERE change_id=%s AND status='SUBMITTED'""",(change_id,))
-            cur.execute("""INSERT INTO change_activity
-                (change_id,actor_employee_id,action_key,details)
-                VALUES (%s,%s,'APPROVAL_CANCELLED','Approval request cancelled')""",
-                (change_id,actor_employee_id))
-            cur.execute("""INSERT INTO audit_events
-                (actor_employee_id,event_key,target_type,target_id,outcome,details)
-                VALUES (%s,'CHANGE_APPROVAL_CANCELLED','change',%s,'SUCCESS',
-                    JSON_OBJECT('approval_request_id',%s))""",
-                (actor_employee_id,str(change_id),request_id))
+        cur.execute(
+            "UPDATE approval_requests SET status='CANCELLED',completed_at=UTC_TIMESTAMP() WHERE approval_request_id=%s",
+            (request_id,),
+        )
+        cur.execute(
+            """UPDATE approval_steps SET decision='SKIPPED'
+               WHERE approval_request_id=%s AND decision='PENDING'""",
+            (request_id,),
+        )
+        cur.execute(
+            """INSERT INTO approval_history
+               (approval_request_id,actor_employee_id,action_key)
+               VALUES (%s,%s,'CANCELLED')""",
+            (request_id, actor_employee_id),
+        )
+        cur.execute(
+            """INSERT INTO audit_events
+               (actor_employee_id,event_key,target_type,target_id,outcome)
+               VALUES (%s,'APPROVAL_CANCELLED','approval',%s,'SUCCESS')""",
+            (actor_employee_id, str(request_id)),
+        )
+        if snapshot[2] == "CHANGE" and snapshot[3] == "change":
+            change_id = int(snapshot[4])
+            cur.execute(
+                "UPDATE change_records SET status='DRAFT' WHERE change_id=%s AND status='SUBMITTED'",
+                (change_id,),
+            )
+            cur.execute(
+                """INSERT INTO change_activity
+                   (change_id,actor_employee_id,action_key,details)
+                   VALUES (%s,%s,'APPROVAL_CANCELLED','Approval request cancelled')""",
+                (change_id, actor_employee_id),
+            )
+            cur.execute(
+                """INSERT INTO audit_events
+                   (actor_employee_id,event_key,target_type,target_id,outcome,details)
+                   VALUES (%s,'CHANGE_APPROVAL_CANCELLED','change',%s,'SUCCESS',
+                       JSON_OBJECT('approval_request_id',%s))""",
+                (actor_employee_id, str(change_id), request_id),
+            )
         conn.commit()
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
