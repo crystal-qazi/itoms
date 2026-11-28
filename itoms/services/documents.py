@@ -14,7 +14,7 @@ from pathlib import Path
 from flask import current_app
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import ResourceContext, has_permission
+from itoms.services.authorization import ResourceContext, has_permission, has_permission_in_transaction
 
 
 class DocumentError(ValueError):
@@ -172,8 +172,6 @@ def set_file_type_allowlist(
     *, actor_employee_id: int, extension: str, mime_type: str,
     description: str = "", is_active: bool = True,
 ) -> None:
-    if not has_permission(actor_employee_id, "document.allowlist.manage"):
-        raise DocumentError("Not authorized to manage document file types.")
     extension = (extension or "").strip().lower().lstrip(".")
     mime_type = (mime_type or "").strip().lower()
     description = (description or "").strip()
@@ -186,6 +184,10 @@ def set_file_type_allowlist(
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.allowlist.manage", None
+        ):
+            raise DocumentError("Not authorized to manage document file types.")
         cur.execute(
             """INSERT INTO document_file_type_allowlist
                (extension,mime_type,description,is_active)
@@ -214,6 +216,8 @@ def upload_document(
     *, actor_employee_id: int, filename: str, content: bytes,
     classification: str = "INTERNAL",
 ) -> dict:
+    # Fast fail avoids spending scanner resources for unauthorized callers;
+    # the authoritative check is repeated under the write transaction.
     if not has_permission(actor_employee_id, "document.upload"):
         raise DocumentError("Not authorized to upload documents.")
     if classification not in CLASSIFICATIONS:
@@ -228,21 +232,6 @@ def upload_document(
     if not detected:
         raise DocumentError("File signature is unsupported or does not match its extension.")
     extension, mime_type = detected
-
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """SELECT 1 FROM document_file_type_allowlist
-               WHERE extension=%s AND mime_type=%s AND is_active=TRUE""",
-            (extension, mime_type),
-        )
-        if not cur.fetchone():
-            raise DocumentError("This file type is not enabled by the administrator.")
-    finally:
-        cur.close()
-        conn.close()
-
     scan = scan_with_trend_micro(content)
     scan_status = scan.get("status", "ERROR")
     if scan_status not in {"CLEAN", "INFECTED", "ERROR"}:
@@ -250,23 +239,37 @@ def upload_document(
     lifecycle = "ACTIVE" if scan_status == "CLEAN" else "QUARANTINED"
     opaque_id = str(uuid.uuid4())
     storage_key = f"files/{uuid.uuid4().hex}"
-    path = _safe_storage_path(storage_key)
-    root = _storage_root()
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(root, 0o700)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(path.parent, 0o700)
-    try:
-        descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-    except OSError as exc:
-        raise DocumentError("Document could not be stored safely.") from exc
+    path = None
 
-    checksum = hashlib.sha256(content).hexdigest()
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.upload", None
+        ):
+            raise DocumentError("Not authorized to upload documents.")
+        cur.execute(
+            """SELECT 1 FROM document_file_type_allowlist
+               WHERE extension=%s AND mime_type=%s AND is_active=TRUE FOR UPDATE""",
+            (extension, mime_type),
+        )
+        if not cur.fetchone():
+            raise DocumentError("This file type is not enabled by the administrator.")
+
+        path = _safe_storage_path(storage_key)
+        root = _storage_root()
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(root, 0o700)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
+        try:
+            descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+        except OSError as exc:
+            raise DocumentError("Document could not be stored safely.") from exc
+
+        checksum = hashlib.sha256(content).hexdigest()
         cur.execute(
             """INSERT INTO managed_files
                (opaque_id,original_filename,storage_key,detected_mime_type,
@@ -303,15 +306,15 @@ def upload_document(
         return {"file_id": file_id, "scan_status": scan_status, "lifecycle_status": lifecycle}
     except Exception:
         conn.rollback()
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
     finally:
         cur.close()
         conn.close()
-
 
 def list_documents(*, employee_id: int) -> list[dict]:
     conn = get_connection()
@@ -425,31 +428,64 @@ def _store_scanned_version(
     classification: str,
 ) -> dict:
     raw_name, _extension, mime_type = _validate_document_payload(filename, content)
+    if not has_permission(
+        actor_employee_id, "document.version.manage",
+        ResourceContext(resource_type="document", resource_id=str(file_id)),
+    ):
+        # The authoritative owner-aware scope check occurs below; this early
+        # check is intentionally omitted when only an owner context is known
+        # after the database snapshot.
+        pass
     scan = scan_with_trend_micro(content)
     scan_status = scan.get("status", "ERROR")
     if scan_status not in {"CLEAN", "INFECTED", "ERROR"}:
         scan_status = "ERROR"
     lifecycle = "ACTIVE" if scan_status == "CLEAN" else "QUARANTINED"
     storage_key = f"files/{uuid.uuid4().hex}"
-    path = _safe_storage_path(storage_key)
-    root = _storage_root()
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(root, 0o700)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(path.parent, 0o700)
-    try:
-        descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-    except OSError as exc:
-        raise DocumentError("Document could not be stored safely.") from exc
+    path = None
     checksum = hashlib.sha256(content).hexdigest()
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT file_id FROM managed_files WHERE file_id=%s FOR UPDATE", (file_id,))
-        if not cur.fetchone():
+        cur.execute(
+            "SELECT uploaded_by,classification,lifecycle_status FROM managed_files WHERE file_id=%s",
+            (file_id,),
+        )
+        snapshot = cur.fetchone()
+        if not snapshot:
             raise DocumentError("Document was not found.")
+        context = ResourceContext(
+            owner_employee_id=snapshot[0], resource_type="document",
+            resource_id=str(file_id),
+        )
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "document.version.manage", context,
+            lock_employee_ids=[snapshot[0]],
+        ):
+            raise DocumentError("Document was not found.")
+        cur.execute(
+            """SELECT uploaded_by,classification,lifecycle_status
+               FROM managed_files WHERE file_id=%s FOR UPDATE""",
+            (file_id,),
+        )
+        current = cur.fetchone()
+        if (not current or current[0] != snapshot[0] or current[1] != classification
+                or current[1] != snapshot[1] or current[2] != "ACTIVE"):
+            raise DocumentError("Document changed or is not active; reload and try again.")
+
+        path = _safe_storage_path(storage_key)
+        root = _storage_root()
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(root, 0o700)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
+        try:
+            descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+        except OSError as exc:
+            raise DocumentError("Document could not be stored safely.") from exc
+
         cur.execute(
             "SELECT COALESCE(MAX(version_number),0)+1 FROM managed_file_versions WHERE file_id=%s",
             (file_id,),
@@ -491,15 +527,15 @@ def _store_scanned_version(
                 "scan_status": scan_status, "lifecycle_status": lifecycle}
     except Exception:
         conn.rollback()
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
     finally:
         cur.close()
         conn.close()
-
 
 def upload_document_version(
     *, actor_employee_id: int, file_id: int, filename: str, content: bytes,
