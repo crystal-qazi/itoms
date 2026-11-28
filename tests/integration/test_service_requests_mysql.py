@@ -647,3 +647,37 @@ def test_request_queue_paginates_after_scope_filtering(service_request_fixture):
     assert [row["request_id"] for row in second_page] == [request_ids[0]]
 
 
+
+
+def test_personal_dashboard_summary_counts_only_submitted_and_assigned_requests(service_request_fixture):
+    from itoms.services.service_requests import (
+        assign_request, create_request, get_personal_dashboard_summary, transition_request,
+    )
+
+    data = service_request_fixture
+    request_id = create_request(
+        actor_employee_id=data["requester_id"],
+        title="Dashboard metrics request",
+        description="Validate personal dashboard aggregation.",
+        priority="HIGH",
+    )
+    assign_request(
+        actor_employee_id=data["requester_id"], request_id=request_id,
+        assigned_team_id=data["team_id"], assigned_employee_id=data["assignee_id"],
+    )
+    transition_request(
+        actor_employee_id=data["requester_id"], request_id=request_id,
+        new_status="ON_HOLD", pending_reason="Waiting for test approval.",
+    )
+
+    requester_metrics = get_personal_dashboard_summary(employee_id=data["requester_id"])
+    assignee_metrics = get_personal_dashboard_summary(employee_id=data["assignee_id"])
+    unrelated_metrics = get_personal_dashboard_summary(employee_id=data["administrator_id"])
+
+    assert requester_metrics["submitted_total"] == 1
+    assert requester_metrics["submitted_active"] == 1
+    assert requester_metrics["submitted_on_hold"] == 1
+    assert assignee_metrics["assigned_active"] == 1
+    assert assignee_metrics["assigned_on_hold"] == 1
+    assert unrelated_metrics["submitted_total"] == 0
+    assert unrelated_metrics["assigned_active"] == 0
