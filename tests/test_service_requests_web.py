@@ -58,6 +58,9 @@ def test_priority_admin_page_renders_labeled_controls_and_search(monkeypatch):
     assert 'for="priority-key"' in body
     assert 'for="priority-label"' in body
     assert 'for="sr-search"' in body
+    assert 'href="/service-requests/"' in body
+    assert body.count('href="/admin/directory/"') == 1
+    assert 'href="#main-content"' in body
 
 
 def test_priority_create_route_rejects_missing_csrf(monkeypatch):
@@ -174,4 +177,18 @@ def test_service_request_index_requires_login():
     response = app.test_client().get("/service-requests/")
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
+
+def test_danger_flash_is_announced_as_an_alert(monkeypatch):
+    from itoms.web import service_requests as web
+
+    app = _app_with_identity()
+    _mock_index_dependencies(monkeypatch, web)
+    client = app.test_client()
+    with client.session_transaction() as state:
+        state["_flashes"] = [("danger", "Please correct the highlighted fields.")]
+    response = client.get("/service-requests/")
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert 'role="alert"' in body
+    assert 'aria-live="assertive"' in body
 
