@@ -253,3 +253,10 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Documentation-only PR [#15](https://github.com/crystal-qazi/itoms/pull/15) adds the notification worker CLI runbook and read-only SQL observations for queue depth/age, stale PROCESSING claims and DEAD backlog to `docs/architecture/NOTIFICATIONS.md`.
 - The runbook explicitly distinguishes observation queries from alerting and leaves thresholds, alert routing, worker supervision and on-call ownership for operational approval.
 - PR #15 was squash-merged into `feature/itoms-foundation` as `4bbbfbb430b590452cd8a227f5612aca4399088e`. No CI was triggered for this documentation-only change.
+
+
+### 2026-11-28 — Concurrent notification stale-claim recovery regression (PR #16 pending)
+- Added `test_concurrent_stale_outbox_recovery_processes_each_claim_once` to `tests/integration/test_notifications_outbox_mysql.py` on branch `feature/notifications-concurrent-stale-recovery`.
+- The test creates 40 stale PROCESSING outbox rows, synchronizes four independent MySQL recovery workers, and asks each to recover a batch of ten. It asserts each worker reports ten recovered rows, each outbox row returns to PENDING with exactly one attempt increment, and one NULL-actor recovery audit event is written per row. Test-created recovery audit rows are explicitly cleaned up.
+- PR [#16](https://github.com/crystal-qazi/itoms/pull/16) targets `feature/itoms-foundation`, head `00028ffd2d5a158bf856e3e38972080aeb928917`. Initial GitHub workflow-run and combined-status lookups returned no runs/statuses; CI is **not verified**. Do not merge until both `python-quality` and `mysql-migrations` pass.
+- Test-only change. No production notification worker logic changed. No local tests were run in this environment.
