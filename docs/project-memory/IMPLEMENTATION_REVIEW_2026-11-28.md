@@ -135,3 +135,11 @@ No claim of a completed manual UI or security assessment is made. This was sourc
 - PR [#7](https://github.com/crystal-qazi/itoms/pull/7): MySQL regression test for status rollback when `SERVICE_REQUEST_STATUS_CHANGED` audit insertion fails. Branch `feature/security-service-request-status-audit-rollback`, head `12a68b48c34502edf12e73c304f9801625338a17`.
 - Both changes are test-only, target `feature/itoms-foundation`, and remain open/unmerged. The tests verify failed audit writes do not leave changed request state, activity/audit rows, or queued in-app notifications.
 - At review time, the GitHub Actions run lookup and combined commit status lookup returned no checks for these heads. CI must be treated as unverified; do not merge until both `python-quality` and `mysql-migrations` are confirmed passing.
+
+
+## 13. Assignment rollback CI verification and status rollback rebase — 2026-11-28
+- PR [#6](https://github.com/crystal-qazi/itoms/pull/6), head `def547dad9197d72e3cf503666f2690296270b92`: GitHub Actions run [46123462065](https://github.com/crystal-qazi/itoms/actions/runs/46123462065) passed both `python-quality` and `mysql-migrations`. Squash-merged into `feature/itoms-foundation` as `e540f3502a4da0e9a46e2c9591cc05338760adc6`.
+- PR [#7](https://github.com/crystal-qazi/itoms/pull/7) had both checks pass on its original head (run [46123617945](https://github.com/crystal-qazi/itoms/actions/runs/46123617945)), but became unmergeable after PR #6 updated the same test file. Closed as superseded; no force-push was used.
+- Recreated the status rollback test on a new branch based on the merged PR #6 commit: `feature/security-service-request-status-audit-rollback-rebased`, head `229e160273adc2f784ebe51f465472eb6c1678eb`, PR [#8](https://github.com/crystal-qazi/itoms/pull/8).
+- Fresh PR #8 checks: `python-quality` passed; `mysql-migrations` was still running at review time. PR #8 remains open and must not be merged until both checks pass.
+- The rebase carries forward the assignment rollback test from the target branch and adds the status rollback test. No production code changed.
