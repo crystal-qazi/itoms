@@ -192,3 +192,26 @@ def test_danger_flash_is_announced_as_an_alert(monkeypatch):
     assert 'role="alert"' in body
     assert 'aria-live="assertive"' in body
 
+
+
+def test_home_dashboard_renders_personal_service_request_metrics(monkeypatch):
+    from itoms.services import service_requests
+
+    app = _app_with_identity()
+    monkeypatch.setattr(
+        service_requests, "get_personal_dashboard_summary",
+        lambda *, employee_id: {
+            "submitted_total": 5, "submitted_active": 2,
+            "submitted_on_hold": 1, "assigned_active": 3,
+            "assigned_on_hold": 2, "assigned_completed_30d": 4,
+        },
+    )
+    response = app.test_client().get("/auth/home")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "My active requests" in body
+    assert "Active work assigned to me" in body
+    assert "Completed by me · 30 days" in body
+    assert 'href="/service-requests/"' in body
+    assert 'href="/reports/"' in body
+    assert ">2<" in body and ">3<" in body and ">4<" in body
