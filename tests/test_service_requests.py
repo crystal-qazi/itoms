@@ -58,3 +58,26 @@ def test_category_name_validation_is_enforced(monkeypatch):
     )
     with pytest.raises(service_requests.ServiceRequestError, match="Category name"):
         service_requests.create_category(actor_employee_id=1, category_name="x")
+
+
+def test_pending_transition_requires_reason_before_database(monkeypatch):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened without a pending reason"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match="pending reason"):
+        service_requests.transition_request(
+            actor_employee_id=1, request_id=7, new_status="ON_HOLD",
+        )
+
+
+@pytest.mark.parametrize("body", ["", "   ", "x" * 5001])
+def test_comment_validation_rejects_invalid_body_before_database(monkeypatch, body):
+    monkeypatch.setattr(
+        service_requests, "get_connection",
+        lambda: pytest.fail("database must not be opened for an invalid comment"),
+    )
+    with pytest.raises(service_requests.ServiceRequestError, match="Comment"):
+        service_requests.add_comment(
+            actor_employee_id=1, request_id=7, body=body,
+        )
