@@ -9,7 +9,7 @@ import ssl
 from flask import current_app
 
 from itoms.db.connection import get_connection
-from itoms.services.authorization import has_permission
+from itoms.services.authorization import has_permission, has_permission_in_transaction
 
 class NotificationError(ValueError):
     """Notification operation was invalid or unauthorized."""
@@ -41,7 +41,12 @@ def create_notification(*, actor_employee_id: int, recipient_employee_id: int,
         raise NotificationError("Unsupported notification delivery channel.")
     conn=get_connection(); cur=conn.cursor()
     try:
-        cur.execute("SELECT email FROM employees WHERE employee_id=%s AND is_active=TRUE",(recipient_employee_id,))
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "notifications.send", None,
+            lock_employee_ids=[recipient_employee_id],
+        ):
+            raise NotificationError("Not authorized to send notifications.")
+        cur.execute("SELECT email FROM employees WHERE employee_id=%s AND is_active=TRUE FOR UPDATE",(recipient_employee_id,))
         recipient = cur.fetchone()
         if not recipient:
             raise NotificationError("Recipient is unavailable.")
@@ -303,6 +308,10 @@ def replay_dead_letter(*, actor_employee_id: int, outbox_id: int) -> None:
     conn = get_connection()
     cur = conn.cursor()
     try:
+        if not has_permission_in_transaction(
+            cur, actor_employee_id, "notifications.outbox.replay", None
+        ):
+            raise NotificationError("Not authorized to replay notification outbox items.")
         cur.execute(
             "SELECT delivery_status FROM notification_outbox WHERE outbox_id=%s FOR UPDATE",
             (outbox_id,),
