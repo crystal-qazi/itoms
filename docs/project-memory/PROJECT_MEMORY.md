@@ -184,3 +184,10 @@ Do not infer unrecorded framework versions, hosting, infrastructure, ORM, authen
 - Pull request [#6](https://github.com/crystal-qazi/itoms/pull/6) targets `feature/itoms-foundation`; head commit `def547dad9197d72e3cf503666f2690296270b92`.
 - At memory synchronization time, no PR workflow run was returned for the head commit. CI is therefore **not yet verified**; do not merge until `python-quality` and `mysql-migrations` pass.
 - Test-only change; no production service, authorization or transaction logic changed.
+
+
+### 2026-11-28 — Service Request transaction rollback follow-up (PRs #6 and #7 open)
+- PR [#6](https://github.com/crystal-qazi/itoms/pull/6), branch `feature/security-service-request-assignment-audit-rollback`, head `def547dad9197d72e3cf503666f2690296270b92`: adds MySQL test forcing `SERVICE_REQUEST_ASSIGNED` audit insertion to fail and checks assignment, activity, audit and notification rollback.
+- PR [#7](https://github.com/crystal-qazi/itoms/pull/7), branch `feature/security-service-request-status-audit-rollback`, head `12a68b48c34502edf12e73c304f9801625338a17`: adds MySQL test forcing `SERVICE_REQUEST_STATUS_CHANGED` audit insertion to fail and checks status, activity, audit and notification rollback.
+- Both are test-only changes against `feature/itoms-foundation`. Neither has been merged. GitHub Actions workflow runs and commit statuses were not returned by the available checks at review time; CI is **unverified**, not passed. Do not merge until required `python-quality` and `mysql-migrations` checks are confirmed passing.
+- Notification writes are queued after the audit insert in the service transaction; tests assert no notification row survives the forced audit failure.
