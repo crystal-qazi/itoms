@@ -176,3 +176,67 @@ def test_outbox_process_recover_and_audited_replay(notification_fixture, monkeyp
     finally:
         cursor.close()
         connection.close()
+
+
+
+def test_concurrent_outbox_claimers_receive_disjoint_batches(notification_fixture, monkeypatch):
+    """MySQL SKIP LOCKED must prevent two workers claiming the same outbox item."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from flask import current_app
+    from itoms.services import notifications
+    from itoms.services.notifications import claim_outbox_batch, create_notification
+
+    employee_id = notification_fixture["employee_id"]
+    app = current_app._get_current_object()
+    for index in range(10):
+        create_notification(
+            actor_employee_id=employee_id,
+            recipient_employee_id=employee_id,
+            notification_type="OUTBOX_CONCURRENCY",
+            title=f"Concurrent claim {index}",
+            body="Each queued item must be claimed by only one worker.",
+            channels=("IN_APP",),
+        )
+
+    connection_barrier = Barrier(2)
+    original_get_connection = notifications.get_connection
+
+    def synchronized_connection():
+        connection = original_get_connection()
+        connection_barrier.wait(timeout=20)
+        return connection
+
+    def claim_batch():
+        with app.app_context():
+            return claim_outbox_batch(batch_size=5, channel="IN_APP")
+
+    monkeypatch.setattr(notifications, "get_connection", synchronized_connection)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(claim_batch) for _ in range(2)]
+            batches = [future.result(timeout=40) for future in futures]
+    finally:
+        monkeypatch.setattr(notifications, "get_connection", original_get_connection)
+
+    first_ids = {int(row["outbox_id"]) for row in batches[0]}
+    second_ids = {int(row["outbox_id"]) for row in batches[1]}
+    assert len(first_ids) == 5
+    assert len(second_ids) == 5
+    assert first_ids.isdisjoint(second_ids)
+
+    connection = original_get_connection()
+    cursor = connection.cursor()
+    try:
+        all_ids = first_ids | second_ids
+        marks = ",".join(["%s"] * len(all_ids))
+        cursor.execute(
+            f"""SELECT COUNT(*) FROM notification_outbox
+                WHERE outbox_id IN ({marks}) AND delivery_status='PROCESSING'""",
+            tuple(sorted(all_ids)),
+        )
+        assert cursor.fetchone()[0] == 10
+    finally:
+        cursor.close()
+        connection.close()
