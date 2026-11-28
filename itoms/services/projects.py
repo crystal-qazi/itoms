@@ -246,8 +246,9 @@ def update_project_status(
             cur, actor_employee_id, "project.update", resources, require_all=False
         ):
             raise ProjectError("Not authorized to update this project.")
-        cur.execute("SELECT project_id FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
-        if not cur.fetchone():
+        cur.execute("SELECT status FROM projects WHERE project_id=%s FOR UPDATE", (project_id,))
+        locked_project = cur.fetchone()
+        if not locked_project:
             raise ProjectError("Project was not found.")
         cur.execute(
             """SELECT a.team_id FROM project_team_assignments a
@@ -258,9 +259,7 @@ def update_project_status(
         locked_team_ids = [row["team_id"] for row in cur.fetchall()]
         if locked_team_ids != sorted(t["team_id"] for t in teams):
             raise ProjectError("Project team scope changed; reload and try again.")
-        cur.execute("SELECT status FROM projects WHERE project_id=%s", (project_id,))
-        current = cur.fetchone()
-        old_status = current["status"] if current else None
+        old_status = locked_project["status"]
         if old_status != snapshot["status"]:
             raise ProjectError("Project changed; reload and try again.")
         if new_status not in PROJECT_TRANSITIONS[old_status]:
