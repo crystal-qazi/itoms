@@ -31,6 +31,9 @@ def index():
     search = request.args.get("search", "").strip() or None
     raw_category = request.args.get("category_id", "").strip()
     try:
+        page = int(request.args.get("page", "1"))
+        if not 1 <= page <= 10000:
+            abort(400)
         category_id = int(raw_category) if raw_category else None
         created_from = request.args.get("created_from", "").strip() or None
         created_to = request.args.get("created_to", "").strip() or None
@@ -38,7 +41,10 @@ def index():
             actor_employee_id=g.employee_id, status=status, priority=priority,
             search=search, category_id=category_id,
             created_from=created_from, created_to=created_to,
+            visible_offset=(page - 1) * 25, limit=26,
         )
+        has_next = len(rows) > 25
+        rows = rows[:25]
     except (ServiceRequestError, ValueError):
         abort(400)
     can_create = has_permission(g.employee_id, "service_request.create")
@@ -58,6 +64,7 @@ def index():
         selected_status=status or "", selected_priority=priority or "",
         selected_category=raw_category, search=search or "",
         created_from=created_from or "", created_to=created_to or "",
+        page=page, has_previous=page > 1, has_next=has_next,
     )
 
 
