@@ -310,6 +310,7 @@ def link_incident(*, actor_employee_id: int, problem_id: int, ticket_id: int) ->
             owner_employee_id=incident["requester_employee_id"],
             team_id=incident["assigned_team_id"],
             department_id=incident["department_id"],
+            resource_type="incident", resource_id=str(ticket_id),
         )
         if not has_permission_in_transaction(
             cur, actor_employee_id, "incident.read", incident_context,
@@ -326,8 +327,9 @@ def link_incident(*, actor_employee_id: int, problem_id: int, ticket_id: int) ->
             (problem_id,),
         )
         current_problem = cur.fetchone()
-        if not current_problem:
-            raise ProblemError("Problem was not found.")
+        if (not current_problem
+                or current_problem["owner_team_id"] != problem_context.team_id):
+            raise ProblemError("Problem scope changed; reload and try again.")
         cur.execute(
             """SELECT requester_employee_id,assigned_team_id
                FROM incident_tickets WHERE ticket_id=%s FOR UPDATE""",
