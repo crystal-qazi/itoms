@@ -217,16 +217,17 @@ Implemented on `feature/itoms-foundation`:
 - Lock order for this evaluator: actor employee → trusted resource team → exact employee-team membership and manager-team mapping → sorted active role rows → actor role-assignment rows → exact role-permission rows.
 - This order is compatible with the existing directory membership/manager writers for the same actor because they serialize on the employee row and then use team → membership/mapping. Runtime role-assignment writers also lock the affected employee before role rows.
 - Service Request create, assignment, status, category mutations and comment creation now perform transaction-bound authorization. Request assignment authorizes both the existing request scope and destination team in one evaluator call, with sorted team locks. Comment/status operations lock the request row only after authorization and reject if requester/team identifiers changed while authorization locks were acquired. All related business, activity, audit and notification/outbox writes remain in the owning transaction.
+- `directory.assign_employee_to_team` and `remove_employee_from_team` now authorize inside their owning mutation transaction. The evaluator accepts additional employee IDs and locks actor/target employees in ascending order, then team and actor scope rows. The directory writer revalidates active employee/team state and department equality before mutating membership and auditing.
 - The evaluator fails closed if the actor is inactive, role assignments change between discovery and locking, the team is inactive/membership is absent for TEAM scope, the manager mapping is absent for MANAGED_TEAMS scope, or the exact permission grant is absent.
 - The bounded race test holds the authorization/request locks while a second connection attempts to revoke the relevant permission. The revocation waits; after the first transaction commits, the revocation succeeds and a subsequent comment attempt is denied. Existing MySQL integration coverage also exercises Service Request create, assignment, status, category and comment flows using the transaction-bound evaluator.
 
 ### Verification
 
-CI run [46113102986](https://github.com/crystal-qazi/itoms/actions/runs/46113102986), commit `9b30471da104c28ccb16c042a70fd19495c2041a`:
+CI run [46113319820](https://github.com/crystal-qazi/itoms/actions/runs/46113319820), commit `fb33daba0bebc99fe49b4c9fa4e645b09cc23059`:
 - Python quality: 166 passed, 44 skipped.
 - MySQL 8.4 integration: 44 passed.
 - Migrations: 42 applied; second migration run was idempotent.
 
 ### Explicit remaining gaps
 
-This evaluator is currently used by Service Request create, assignment, status, category create/activation and comment mutations. Do not infer that other ITOMS services are revocation-atomic. Remaining work includes both race orderings for team-membership and manager-scope revocation, department/employee deactivation races, MySQL isolation/query-plan evidence, and transaction-bound authorization migration for identity/directory, incident, change, release, SQA, engineering task, inventory and other mutation services. A repository-wide security pass remains open.
+This evaluator is currently used by Service Request create, assignment, status, category create/activation and comment mutations, plus directory team-membership assignment/removal. Do not infer that other ITOMS services are revocation-atomic. Remaining work includes deterministic race tests for team-membership and manager-scope revocation, department/employee deactivation races, MySQL isolation/query-plan evidence, and transaction-bound authorization migration for role assignment/revocation, team-manager administration, incident, change, release, SQA, engineering task, inventory and other mutation services. A repository-wide security pass remains open.
