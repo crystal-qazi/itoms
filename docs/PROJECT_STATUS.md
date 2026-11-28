@@ -44,7 +44,7 @@ Production branch: `main` (not modified)
 - KBS integration/redesign.
 - Business-hour calendars and pause conditions for SLA.
 - Recurring-incident detection and richer Problem Management analytics.
-- Final security evidence: deterministic manager-mapping revocation-vs-MANAGED_TEAMS mutation coverage, wider cross-service deadlock/concurrency stress, production-like MySQL isolation/query-plan/load evidence, and manual security/accessibility review. The current suite adds membership-revocation and employee-deactivation races, role-permission revocation-wins, MANAGED_TEAMS positive/negative scope checks and REPEATABLE-READ/index-plan assertions.
+- Final security evidence: deterministic TEAM membership, MANAGED_TEAMS manager-mapping, employee-deactivation and role-permission revocation races are now covered in MySQL 8.4 CI, alongside MANAGED_TEAMS positive/negative scope checks and REPEATABLE-READ/index-plan assertions. Remaining security gates are wider cross-service deadlock/concurrency stress, production-like data-volume/load evidence, representative audit-rollback tests, and manual security/accessibility review.
 - Full security assessment, accessibility audit, browser-based end-to-end QA, production configuration validation, deployment rehearsal and restore drill.
 - AI/RAG is intentionally deferred from the initial release.
 
